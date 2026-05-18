@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js CDN Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 20px;
+            background: #1e293b;
+            color: #fff;
+        }
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #0f172a;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .test-item {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border: 1px solid #3b82f6;
+        }
+        .test-item.success {
+            background: rgba(34, 197, 94, 0.2);
+            border-color: #22c55e;
+        }
+        .test-item.error {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: #ef4444;
+        }
+        .test-item.loading {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: #3b82f6;
+        }
+        h1 {
+            color: #3b82f6;
+            margin-bottom: 20px;
+        }
+        .status {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .url {
+            font-size: 12px;
+            color: #94a3b8;
+            font-family: monospace;
+            word-break: break-all;
+            margin-top: 5px;
+        }
+        .error-details {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(239, 68, 68, 0.1);
+            border-left: 3px solid #ef4444;
+            font-size: 14px;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🔍 Three.js CDN Bağlantı Testi</h1>
+        <p>Bu test sayfası Three.js ve GLTFLoader'ın CDN'lerden yüklenip yüklenemediğini kontrol eder.</p>
+        
+        <div id="test-results"></div>
+        
+        <button onclick="runTests()">🔄 Testleri Yeniden Çalıştır</button>
+    </div>
+
+    <script>
+        const THREE_VERSION = '0.161.0';
+        const results = [];
+
+        function addResult(name, status, url, error = null) {
+            results.push({ name, status, url, error });
+            renderResults();
+        }
+
+        function renderResults() {
+            const container = document.getElementById('test-results');
+            container.innerHTML = results.map(r => {
+                let statusClass = 'loading';
+                let statusText = '⏳ Yükleniyor...';
+                if (r.status === 'success') {
+                    statusClass = 'success';
+                    statusText = '✅ Başarılı';
+                } else if (r.status === 'error') {
+                    statusClass = 'error';
+                    statusText = '❌ Hata';
+                }
+
+                return `
+                    <div class="test-item ${statusClass}">
+                        <div class="status">${r.name}: ${statusText}</div>
+                        <div class="url">URL: ${r.url}</div>
+                        ${r.error ? `<div class="error-details">Hata: ${r.error}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function runTests() {
+            results.length = 0;
+            renderResults();
+
+            // Test 1: Three.js UMD Build
+            addResult('Three.js UMD Build', 'loading', `https://unpkg.com/three@${THREE_VERSION}/build/three.min.js`);
+            try {
+                const threeScript = document.createElement('script');
+                threeScript.src = `https://unpkg.com/three@${THREE_VERSION}/build/three.min.js`;
+                
+                await new Promise((resolve, reject) => {
+                    threeScript.onload = () => {
+                        if (window.THREE || window.three) {
+                            const version = (window.THREE || window.three).REVISION;
+                            addResult('Three.js UMD Build', 'success', threeScript.src, null);
+                            resolve();
+                        } else {
+                            addResult('Three.js UMD Build', 'error', threeScript.src, 'Script yüklendi ancak window.THREE veya window.three bulunamadı');
+                            reject(new Error('THREE not found'));
+                        }
+                    };
+                    threeScript.onerror = (e) => {
+                        addResult('Three.js UMD Build', 'error', threeScript.src, 'Script yüklenemedi (network error)');
+                        reject(e);
+                    };
+                    document.head.appendChild(threeScript);
+                });
+            } catch (e) {
+                console.error('Three.js UMD test error:', e);
+            }
+
+            // Test 2: Three.js Module Build (ES Modules)
+            addResult('Three.js ES Module', 'loading', `https://unpkg.com/three@${THREE_VERSION}/build/three.module.js`);
+            try {
+                const response = await fetch(`https://unpkg.com/three@${THREE_VERSION}/build/three.module.js`);
+                if (response.ok) {
+                    addResult('Three.js ES Module', 'success', response.url, `HTTP ${response.status}, Size: ${(response.headers.get('content-length') || 'unknown')} bytes`);
+                } else {
+                    addResult('Three.js ES Module', 'error', response.url, `HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (e) {
+                addResult('Three.js ES Module', 'error', `https://unpkg.com/three@${THREE_VERSION}/build/three.module.js`, e.message);
+            }
+
+            // Test 3: GLTFLoader Module
+            addResult('GLTFLoader ES Module', 'loading', `https://unpkg.com/three@${THREE_VERSION}/examples/jsm/loaders/GLTFLoader.js`);
+            try {
+                const response = await fetch(`https://unpkg.com/three@${THREE_VERSION}/examples/jsm/loaders/GLTFLoader.js`);
+                if (response.ok) {
+                    addResult('GLTFLoader ES Module', 'success', response.url, `HTTP ${response.status}, Size: ${(response.headers.get('content-length') || 'unknown')} bytes`);
+                } else {
+                    addResult('GLTFLoader ES Module', 'error', response.url, `HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (e) {
+                addResult('GLTFLoader ES Module', 'error', `https://unpkg.com/three@${THREE_VERSION}/examples/jsm/loaders/GLTFLoader.js`, e.message);
+            }
+
+            // Test 4: Dynamic Import with Importmap
+            addResult('Dynamic Import (with Importmap)', 'loading', 'N/A (native feature)');
+            try {
+                // Importmap ekle (ES module imports için gerekli)
+                const importMap = document.createElement('script');
+                importMap.type = 'importmap';
+                importMap.textContent = JSON.stringify({
+                    "imports": {
+                        "three": `https://unpkg.com/three@${THREE_VERSION}/build/three.module.js`,
+                        "three/addons/": `https://unpkg.com/three@${THREE_VERSION}/examples/jsm/`
+                    }
+                });
+                document.head.appendChild(importMap);
+                
+                // Importmap'in yüklenmesini bekle
+                await new Promise(resolve => setTimeout(resolve, 200));
+                
+                // Önce "three" importunu test et
+                try {
+                    const THREE = await import('three');
+                    if (THREE.default || THREE) {
+                        addResult('Dynamic Import (with Importmap) - THREE', 'success', 'import("three")', 'THREE başarıyla import edildi');
+                    } else {
+                        addResult('Dynamic Import (with Importmap) - THREE', 'error', 'import("three")', 'Module yüklendi ancak THREE export edilmedi');
+                    }
+                } catch (e) {
+                    addResult('Dynamic Import (with Importmap) - THREE', 'error', 'import("three")', e.message);
+                }
+                
+                // GLTFLoader importunu test et
+                try {
+                    const GLTFLoaderModule = await import('three/addons/loaders/GLTFLoader.js');
+                    if (GLTFLoaderModule.GLTFLoader) {
+                        addResult('Dynamic Import (with Importmap) - GLTFLoader', 'success', 'import("three/addons/...")', 'GLTFLoader başarıyla import edildi');
+                    } else {
+                        addResult('Dynamic Import (with Importmap) - GLTFLoader', 'error', 'import("three/addons/...")', 'Module yüklendi ancak GLTFLoader export edilmedi');
+                    }
+                } catch (e) {
+                    addResult('Dynamic Import (with Importmap) - GLTFLoader', 'error', 'import("three/addons/...")', e.message);
+                }
+            } catch (e) {
+                addResult('Dynamic Import (with Importmap)', 'error', 'Importmap setup', e.message);
+            }
+            
+            // Test 4b: Dynamic Import with Full URL (fallback)
+            addResult('Dynamic Import (Full URL)', 'loading', 'Direct URL import');
+            try {
+                const testModule = await import(`https://unpkg.com/three@${THREE_VERSION}/examples/jsm/loaders/GLTFLoader.js`);
+                if (testModule.GLTFLoader) {
+                    addResult('Dynamic Import (Full URL)', 'success', 'Direct URL', 'GLTFLoader başarıyla import edildi');
+                } else {
+                    addResult('Dynamic Import (Full URL)', 'error', 'Direct URL', 'Module yüklendi ancak GLTFLoader export edilmedi');
+                }
+            } catch (e) {
+                addResult('Dynamic Import (Full URL)', 'error', 'Direct URL', e.message);
+            }
+
+            // Test 5: Mapbox CDN
+            addResult('Mapbox GL JS', 'loading', 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js');
+            try {
+                const mapboxScript = document.createElement('script');
+                mapboxScript.src = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js';
+                
+                await new Promise((resolve, reject) => {
+                    mapboxScript.onload = () => {
+                        if (window.mapboxgl) {
+                            addResult('Mapbox GL JS', 'success', mapboxScript.src, null);
+                            resolve();
+                        } else {
+                            addResult('Mapbox GL JS', 'error', mapboxScript.src, 'Script yüklendi ancak window.mapboxgl bulunamadı');
+                            reject(new Error('mapboxgl not found'));
+                        }
+                    };
+                    mapboxScript.onerror = (e) => {
+                        addResult('Mapbox GL JS', 'error', mapboxScript.src, 'Script yüklenemedi (network error)');
+                        reject(e);
+                    };
+                    document.head.appendChild(mapboxScript);
+                });
+            } catch (e) {
+                console.error('Mapbox test error:', e);
+            }
+
+            // Test 6: Network connectivity
+            addResult('Genel İnternet Bağlantısı', 'loading', 'https://www.google.com');
+            try {
+                const response = await fetch('https://www.google.com/favicon.ico', { method: 'HEAD', mode: 'no-cors' });
+                addResult('Genel İnternet Bağlantısı', 'success', 'Google favicon test', 'Bağlantı çalışıyor');
+            } catch (e) {
+                addResult('Genel İnternet Bağlantısı', 'error', 'Google favicon test', e.message);
+            }
+
+            // Summary
+            const successCount = results.filter(r => r.status === 'success').length;
+            const errorCount = results.filter(r => r.status === 'error').length;
+            
+            setTimeout(() => {
+                const summary = document.createElement('div');
+                summary.className = 'test-item';
+                summary.style.background = errorCount > 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)';
+                summary.style.borderColor = errorCount > 0 ? '#ef4444' : '#22c55e';
+                summary.innerHTML = `
+                    <div class="status">📊 Test Özeti</div>
+                    <div>✅ Başarılı: ${successCount}</div>
+                    <div>❌ Hatalı: ${errorCount}</div>
+                    <div>⏳ Toplam: ${results.length}</div>
+                    ${errorCount > 0 ? '<div style="margin-top: 10px; color: #fca5a5;">⚠️ Bazı CDN kaynaklarına erişilemiyor. İnternet bağlantınızı veya firewall ayarlarınızı kontrol edin.</div>' : '<div style="margin-top: 10px; color: #86efac;">✅ Tüm testler başarılı!</div>'}
+                `;
+                document.getElementById('test-results').appendChild(summary);
+            }, 500);
+        }
+
+        // Sayfa yüklendiğinde otomatik test
+        window.addEventListener('DOMContentLoaded', () => {
+            runTests();
+        });
+    </script>
+</body>
+</html>

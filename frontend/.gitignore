@@ -1,0 +1,72 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Build outputs
+dist/
+web-build/
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+.metro-cache/
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# Build folders
+android/
+ios/
+
+# Test model assets (release'te bundle'a girmemeli; sadece __DEV__ ekraninda kullanilir)
+assets/temp/*.glb
+assets/temp/*.gltf
+
+# =========================================================
+# Large 3D model bundles (repo'ya yüklenmemeli)
+# - Uygulama ikonları/font/images commit edilebilir.
+# - GLB/GLTF ve büyük texture/paket dosyaları repoda tutulmaz.
+# =========================================================
+# Not: Klasörü komple ignore etmek yerine uzantı bazlı ignore edilir
+# (aksi halde .gitkeep / README gibi dosyaları unignore etmek zorlaşır).
+assets/models/**/*.glb
+assets/models/**/*.gltf
+assets/models/**/*.bin
+assets/models/**/*.jpg
+assets/models/**/*.jpeg
+assets/models/**/*.png
+assets/models/**/*.webp
+assets/models/**/*.ktx2
+assets/models/**/*.json
+
+assets/packs/**/*.json
+
+# Release binaries (GitHub 100MB limit)
+release_builds/
+apk_releases/*.apk
+apk_releases/*.aab
+.metro-bundle-test.js
+.metro-assets-test/
