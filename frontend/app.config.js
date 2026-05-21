@@ -43,6 +43,7 @@ module.exports = {
       apiUrl: process.env.EXPO_PUBLIC_API_URL || "https://www.proparcel.com",
       authApiUrl: process.env.EXPO_PUBLIC_AUTH_API_URL || "https://www.proparcel.com",
       modelsUrl: process.env.EXPO_PUBLIC_MODELS_URL || "https://www.proparcel.com",
+      mapboxAccessToken: process.env.EXPO_PUBLIC_MAPBOX_TOKEN || "",
       ngrokUrl: process.env.EXPO_PUBLIC_NGROK_URL || "",
       // React Navigation kullanıyoruz, Expo Router değil. Lazy bundling "require doesn't exist" hatasına yol açıyor.
       router: { asyncRoutes: false },

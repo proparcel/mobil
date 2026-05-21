@@ -1,7 +1,11 @@
 // metro.config.js
+const path = require("path");
 const { getDefaultConfig } = require("expo/metro-config");
-const path = require('path');
-const { FileStore } = require('metro-cache');
+const { load: loadExpoEnv } = require("@expo/env");
+const { FileStore } = require("metro-cache");
+
+// .env → process.env (EXPO_PUBLIC_MAPBOX_TOKEN vb.) — react-native start ile de calissin
+loadExpoEnv(path.resolve(__dirname));
 
 const config = getDefaultConfig(__dirname);
 
