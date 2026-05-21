@@ -213,7 +213,14 @@ export function AddressPickerModal(props: {
         onRequestClose={() => setPickerMode(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, styles.pickerModalContent]}>
+          <KeyboardAvoidingView
+            behavior={getKeyboardAvoidingBehavior('modal')}
+            style={[
+              styles.modalContent,
+              styles.pickerModalContent,
+              { paddingBottom: 12 + insets.bottom + keyboardHeight },
+            ]}
+          >
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {pickerMode === "city" && "İl seçin"}
@@ -236,6 +243,7 @@ export function AddressPickerModal(props: {
             <FlatList
               data={listData}
               keyExtractor={(item: any) => String(item?.Id)}
+              keyboardShouldPersistTaps="handled"
               renderItem={({ item }: { item: any }) => {
                 const label = item?.Proparcel_text || item?.Tkgm_text || "";
                 return (

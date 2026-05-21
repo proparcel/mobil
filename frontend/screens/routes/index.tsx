@@ -1096,6 +1096,15 @@ export default function Index() {
       router.push('ai-image-animation-purchase');
     } else if (itemId === 'ai-drone-video') {
       router.push('ai-drone-video-info');
+    } else if (itemId === 'ai-drone-jobs') {
+      if (!isAuthenticated) {
+        Alert.alert('Giriş gerekli', 'İşlerinizi görmek için giriş yapın.', [
+          { text: 'İptal', style: 'cancel' },
+          { text: 'Giriş', onPress: () => router.push('login') },
+        ]);
+        return;
+      }
+      router.push('ai-drone-jobs');
     } else if (itemId === 'ilan-mesajlar') {
       if (!isAuthenticated) {
         Alert.alert('Giriş gerekli', 'Mesajları görmek için giriş yapın.', [

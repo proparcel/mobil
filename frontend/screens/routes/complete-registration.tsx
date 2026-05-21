@@ -16,13 +16,16 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  KeyboardAvoidingView,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { launchImageLibrary } from "react-native-image-picker";
 import Ionicons from "react-native-vector-icons/Ionicons";
 
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../contexts/AuthContext";
+import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
+import { useKeyboardHeight, getKeyboardAvoidingBehavior } from "../../src/keyboard";
 import { authService } from "../../services/authService";
 import { AddressPickerModal, type AddressValue } from "../../components/app/AddressPickerModal";
 import locationsJson from "../../src/data/locations.json";
@@ -43,6 +46,8 @@ type Step = "avatar" | "address" | "expertise";
 export default function CompleteRegistrationScreen() {
   const router = useRouter();
   const { user, isAuthenticated } = useAuth();
+  const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
 
   const [step, setStep] = useState<Step>("avatar");
   const [loading, setLoading] = useState(false);
@@ -276,7 +281,7 @@ export default function CompleteRegistrationScreen() {
       )}
 
       {step === "expertise" && (
-        <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <KeyboardAwareScrollScreen headerHeight={56} backgroundColor="#f8fafc" contentContainerStyle={{ padding: 16 }}>
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Uzmanlık Bölgeleri</Text>
             <Text style={styles.cardHint}>İl/ilçe/mahalle seçin. Mahalle seçince aşağıda eklenir. En fazla 5.</Text>
@@ -333,7 +338,7 @@ export default function CompleteRegistrationScreen() {
               {savingExpertise ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>Kaydet ve Bitir</Text>}
             </TouchableOpacity>
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollScreen>
       )}
 
       {/* Address modal step */}
@@ -375,7 +380,10 @@ export default function CompleteRegistrationScreen() {
         onRequestClose={() => setExpertisePickerMode(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.pickerBox}>
+          <KeyboardAvoidingView
+            behavior={getKeyboardAvoidingBehavior('modal')}
+            style={[styles.pickerBox, { paddingBottom: 12 + insets.bottom + keyboardHeight }]}
+          >
             <View style={styles.pickerHeader}>
               <Text style={styles.modalTitle}>
                 {expertisePickerMode === "city" && "İl seçin"}
@@ -436,7 +444,7 @@ export default function CompleteRegistrationScreen() {
                 );
               }}
             />
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </SafeAreaView>

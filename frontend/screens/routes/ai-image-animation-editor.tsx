@@ -255,7 +255,7 @@ export default function AiImageAnimationEditorScreen() {
 
       <KeyboardAwareScrollScreen
         headerHeight={52}
-        backgroundColor={DE.bg}
+        backgroundColor={DE.shell}
         style={styles.body}
         contentContainerStyle={[styles.bodyContent, { paddingBottom: 20 + insets.bottom }]}
       >

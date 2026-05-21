@@ -125,6 +125,12 @@ export default function UserMenuSheetList({
                 </View>
                 <Text style={st.itemText}>AI Drone Video</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-drone-jobs")}>
+                <View style={st.iconWrap}>
+                  <Ionicons name="briefcase-outline" size={20} color={subIconColor} />
+                </View>
+                <Text style={st.itemText}>İşlerim</Text>
+              </TouchableOpacity>
             </>
           )}
           {item.id === "ilan-islemleri" && submenuOpenId === "ilan-islemleri" && (

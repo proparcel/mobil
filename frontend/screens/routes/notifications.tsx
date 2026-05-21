@@ -87,8 +87,17 @@ export default function NotificationsScreen() {
           return;
         }
       }
-      if (n.type === "ai_drone_request_ready") {
-        const data = (n.data_json || {}) as { delivery_url?: string };
+      if (n.type === "ai_drone_request_ready" || n.type === "ai_drone_request_reopened") {
+        const data = (n.data_json || {}) as { delivery_url?: string; request_id?: number | string };
+        const requestId = String(data.request_id || "").trim();
+        if (requestId) {
+          router.push("ai-drone-job-detail", { requestId });
+          return;
+        }
+        if (n.type === "ai_drone_request_reopened") {
+          router.push("ai-drone-jobs");
+          return;
+        }
         const url = String(data.delivery_url || "").trim();
         if (url) {
           const can = await Linking.canOpenURL(url);

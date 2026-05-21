@@ -170,10 +170,17 @@ export default function AiDroneVideoInfoScreen() {
               if (res.success) {
                 const used = res.creditsUsed ?? creditCost;
                 const balance = res.newBalance;
+                const newId = res.requestId;
                 Alert.alert(
                   "Talep alındı",
                   `${used} Tepe Coin kullanıldı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`,
-                  [{ text: "Tamam", onPress: () => router.back() }],
+                  [
+                    ...(newId
+                      ? [{ text: "İş detayı", onPress: () => router.push("ai-drone-job-detail", { requestId: String(newId) }) }]
+                      : []),
+                    { text: "İşlerim", onPress: () => router.push("ai-drone-jobs") },
+                    { text: "Tamam", onPress: () => router.back() },
+                  ],
                 );
               } else {
                 Alert.alert("İşlem başarısız", res.error || "Talep oluşturulamadı.");
@@ -227,6 +234,28 @@ export default function AiDroneVideoInfoScreen() {
             parsel seçip sorgulayarak videonuzu bizim üretmemizi talep edebilirsiniz.
           </Text>
         </View>
+
+        <TouchableOpacity
+          style={styles.jobsLinkCard}
+          onPress={() => {
+            if (!isAuthenticated) {
+              Alert.alert("Giriş gerekli", "İşlerinizi görmek için giriş yapın.", [
+                { text: "İptal", style: "cancel" },
+                { text: "Giriş", onPress: () => router.push("login") },
+              ]);
+              return;
+            }
+            router.push("ai-drone-jobs");
+          }}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="briefcase-outline" size={22} color={COLORS.accent} />
+          <View style={styles.jobsLinkTextWrap}>
+            <Text style={styles.jobsLinkTitle}>İşlerim</Text>
+            <Text style={styles.jobsLinkHint}>Taleplerinizin durumu, indirme ve geri bildirim</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={COLORS.muted} />
+        </TouchableOpacity>
 
         <View style={styles.creditCard}>
           <Image source={TepeCoinIcon} style={styles.coinIcon} resizeMode="contain" />
@@ -367,6 +396,20 @@ const styles = StyleSheet.create({
   },
   leadTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 8 },
   leadBody: { fontSize: 14, color: COLORS.muted, lineHeight: 21 },
+  jobsLinkCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(59, 130, 246, 0.35)",
+  },
+  jobsLinkTextWrap: { flex: 1 },
+  jobsLinkTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+  jobsLinkHint: { fontSize: 12, color: COLORS.muted, marginTop: 2 },
   creditCard: {
     flexDirection: "row",
     alignItems: "center",

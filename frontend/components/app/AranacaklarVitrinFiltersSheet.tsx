@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
   Pressable,
   ScrollView,
@@ -8,6 +9,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getKeyboardAvoidingBehavior, SCROLL_VIEW_KEYBOARD_PROPS } from '../../src/keyboard';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { VitrinListingSearchParams } from '../../src/types/vitrin';
 import { stripVitrinParamsOverlappingMainScreen } from '../../src/utils/aranacaklarListingSearchExtra';
@@ -59,6 +62,7 @@ function num(s: string): number | undefined {
  * Son 30 gün / vitrin public search ile aynı parametreler — aranacak kişiye kayıt için.
  */
 export default function AranacaklarVitrinFiltersSheet({ visible, onClose, value, onApply }: Props) {
+  const insets = useSafeAreaInsets();
   const [p, setP] = useState<Partial<VitrinListingSearchParams>>(() => ({ ...value }));
   const [openRoad, setOpenRoad] = useState(true);
   const [openScore, setOpenScore] = useState(false);
@@ -82,8 +86,8 @@ export default function AranacaklarVitrinFiltersSheet({ visible, onClose, value,
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View style={styles.sheet}>
+      <KeyboardAvoidingView style={styles.backdrop} behavior={getKeyboardAvoidingBehavior('modal')}>
+        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>Vitrin filtreleri</Text>
             <Pressable onPress={onClose} hitSlop={12}>
@@ -94,7 +98,11 @@ export default function AranacaklarVitrinFiltersSheet({ visible, onClose, value,
             Seçtikleriniz ana ekranda kayda eklenir. «Talebe uygula» ile taslağı güncelleyin, ana ekrandan «Tümünü
             kaydet» ile kaydedin.
           </Text>
-          <ScrollView style={styles.scroll} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            style={styles.scroll}
+            keyboardShouldPersistTaps={SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
+            keyboardDismissMode={SCROLL_VIEW_KEYBOARD_PROPS.keyboardDismissMode}
+          >
             <CollapsibleSection title="Yola cephe (metre)" open={openRoad} onToggle={() => setOpenRoad((o) => !o)}>
               <Text style={styles.lbl}>En az / en çok (m)</Text>
               <View style={styles.row2}>
@@ -304,7 +312,7 @@ export default function AranacaklarVitrinFiltersSheet({ visible, onClose, value,
             <Text style={styles.applyBtnText}>Uygula</Text>
           </Pressable>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

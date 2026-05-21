@@ -42,6 +42,15 @@ export type RootStackParamList = {
     license_ref?: string;
   };
   "ai-drone-video-info": undefined;
+  "ai-drone-jobs": undefined;
+  "ai-drone-job-detail": { requestId: string };
+  "ai-drone-editor-chat": {
+    threadId?: string;
+    editorUserId?: string;
+    editorName?: string;
+    requestId?: string;
+    initialMessage?: string;
+  };
   report_mobil_viewver: { reportId?: string; [key: string]: any };
   "report-expert-request": {
     il?: string;

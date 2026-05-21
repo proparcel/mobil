@@ -32,6 +32,9 @@ import AiVideoStudioScreen from './screens/routes/ai-video-studio';
 import AiImageAnimationPurchaseScreen from './screens/routes/ai-image-animation-purchase';
 import AiImageAnimationEditorScreen from './screens/routes/ai-image-animation-editor';
 import AiDroneVideoInfoScreen from './screens/routes/ai-drone-video-info';
+import AiDroneJobsScreen from './screens/routes/ai-drone-jobs';
+import AiDroneJobDetailScreen from './screens/routes/ai-drone-job-detail';
+import AiDroneEditorChatScreen from './screens/routes/ai-drone-editor-chat';
 import RequestCenterScreen from './screens/routes/expert-requests';
 import ExpertRequestReportScreen from './screens/routes/expert-request-report';
 import ReportExpertRequestScreen from './screens/routes/report-expert-request';
@@ -154,6 +157,9 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="ai-image-animation-purchase" component={AiImageAnimationPurchaseScreen} />
           <Stack.Screen name="ai-image-animation-editor" component={AiImageAnimationEditorScreen} />
           <Stack.Screen name="ai-drone-video-info" component={AiDroneVideoInfoScreen} />
+          <Stack.Screen name="ai-drone-jobs" component={AiDroneJobsScreen} />
+          <Stack.Screen name="ai-drone-job-detail" component={AiDroneJobDetailScreen} />
+          <Stack.Screen name="ai-drone-editor-chat" component={AiDroneEditorChatScreen} />
           <Stack.Screen name="report_mobil_viewver" component={ReportMobilViewverScreen} />
           <Stack.Screen name="report-expert-request" component={ReportExpertRequestScreen} />
           <Stack.Screen name="parcel-split" component={ParcelSplitScreen} />

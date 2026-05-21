@@ -230,6 +230,16 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
           case "ai-drone-video":
             router.push("ai-drone-video-info");
             break;
+          case "ai-drone-jobs":
+            if (!isAuthenticated) {
+              Alert.alert("Giriş gerekli", "İşlerinizi görmek için giriş yapın.", [
+                { text: "İptal", style: "cancel" },
+                { text: "Giriş", onPress: () => router.push("login") },
+              ]);
+              return;
+            }
+            router.push("ai-drone-jobs");
+            break;
           case "ilan-mesajlar":
             if (!isAuthenticated) {
               Alert.alert("Giriş gerekli", "Mesajları görmek için giriş yapın.", [
