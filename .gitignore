@@ -81,3 +81,7 @@ agenthub/agents/youtube/db
 
 # Mobile development
 android-sdk/
+.gitconfig
+
+# Eski Expo Router iskeleti (kullanılmıyor; screens/routes geçerli)
+frontend/app/

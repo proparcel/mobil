@@ -7,6 +7,6 @@ Bu klasörde kullanılması gereken dosyalar (isimler tam olarak böyle olmalı)
 
 Kullanıcı profil fotoğrafı yüklerken "Resim yüklendiğinde arka plan temizlensin mi?" sorusu bu iki örnekle birlikte gösterilir.
 
-`app/routes/profile.tsx` içindeki modal bu dosyaları kullanır:
+`screens/routes/profile.tsx` içindeki modal bu dosyaları kullanır:
 - Sol örnek: `require("../../assets/images/avatar_with_back.png")`
 - Sağ örnek: `require("../../assets/images/avatar_no_back.png")`

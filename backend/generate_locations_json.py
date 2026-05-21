@@ -101,8 +101,8 @@ if __name__ == "__main__":
     script_dir = Path(__file__).parent
     frontend_dir = script_dir.parent / "frontend"
     
-    # JSON dosyasını frontend/app/data/ altına kaydet
-    output_path = frontend_dir / "app" / "data" / "locations.json"
+    # JSON dosyasını frontend/src/data/ altına kaydet (aktif import yolu)
+    output_path = frontend_dir / "src" / "data" / "locations.json"
     
     try:
         generate_locations_json(output_path)

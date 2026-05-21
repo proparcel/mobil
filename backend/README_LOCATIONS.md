@@ -5,7 +5,7 @@ Bu doküman, mobil uygulamada kullanılan il/ilçe/mahalle verilerinin nasıl y�
 ## JSON Dosyası
 
 Mobil uygulama içinde hazır bir JSON dosyası mevcuttur:
-- **Konum:** `frontend/app/data/locations.json`
+- **Konum:** `frontend/src/data/locations.json`
 - **İçerik:** 81 il, 973 ilçe, 76,762 mahalle
 - **Önemli Alanlar:** Her mahalle için `Proparcel_value` dahil
 
@@ -30,7 +30,7 @@ cd mobile/mobil_github/backend
 python generate_locations_json.py
 ```
 
-Bu script, Django veritabanından tüm verileri çekerek `frontend/app/data/locations.json` dosyasını günceller.
+Bu script, Django veritabanından tüm verileri çekerek `frontend/src/data/locations.json` dosyasını günceller.
 
 ## FastAPI Backend Kurulumu
 
