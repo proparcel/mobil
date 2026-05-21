@@ -1,65 +1,59 @@
 /**
  * Backend API URL çözümlemesi
  *
- * "Network request failed" alıyorsanız: cihaz/emülatör bu URL'ye ulaşamıyor.
- * - Production: http://78.189.238.18:8000 (varsayılan)
- * - Android emülatör + Django bilgisayarda: API_URL=http://10.0.2.2:8000
- * - iOS simülatör + Django bilgisayarda: API_URL=http://127.0.0.1:8000
- * - Android gerçek cihaz + Django 0.0.0.0:8000 (aynı WiFi):
- *   Bilgisayarın yerel IP'sini kullanın (0.0.0.0 değil!). Örn: .env içinde
- *   API_URL=http://192.168.1.101:8000  (IP'yi ipconfig / ifconfig ile öğrenin)
+ * Mobil uygulama MongoDB'ye doğrudan bağlanmaz.
+ * Sunucu (178.210.168.33) üzerindeki Django API → MongoDB'ye backend tarafında erişir.
  *
- * Environment variable'lar (öncelik sırasına göre):
- * - API_URL: Ana API base URL (varsa bu kullanılır, yoksa DEFAULT_API_URL)
- * - MODELS_URL: Model dosyaları için base URL
- * - NGROK_URL: Fallback API base URL
+ * Production: https://www.proparcel.com
+ * Alternatif (doğrudan IP): http://178.210.168.33:8000
+ * Not: 33789 SQL Server portudur; mobil API portu değildir.
+ *
+ * .env (Metro: npm run start -- --reset-cache):
+ *   EXPO_PUBLIC_API_URL=https://www.proparcel.com
+ *   EXPO_PUBLIC_AUTH_API_URL=https://www.proparcel.com
+ *   EXPO_PUBLIC_MODELS_URL=https://www.proparcel.com
+ *
+ * Yerel geliştirme (adb reverse tcp:8000 tcp:8000):
+ *   EXPO_PUBLIC_API_URL=http://127.0.0.1:8000
  */
 
-// Default URL'ler - Production sunucu
-// Production IP: 78.189.238.18
-// Android emülatör için: 10.0.2.2 (local development)
-// Gerçek cihaz için: 78.189.238.18 (production) veya Local network IP (local development)
-const DEFAULT_API_URL = 'http://78.189.238.18:8000'; // Production Django backend
-const DEFAULT_MODELS_URL = 'http://78.189.238.18:8000'; // Production Django backend
+const PRODUCTION_API_URL = "https://www.proparcel.com";
+const LEGACY_API_URL = "http://178.210.168.33:8000";
 
-/**
- * Ana API base URL
- * - Öncelik: API_URL -> DEFAULT_API_URL
- */
-const envApiUrl = process.env.API_URL?.trim();
-export const API_URL: string = envApiUrl || DEFAULT_API_URL;
-
-// Debug log
-if (__DEV__) {
-  console.log("[config/api] API_URL çözümlendi:", {
-    apiUrl: process.env.API_URL,
-    defaultUrl: DEFAULT_API_URL,
-    final: API_URL
-  });
+function pickEnv(...keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  return "";
 }
 
-/**
- * Model dosyaları için base URL
- * - Öncelik: MODELS_URL -> DEFAULT_MODELS_URL
- *
- * Not:
- * - Model dosyaları Django'dan servis edilir (8000 portu)
- */
-const envModelsUrl = process.env.MODELS_URL?.trim();
-export const MODELS_URL: string = envModelsUrl || DEFAULT_MODELS_URL;
+/** Ana API base URL */
+export const API_URL: string =
+  pickEnv("EXPO_PUBLIC_API_URL", "API_URL") || PRODUCTION_API_URL;
 
-// Debug log
-if (__DEV__) {
-  console.log("[config/api] MODELS_URL çözümlendi:", {
-    modelsUrl: process.env.MODELS_URL,
-    defaultUrl: DEFAULT_MODELS_URL,
-    final: MODELS_URL
-  });
-}
+/** Auth / accounts API (varsayılan: API_URL ile aynı) */
+export const AUTH_API_URL: string =
+  pickEnv("EXPO_PUBLIC_AUTH_API_URL", "AUTH_API_URL") || API_URL;
 
-/**
- * Fallback API base URL
- * - Öncelik: NGROK_URL -> DEFAULT_API_URL
- */
+/** Django REST (portal, kredi, vitrin vb.) */
+export const DJANGO_API_URL: string =
+  pickEnv("EXPO_PUBLIC_DJANGO_API_URL", "DJANGO_API_URL") || API_URL;
+
+/** 3D model dosyaları base URL */
+export const MODELS_URL: string =
+  pickEnv("EXPO_PUBLIC_MODELS_URL", "MODELS_URL") || API_URL;
+
+/** Yedek / ngrok base URL */
 export const FALLBACK_API_URL: string =
-  process.env.NGROK_URL?.trim() || DEFAULT_API_URL;
+  pickEnv("EXPO_PUBLIC_NGROK_URL", "NGROK_URL") || LEGACY_API_URL;
+
+if (__DEV__) {
+  console.log("[config/api] URL çözümlendi:", {
+    API_URL,
+    AUTH_API_URL,
+    DJANGO_API_URL,
+    MODELS_URL,
+    FALLBACK_API_URL,
+  });
+}
