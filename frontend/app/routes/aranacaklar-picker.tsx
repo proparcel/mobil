@@ -20,6 +20,7 @@ import { normalizePhoneToE164TR } from '../../src/utils/phoneE164';
 import { useRouter } from '../../src/hooks/useNavigation';
 import { createAranacaklarContact } from '../../services/aranacaklarService';
 import AranacaklarScreenShell from '../../components/app/AranacaklarScreenShell';
+import { CONTACT_SIDE_OPTIONS, type ContactSide } from '../../src/utils/aranacaklarContactSide';
 
 type Row = { recordID: string; displayName: string; phoneNumber: string };
 
@@ -132,6 +133,7 @@ export default function AranacaklarPickerScreen() {
   const [err, setErr] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const [filterText, setFilterText] = useState('');
+  const [contactSide, setContactSide] = useState<ContactSide>('alici');
 
   const filteredItems = useMemo(() => filterPhonebookRows(items, filterText), [items, filterText]);
 
@@ -240,6 +242,7 @@ export default function AranacaklarPickerScreen() {
       phone_raw: row.phoneNumber,
       phone_e164: e164,
       source: 'phonebook',
+      contact_side: contactSide,
     });
     if (!res.ok) {
       Alert.alert('Hata', res.error || 'Kayıt oluşturulamadı');
@@ -255,6 +258,25 @@ export default function AranacaklarPickerScreen() {
 
   return (
     <AranacaklarScreenShell title="Rehberden ekle">
+      <View style={styles.sideBar}>
+        <Text style={styles.sideLabel}>Kişi tipi</Text>
+        <View style={styles.sideRow}>
+          {CONTACT_SIDE_OPTIONS.map((opt) => {
+            const on = contactSide === opt.value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.sideChip, on && styles.sideChipOn]}
+                onPress={() => setContactSide(opt.value)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.sideChipText, on && styles.sideChipTextOn]}>{opt.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.sideHint}>Rehbere eklerken seçili tip kaydedilir.</Text>
+      </View>
       {err ? (
         <View style={styles.errBox}>
           <Text style={styles.err}>{err}</Text>
@@ -336,6 +358,29 @@ export default function AranacaklarPickerScreen() {
 }
 
 const styles = StyleSheet.create({
+  sideBar: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderSoft,
+    backgroundColor: COLORS.pageBg,
+  },
+  sideLabel: { fontSize: 13, fontWeight: '700', color: COLORS.textSecondary, marginBottom: 8 },
+  sideRow: { flexDirection: 'row', gap: 8 },
+  sideChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
+    backgroundColor: COLORS.cardBg,
+    alignItems: 'center',
+  },
+  sideChipOn: { backgroundColor: '#dbeafe', borderColor: '#3b82f6' },
+  sideChipText: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
+  sideChipTextOn: { color: '#1d4ed8' },
+  sideHint: { fontSize: 12, color: COLORS.textSecondary, marginTop: 8 },
   listRoot: { flex: 1 },
   listFlex: { flex: 1 },
   searchWrap: {

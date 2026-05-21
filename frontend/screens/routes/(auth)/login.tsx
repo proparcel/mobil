@@ -11,15 +11,13 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   ActivityIndicator,
   StatusBar,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../../src/hooks/useNavigation";
 import { useAuth } from "../../contexts/AuthContext";
+import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 
 type LoginMode = "email" | "phone";
 
@@ -82,10 +80,7 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.topbar}>
         <TouchableOpacity
@@ -98,9 +93,11 @@ export default function LoginScreen() {
         <Text style={styles.topbarTitle}>Giriş</Text>
         <View style={styles.headerRight} />
       </View>
-      <ScrollView
+      <KeyboardAwareScrollScreen
+        behaviorContext="auth"
+        headerHeight={56}
+        backgroundColor="#fff"
         contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
       >
         {/* Logo / Title */}
         <View style={styles.formHeader}>
@@ -274,8 +271,8 @@ export default function LoginScreen() {
             <Text style={styles.registerLink}>Kayıt Ol</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAwareScrollScreen>
+    </View>
   );
 }
 

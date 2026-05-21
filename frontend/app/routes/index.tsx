@@ -39,6 +39,7 @@ import type { ReportPayload, ReportLocationHeader } from '../../src/types/report
 import { API_URL, FALLBACK_API_URL } from '../../config/api';
 import { createSavedQueryApi } from '../../services/savedQueriesApi';
 import { fetchTkgmByCoordsWithFallback } from '../../src/utils/tkgmApi';
+import { createParcelMapLayers } from '../../components/map/ParcelMapLayers';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 
 // Conditional Location import
@@ -2122,16 +2123,10 @@ export default function Index() {
                 {isProMode && parcelData?.geometry && (() => {
                   const centroid = getParcelCentroid(parcelData.geometry);
                   const labelText = getParcelLabelText(parcelData.properties || {});
-                  const isSelected = true; // Pro modda her zaman seçili
-                  const fillColor = isSelected ? '#f87171' : '#dc2626'; // Açık kırmızı highlight
-                  const fillOpacity = isSelected ? 0.5 : 0.3;
-                  const lineColor = isSelected ? '#ef4444' : '#dc2626';
-                  const lineWidth = isSelected ? 3 : 2;
                   return (
                     <>
                       <Mapbox.ShapeSource id="parcelSource" shape={{ type: 'Feature', geometry: parcelData.geometry, properties: parcelData.properties || {} }} onPress={() => { if (!measurementMode) setParcelModalVisible(true); }}>
-                        <Mapbox.FillLayer id="parcelFill" style={{ fillColor, fillOpacity }} />
-                        <Mapbox.LineLayer id="parcelStroke" style={{ lineColor, lineWidth }} />
+                        {createParcelMapLayers(Mapbox, 'parcel', true)}
                       </Mapbox.ShapeSource>
                       {centroid && labelText && (
                         <Mapbox.ShapeSource
@@ -2166,10 +2161,6 @@ export default function Index() {
                   const centroid = getParcelCentroid(parcel.geometry);
                   const labelText = getParcelLabelText(parcel.properties || {});
                   const isSelected = selectedParcelForModal?.id === parcel.id;
-                  const fillColor = isSelected ? '#f87171' : '#dc2626'; // Açık kırmızı highlight
-                  const fillOpacity = isSelected ? 0.5 : 0.3;
-                  const lineColor = isSelected ? '#ef4444' : '#FF0000'; // Seçili olmayan için saf kırmızı
-                  const lineWidth = isSelected ? 3 : 2;
                   return (
                     <React.Fragment key={`simple-parcel-${parcel.id}`}>
                       <Mapbox.ShapeSource
@@ -2186,8 +2177,7 @@ export default function Index() {
                           }
                         }}
                       >
-                        <Mapbox.FillLayer id={`parcelFill-${parcel.id}`} style={{ fillColor, fillOpacity }} />
-                        <Mapbox.LineLayer id={`parcelStroke-${parcel.id}`} style={{ lineColor, lineWidth }} />
+                        {createParcelMapLayers(Mapbox, `parcel-${parcel.id}`, isSelected)}
                       </Mapbox.ShapeSource>
                       {centroid && labelText && (
                         <Mapbox.ShapeSource
@@ -3148,15 +3138,6 @@ export default function Index() {
                 </TouchableOpacity>
                 {item.id === 'dosyalarim' && submenuOpenId === 'dosyalarim' && (
                   <>
-                    <TouchableOpacity
-                      style={[styles.menuModalItem, styles.menuModalSubItem]}
-                      onPress={() => handleMenuItemPress('sorgularim')}
-                    >
-                      <View style={styles.menuModalItemContent}>
-                        <Ionicons name="list" size={22} color="#e2e8f0" style={{ marginLeft: 8 }} />
-                        <Text style={styles.menuModalItemText}>Sorgularım</Text>
-                      </View>
-                    </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.menuModalItem, styles.menuModalSubItem]}
                       onPress={() => handleMenuItemPress('hisseli-parsel-projelerim')}

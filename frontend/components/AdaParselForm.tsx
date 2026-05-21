@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,11 @@ import {
   Platform,
   Modal,
   FlatList,
-  Keyboard,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import locationsJson from '../src/data/locations.json';
+import { useKeyboardHeight, getKeyboardAvoidingBehavior, SCROLL_VIEW_KEYBOARD_PROPS } from '../src/keyboard';
 
 interface AdaParselFormProps {
   onClose: () => void;
@@ -33,7 +33,21 @@ interface AdaParselFormProps {
    * - "dark": 3D editor bottomsheet theme (dark slate)
    */
   variant?: "light" | "dark";
+  /** ScrollView içinde gömülü kullanım — dış KeyboardAvoidingView yok */
+  embedded?: boolean;
+  /** AppBottomSheetModal içinde — sheet klavyeyi yönetir, dış KAV yok */
+  inBottomSheet?: boolean;
 }
+
+export type AdaParselSubmitPayload = {
+  mahalleTkgmValue: number;
+  mahalle: string;
+  ada: string;
+  parsel: string;
+  proparcelValue?: number;
+  city?: string;
+  town?: string;
+};
 
 type Quarter = {
   Id: number;
@@ -86,30 +100,22 @@ const formatQuarterText = (quarter: Quarter): string => {
   return quarter.Tkgm_text || quarter.Proparcel_text || '';
 };
 
-const AdaParselForm: React.FC<AdaParselFormProps> = ({ onClose, onSubmit, variant = "light" }) => {
+const AdaParselForm: React.FC<AdaParselFormProps> = ({
+  onClose,
+  onSubmit,
+  variant = "light",
+  embedded = false,
+  inBottomSheet = false,
+}) => {
   const insets = useSafeAreaInsets();
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const keyboardHeight = useKeyboardHeight();
   const styles = useMemo(() => createStyles(variant), [variant]);
+  const useOuterKav = !embedded && !inBottomSheet;
 
   // Lokasyon verileri yerel JSON dosyasından yüklenir
   const locations = locationsJson as unknown as LocationsResponse;
   const locationsLoading = false;
   const locationsError: string | null = null;
-
-  useEffect(() => {
-    const onShow = (e: any) => {
-      const h = e?.endCoordinates?.height;
-      if (typeof h === 'number') setKeyboardHeight(h);
-    };
-    const onHide = () => setKeyboardHeight(0);
-
-    const subShow = Keyboard.addListener('keyboardDidShow', onShow);
-    const subHide = Keyboard.addListener('keyboardDidHide', onHide);
-    return () => {
-      subShow.remove();
-      subHide.remove();
-    };
-  }, []);
 
   const [selectedCity, setSelectedCity] = useState<City | null>(null);
   const [selectedTown, setSelectedTown] = useState<Town | null>(null);
@@ -206,17 +212,15 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({ onClose, onSubmit, varian
     closePicker();
   };
 
-  return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={[styles.container, { flex: 1 }]}
-      testID="search-form-container"
-    >
+  const formBody = (
+    <>
       <ScrollView
         style={[styles.formContainer, { flex: 1 }]}
         contentContainerStyle={{ paddingBottom: 16, flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps={SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
+        keyboardDismissMode={SCROLL_VIEW_KEYBOARD_PROPS.keyboardDismissMode}
         showsVerticalScrollIndicator={true}
+        nestedScrollEnabled
       >
         <View style={styles.form} testID="search-fields-area">
           <View style={styles.fieldContainer}>
@@ -315,6 +319,24 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({ onClose, onSubmit, varian
           </View>
         </View>
       </ScrollView>
+    </>
+  );
+
+  return (
+    <View
+      style={[styles.container, embedded || inBottomSheet ? styles.containerEmbedded : { flex: 1 }]}
+      testID="search-form-container"
+    >
+      {useOuterKav ? (
+        <KeyboardAvoidingView
+          behavior={getKeyboardAvoidingBehavior('form')}
+          style={{ flex: 1 }}
+        >
+          {formBody}
+        </KeyboardAvoidingView>
+      ) : (
+        formBody
+      )}
 
       <Modal
         visible={!!pickerMode}
@@ -325,10 +347,10 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({ onClose, onSubmit, varian
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView
             testID="picker-modal-view"
-            behavior="padding"
+            behavior={getKeyboardAvoidingBehavior('modal')}
             style={[
               styles.pickerModal,
-              { paddingBottom: 12 + (insets?.bottom || 0) + keyboardHeight },
+              { paddingBottom: 12 + (insets.bottom || 0) + keyboardHeight },
             ]}
           >
             <View style={styles.pickerHeader}>
@@ -371,7 +393,7 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({ onClose, onSubmit, varian
           </KeyboardAvoidingView>
         </View>
       </Modal>
-    </KeyboardAvoidingView>
+    </View>
   );
 };
 
@@ -392,6 +414,7 @@ const createStyles = (variant: "light" | "dark") => {
 
   return StyleSheet.create({
   container: { flex: 1 },
+  containerEmbedded: { flexGrow: 0 },
   formContainer: { flex: 1, backgroundColor: COLORS.bg },
   form: { padding: 16 },
   fieldContainer: { marginBottom: 12 },

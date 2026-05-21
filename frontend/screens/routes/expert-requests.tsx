@@ -12,6 +12,8 @@ import {
   RefreshControl,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
+import { KeyboardAwareModal } from "../../components/app/KeyboardAwareModal";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { WebView } from "react-native-webview";
 import { useRouter } from "../../src/hooks/useNavigation";
@@ -181,7 +183,9 @@ export default function ExpertRequestsScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollScreen
+        headerHeight={56}
+        backgroundColor="#f8fafc"
         style={styles.content}
         contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -206,10 +210,10 @@ export default function ExpertRequestsScreen() {
             />
           ))
         )}
-      </ScrollView>
+      </KeyboardAwareScrollScreen>
 
       {/* Detail modal */}
-      <Modal visible={detailOpen} animationType="slide" onRequestClose={() => setDetailOpen(false)}>
+      <KeyboardAwareModal visible={detailOpen} animationType="slide" onRequestClose={() => setDetailOpen(false)}>
         <SafeAreaView style={[styles.modalWrap, { paddingBottom: insets.bottom }]}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setDetailOpen(false)} style={styles.modalCloseBtn}>
@@ -225,7 +229,12 @@ export default function ExpertRequestsScreen() {
               <Text style={styles.emptyText}>Yükleniyor...</Text>
             </View>
           ) : (
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+            <KeyboardAwareScrollScreen
+              headerHeight={56}
+              backgroundColor="#fff"
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 16 }}
+            >
               <View style={styles.detailCard}>
                 <Text style={styles.detailLabel}>Durum</Text>
                 <Text style={styles.detailValue}>{detail.status}</Text>
@@ -322,10 +331,10 @@ export default function ExpertRequestsScreen() {
                   </TouchableOpacity>
                 </View>
               ) : null}
-            </ScrollView>
+            </KeyboardAwareScrollScreen>
           )}
         </SafeAreaView>
-      </Modal>
+      </KeyboardAwareModal>
 
       {/* PDF modal */}
       <Modal visible={pdfOpen} animationType="fade" onRequestClose={() => setPdfOpen(false)}>

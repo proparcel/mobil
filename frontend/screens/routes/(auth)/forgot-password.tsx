@@ -11,9 +11,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   ActivityIndicator,
   Alert,
   StatusBar,
@@ -21,6 +18,7 @@ import {
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../../src/hooks/useNavigation";
 import { authService } from "../../../services/authService";
+import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 
 type ResetStep = "email" | "phone" | "otp" | "reset";
 
@@ -170,10 +168,7 @@ export default function ForgotPasswordScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.topbar}>
         <TouchableOpacity
@@ -186,9 +181,11 @@ export default function ForgotPasswordScreen() {
         <Text style={styles.topbarTitle}>Şifre Sıfırla</Text>
         <View style={styles.headerRight} />
       </View>
-      <ScrollView
+      <KeyboardAwareScrollScreen
+        behaviorContext="auth"
+        headerHeight={56}
+        backgroundColor="#fff"
         contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
         <View style={styles.formHeader}>
@@ -365,8 +362,8 @@ export default function ForgotPasswordScreen() {
             </TouchableOpacity>
           </View>
         )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAwareScrollScreen>
+    </View>
   );
 }
 

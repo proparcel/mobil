@@ -2,41 +2,30 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  ScrollView,
-  StyleSheet,
+  Pressable,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import { formatTurkishPrice } from "../../src/utils/priceParser";
-import {
-  loadSavedQueries,
-  removeSavedQuery,
-  removeSavedQueryByKey,
-  findSavedQueryByKey,
-  SavedQuery,
-} from "../../src/utils/savedQueries";
-import {
-  listSavedQueriesApi,
-  deleteSavedQueryApi,
-  type ApiSavedQuery,
-  type SavedQueryListFilters,
-} from "../../services/savedQueriesApi";
+import { removeSavedQuery, removeSavedQueryByKey, SavedQuery } from "../../src/utils/savedQueries";
+import { deleteSavedQueryApi, type ApiSavedQuery } from "../../services/savedQueriesApi";
+import { SAVED_QUERIES_CHANGED } from "../../src/constants/savedQueriesEvents";
+import { useSavedQueriesList } from "../../src/hooks/useSavedQueriesList";
+import { DeviceEventEmitter } from "react-native";
+import { getSavedQueryDisplayRow, getSavedQueryItemId } from "../../src/utils/savedQueryDisplay";
 import AppBottomSheetModal from "./AppBottomSheetModal";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import {
+  USER_MENU_SHEET_SNAP_POINTS,
+  UserMenuSheetTitleRow,
+  userMenuSheetDarkStyles,
+} from "./UserMenuSheet";
 
-export type SavedQueryItem = (SavedQuery & { _fromApi?: false }) | (ApiSavedQuery & { local?: SavedQuery | null; _fromApi: true });
-
-function formatRouteMeters(m: number | null | undefined): string {
-  if (m == null || !Number.isFinite(Number(m))) return "—";
-  const n = Number(m);
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)} km`;
-  return `${Math.round(n)} m`;
-}
-
-type NavPreset = number | null; // null = tümü; metre üst sınır
+export type SavedQueryItem =
+  | (SavedQuery & { _fromApi?: false })
+  | (ApiSavedQuery & { local?: SavedQuery | null; _fromApi: true });
 
 type Props = {
   visible: boolean;
@@ -45,72 +34,51 @@ type Props = {
   isAuthenticated?: boolean;
 };
 
-const CITY_PRESETS: { label: string; value: NavPreset }[] = [
-  { label: "Tümü", value: null },
-  { label: "≤ 5 km", value: 5000 },
-  { label: "≤ 10 km", value: 10000 },
-  { label: "≤ 20 km", value: 20000 },
-  { label: "≤ 35 km", value: 35000 },
-];
-
-const TOWN_PRESETS: { label: string; value: NavPreset }[] = [
-  { label: "Tümü", value: null },
-  { label: "≤ 3 km", value: 3000 },
-  { label: "≤ 8 km", value: 8000 },
-  { label: "≤ 15 km", value: 15000 },
-];
+const st = userMenuSheetDarkStyles;
 
 export default function MyQueriesModal({ visible, onClose, onSelect, isAuthenticated }: Props) {
-  const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState<SavedQueryItem[]>([]);
-  /** Şehir / ilçe merkezine rota mesafesi üst sınırı (m); yalnızca giriş yapmış kullanıcıda API’ye gider */
-  const [maxNavCityM, setMaxNavCityM] = useState<NavPreset>(null);
-  const [maxNavTownM, setMaxNavTownM] = useState<NavPreset>(null);
   const insets = useSafeAreaInsets();
+  const { loading, items, refresh } = useSavedQueriesList(isAuthenticated, visible);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const listBottomPadding = useMemo(() => (insets.bottom || 0) + 24, [insets.bottom]);
-  const snapPoints = useMemo(() => ["70%", "88%"], []);
-
-  const navFiltersForApi = useMemo((): SavedQueryListFilters | undefined => {
-    const f: SavedQueryListFilters = {};
-    if (maxNavCityM != null) f.max_nav_city_m = maxNavCityM;
-    if (maxNavTownM != null) f.max_nav_town_m = maxNavTownM;
-    return Object.keys(f).length ? f : undefined;
-  }, [maxNavCityM, maxNavTownM]);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      if (isAuthenticated) {
-        const apiRes = await listSavedQueriesApi(navFiltersForApi);
-        if (apiRes.ok && Array.isArray(apiRes.results)) {
-          const merged: SavedQueryItem[] = [];
-          for (const apiItem of apiRes.results) {
-            const local = await findSavedQueryByKey(apiItem.tkgm_value, apiItem.ada, apiItem.parsel);
-            merged.push({ ...apiItem, local: local ?? undefined, _fromApi: true });
-          }
-          setItems(merged);
-        } else {
-          setItems([]);
-        }
-      } else {
-        const list = await loadSavedQueries();
-        setItems(Array.isArray(list) ? list : []);
-      }
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [isAuthenticated, navFiltersForApi]);
 
   useEffect(() => {
-    if (visible) refresh();
-  }, [visible, refresh]);
+    if (!visible) setSelectedIds(new Set());
+  }, [visible]);
+
+  useEffect(() => {
+    const valid = new Set(items.map(getSavedQueryItemId));
+    setSelectedIds((prev) => {
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (valid.has(id)) next.add(id);
+      });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [items]);
 
   const empty = useMemo(() => !loading && items.length === 0, [loading, items.length]);
+  const allSelected = items.length > 0 && selectedIds.size === items.length;
 
-  const handleDelete = useCallback(
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(items.map(getSavedQueryItemId)));
+  }, [allSelected, items]);
+
+  const deleteOne = useCallback(
     async (item: SavedQueryItem) => {
       try {
         if (item._fromApi && "id" in item && typeof item.id === "number") {
@@ -123,264 +91,241 @@ export default function MyQueriesModal({ visible, onClose, onSelect, isAuthentic
         } else {
           await removeSavedQuery(String((item as SavedQuery).id));
         }
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(getSavedQueryItemId(item));
+          return next;
+        });
         await refresh();
-      } catch (e: any) {
-        Alert.alert("Hata", e?.message || "Silme işlemi başarısız oldu.");
+        DeviceEventEmitter.emit(SAVED_QUERIES_CHANGED);
+      } catch (e: unknown) {
+        Alert.alert("Hata", (e as Error)?.message || "Silme işlemi başarısız oldu.");
       }
     },
-    [refresh]
+    [refresh],
   );
+
+  const deleteSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const targets = items.filter((q) => selectedIds.has(getSavedQueryItemId(q)));
+    try {
+      for (const item of targets) {
+        if (item._fromApi && "id" in item && typeof item.id === "number") {
+          const delRes = await deleteSavedQueryApi(item.id);
+          if (!delRes.ok) {
+            Alert.alert("Hata", delRes.error || "Silme işlemi başarısız oldu.");
+            return;
+          }
+          await removeSavedQueryByKey(item.tkgm_value, item.ada, item.parsel);
+        } else {
+          await removeSavedQuery(String((item as SavedQuery).id));
+        }
+      }
+      setSelectedIds(new Set());
+      await refresh();
+      DeviceEventEmitter.emit(SAVED_QUERIES_CHANGED);
+    } catch (e: unknown) {
+      Alert.alert("Hata", (e as Error)?.message || "Silme işlemi başarısız oldu.");
+    }
+  }, [selectedIds, items, refresh]);
 
   return (
     <AppBottomSheetModal
       visible={visible}
       onClose={onClose}
-      snapPoints={snapPoints}
+      snapPoints={[...USER_MENU_SHEET_SNAP_POINTS]}
       initialIndex={0}
-      modalProps={{
-        // keep same look/feel as previous sheet
-        containerStyle: styles.backdrop,
-      }}
+      variant="dark"
+      backdropOpacity={0.2}
+      backdropPressBehavior="close"
     >
-      <View>
-        <View style={styles.header}>
-          <Text style={styles.title}>Sorgularım</Text>
-          <View style={styles.headerBtns}>
-            <TouchableOpacity onPress={refresh} style={styles.iconBtn} accessibilityLabel="Yenile">
-              <Ionicons name="refresh" size={18} color="#334155" />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={onClose} style={styles.iconBtn} accessibilityLabel="Kapat">
-              <Ionicons name="close" size={20} color="#334155" />
-            </TouchableOpacity>
-          </View>
+      <View style={{ paddingBottom: insets.bottom, flex: 1 }}>
+        <UserMenuSheetTitleRow title="Sorgularım" variant="dark" />
+        <View style={localStyles.toolbar}>
+          <TouchableOpacity onPress={() => void refresh()} style={localStyles.toolBtn} accessibilityLabel="Yenile">
+            <Ionicons name="refresh" size={18} color="#e2e8f0" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onClose} style={localStyles.toolBtn} accessibilityLabel="Kapat">
+            <Ionicons name="close" size={20} color="#e2e8f0" />
+          </TouchableOpacity>
         </View>
-        {isAuthenticated ? (
-          <View style={styles.filterBlock}>
-            <Text style={styles.filterLabel}>Şehir merkezi (rota)</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterRow}
-            >
-              {CITY_PRESETS.map((p) => {
-                const sel = maxNavCityM === p.value;
-                return (
-                  <TouchableOpacity
-                    key={`c-${p.label}-${p.value ?? "all"}`}
-                    onPress={() => {
-                      setMaxNavCityM(p.value);
-                    }}
-                    style={[styles.chip, sel && styles.chipSelected]}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: sel }}
-                  >
-                    <Text style={[styles.chipText, sel && styles.chipTextSelected]}>{p.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <Text style={[styles.filterLabel, styles.filterLabelSecond]}>İlçe merkezi (rota)</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterRow}
-            >
-              {TOWN_PRESETS.map((p) => {
-                const sel = maxNavTownM === p.value;
-                return (
-                  <TouchableOpacity
-                    key={`t-${p.label}-${p.value ?? "all"}`}
-                    onPress={() => {
-                      setMaxNavTownM(p.value);
-                    }}
-                    style={[styles.chip, sel && styles.chipSelected]}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: sel }}
-                  >
-                    <Text style={[styles.chipText, sel && styles.chipTextSelected]}>{p.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-            <Text style={styles.filterHint}>
-              Mesafe verisi yoksa sonuç listesinde görünmez. Listeyi yenileyin veya yeni sorgu kaydedin.
-            </Text>
-          </View>
-        ) : null}
-      </View>
 
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color="#93c5fd" />
-          <Text style={styles.muted}>Yükleniyor…</Text>
-        </View>
-      ) : empty ? (
-        <View style={styles.center}>
-          <Text style={styles.muted}>Kayıtlı sorgu yok.</Text>
-        </View>
-      ) : (
-        <BottomSheetScrollView
-          style={styles.list}
-          contentContainerStyle={[styles.listContent, { paddingBottom: listBottomPadding }]}
-          scrollEventThrottle={16}
-        >
-          {items.map((q) => {
-            const apiTitle = "title" in q ? q.title : null;
-            const baseTitle = apiTitle || `${q.ada}/${q.parsel} • ${q.tkgm_value}`;
-            const local = "_fromApi" in q && q._fromApi ? q.local : undefined;
-            const unit = (local?.price_snapshot ?? (q as SavedQuery).price_snapshot)?.unit_price ?? null;
-            const total = (local?.price_snapshot ?? (q as SavedQuery).price_snapshot)?.total_price ?? null;
-            const createdAt = "created_at" in q ? q.created_at : (q as SavedQuery).createdAt;
-            // Uzman talebi sorguları için badge ve durum ikonu
-            const isExpertRequest = "_fromApi" in q && q._fromApi && q.source_type === "expert_request";
-            const responseStatus = "_fromApi" in q && q._fromApi ? q.responseStatus : null;
-            const title = isExpertRequest && !String(baseTitle).includes("-talep") ? `${baseTitle} -talep` : baseTitle;
-            return (
-              <View key={String(q.id)} style={styles.card}>
-                <TouchableOpacity onPress={() => onSelect(q)} style={styles.cardMain} activeOpacity={0.8}>
-                  <View style={styles.cardTitleRow}>
-                    {isExpertRequest && <View style={styles.requestDot} />}
-                    <Text style={[styles.cardTitle, isExpertRequest && styles.cardTitleWithBadge]} numberOfLines={1}>
-                      {title}
-                    </Text>
-                    {isExpertRequest && responseStatus && (
+        {loading ? (
+          <View style={localStyles.center}>
+            <ActivityIndicator color="#60a5fa" />
+            <Text style={localStyles.muted}>Yükleniyor…</Text>
+          </View>
+        ) : empty ? (
+          <View style={localStyles.center}>
+            <Text style={localStyles.muted}>Henüz kayıtlı sorgu yok.</Text>
+          </View>
+        ) : (
+          <>
+            <View style={localStyles.actionsRow}>
+              <TouchableOpacity onPress={toggleSelectAll} style={localStyles.actionBtn} activeOpacity={0.7}>
+                <Text style={localStyles.actionBtnText}>{allSelected ? "Seçimi kaldır" : "Hepsini seç"}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void deleteSelected()}
+                style={[localStyles.actionBtn, localStyles.actionBtnDanger, selectedIds.size === 0 && localStyles.actionBtnDisabled]}
+                disabled={selectedIds.size === 0}
+                activeOpacity={0.7}
+              >
+                <Text style={[localStyles.actionBtnText, localStyles.actionBtnDangerText]}>
+                  {selectedIds.size > 0 ? `Seçilenleri sil (${selectedIds.size})` : "Seçilenleri sil"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <BottomSheetScrollView
+              style={st.scroll}
+              contentContainerStyle={{ flexGrow: 1, paddingBottom: listBottomPadding }}
+              scrollEventThrottle={16}
+              nestedScrollEnabled
+            >
+              {items.map((q) => {
+                const row = getSavedQueryDisplayRow(q);
+                const itemId = row.id;
+                const checked = selectedIds.has(itemId);
+                const subLine =
+                  `Ada/Parsel: ${row.ada}/${row.parsel}` + (row.alan ? ` · Alan: ${row.alan}` : "");
+
+                return (
+                  <View key={itemId} style={localStyles.card}>
+                    <Pressable
+                      onPress={() => toggleSelect(itemId)}
+                      style={localStyles.checkHit}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked }}
+                      accessibilityLabel="Sorguyu seç"
+                    >
                       <Ionicons
-                        name={responseStatus === "answered" ? "checkmark-circle" : "time-outline"}
-                        size={16}
-                        color={responseStatus === "answered" ? "#22c55e" : "#fbbf24"}
-                        style={styles.statusIcon}
+                        name={checked ? "checkbox" : "square-outline"}
+                        size={22}
+                        color={checked ? "#60a5fa" : "#64748b"}
                       />
-                    )}
+                    </Pressable>
+
+                    <TouchableOpacity
+                      onPress={() => onSelect(q)}
+                      style={localStyles.cardMain}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${row.il} ${row.ilce} ${row.mahalle} sorguyu çalıştır`}
+                    >
+                      <View style={localStyles.titleRow}>
+                        <Text style={localStyles.cardTitle} numberOfLines={1}>
+                          {row.il} / {row.ilce}
+                        </Text>
+                        <View style={localStyles.modeBadge}>
+                          <Text style={localStyles.modeBadgeText}>{row.modeLabel}</Text>
+                        </View>
+                      </View>
+                      <Text style={localStyles.cardMeta} numberOfLines={1}>
+                        {row.mahalle}
+                      </Text>
+                      <Text style={localStyles.cardSub} numberOfLines={1}>
+                        {subLine}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => void deleteOne(q)}
+                      style={localStyles.delBtn}
+                      accessibilityLabel="Sorguyu sil"
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#f87171" />
+                    </TouchableOpacity>
                   </View>
-                  <Text style={styles.cardSub} numberOfLines={1}>
-                    Birim: {formatTurkishPrice(unit)} • Toplam: {formatTurkishPrice(total)}
-                  </Text>
-                  <Text style={styles.cardMeta} numberOfLines={1}>
-                    {new Date(createdAt).toLocaleString("tr-TR")}
-                  </Text>
-                  {"_fromApi" in q && q._fromApi && (q.nav_in_distance_m_city != null || q.nav_in_distance_m_town != null) ? (
-                    <Text style={styles.cardNav} numberOfLines={1}>
-                      Şehir: {formatRouteMeters(q.nav_in_distance_m_city)} • İlçe:{" "}
-                      {formatRouteMeters(q.nav_in_distance_m_town)}
-                    </Text>
-                  ) : null}
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleDelete(q)} style={styles.delBtn} accessibilityLabel="Sil">
-                  <Ionicons name="trash-outline" size={18} color="#ef4444" />
-                </TouchableOpacity>
-              </View>
-            );
-          })}
-        </BottomSheetScrollView>
-      )}
+                );
+              })}
+              <View style={{ minHeight: 16 }} />
+            </BottomSheetScrollView>
+          </>
+        )}
+      </View>
     </AppBottomSheetModal>
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    // BottomSheetModal container style
-    backgroundColor: "transparent",
-  },
-  sheet: {
-    backgroundColor: "#f3f4f6",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(15,23,42,0.10)",
-    overflow: "hidden",
-  },
-  header: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(15,23,42,0.08)",
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  filterBlock: {
-    paddingHorizontal: 14,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(15,23,42,0.06)",
-    backgroundColor: "#f8fafc",
-  },
-  filterLabel: { fontSize: 11, fontWeight: "700", color: "rgba(15,23,42,0.55)", marginTop: 4 },
-  filterLabelSecond: { marginTop: 10 },
-  filterRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, paddingRight: 8 },
-  chip: {
-    marginRight: 8,
+const localStyles = {
+  toolbar: {
+    flexDirection: "row" as const,
+    justifyContent: "flex-end" as const,
+    gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(15,23,42,0.12)",
-    backgroundColor: "#fff",
+    paddingBottom: 8,
   },
-  chipSelected: {
-    borderColor: "#3b82f6",
-    backgroundColor: "rgba(59,130,246,0.12)",
-  },
-  chipText: { fontSize: 12, fontWeight: "700", color: "#475569" },
-  chipTextSelected: { color: "#1d4ed8" },
-  filterHint: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "rgba(15,23,42,0.45)",
-    marginTop: 4,
-    lineHeight: 14,
-  },
-  title: { color: "#0f172a", fontSize: 16, fontWeight: "800" },
-  headerBtns: { marginLeft: "auto", flexDirection: "row", gap: 8 },
-  iconBtn: {
+  toolBtn: {
     width: 36,
     height: 36,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(15,23,42,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.9)",
+    borderColor: "#475569",
+    backgroundColor: "#334155",
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
   },
-  center: { padding: 18, alignItems: "center", gap: 10 },
-  muted: { color: "rgba(15,23,42,0.65)", fontSize: 12, fontWeight: "600" },
-  list: { flex: 1, paddingHorizontal: 0 },
-  listContent: { paddingVertical: 0 },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    borderWidth: 0,
+  center: { padding: 18, alignItems: "center" as const, gap: 10 },
+  muted: { color: "#94a3b8", fontSize: 12, fontWeight: "600" as const },
+  actionsRow: {
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(15,23,42,0.12)",
-    backgroundColor: "#ffffff",
-    borderRadius: 0,
+    borderBottomColor: "#334155",
+  },
+  actionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#475569",
+    backgroundColor: "#334155",
+  },
+  actionBtnDanger: {
+    borderColor: "rgba(248,113,113,0.45)",
+    backgroundColor: "rgba(127,29,29,0.35)",
+  },
+  actionBtnDisabled: { opacity: 0.45 },
+  actionBtnText: { fontSize: 12, fontWeight: "700" as const, color: "#e2e8f0" },
+  actionBtnDangerText: { color: "#fca5a5" },
+  card: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
     paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
+    marginHorizontal: 4,
+    borderRadius: 12,
+    marginBottom: 2,
   },
-  cardMain: { flex: 1 },
-  cardTitleRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
-  cardTitle: { color: "#0f172a", fontSize: 13, fontWeight: "800", flex: 1 },
-  cardTitleWithBadge: { flex: 0, marginLeft: 6 },
-  requestDot: {
-    width: 8,
-    height: 8,
+  checkHit: { padding: 4 },
+  cardMain: { flex: 1, minWidth: 0 },
+  titleRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
+  cardTitle: { color: "#e2e8f0", fontSize: 13, fontWeight: "800" as const, flexShrink: 1 },
+  modeBadge: {
+    backgroundColor: "rgba(59,130,246,0.2)",
     borderRadius: 4,
-    backgroundColor: "#f59e0b",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
-  statusIcon: { marginLeft: 6 },
-  cardSub: { color: "rgba(15,23,42,0.65)", fontSize: 12, marginTop: 4, fontWeight: "600" },
-  cardMeta: { color: "rgba(15,23,42,0.45)", fontSize: 11, marginTop: 6, fontWeight: "600" },
-  cardNav: { color: "rgba(30,64,175,0.85)", fontSize: 11, marginTop: 5, fontWeight: "700" },
+  modeBadgeText: { fontSize: 10, fontWeight: "800" as const, color: "#93c5fd" },
+  cardMeta: { color: "#94a3b8", fontSize: 12, marginTop: 4, fontWeight: "600" as const },
+  cardSub: { color: "#64748b", fontSize: 11, marginTop: 4, fontWeight: "600" as const },
   delBtn: {
     width: 36,
     height: 36,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.20)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(239,68,68,0.08)",
+    borderColor: "rgba(248,113,113,0.35)",
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: "rgba(127,29,29,0.25)",
   },
-});
-
+};

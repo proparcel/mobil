@@ -23,6 +23,12 @@ import {
 import AranacaklarScreenShell from '../../components/app/AranacaklarScreenShell';
 import { formatIntentCardParts } from '../../src/utils/aranacaklarIntentCategory';
 import { followupTone, followupToneLabel } from '../../src/utils/aranacaklarFollowupTone';
+import { getNextSearchCountdownLabel } from '../../src/utils/aranacaklarFollowupSchedule';
+import {
+  contactSideBadgeColors,
+  formatContactSideLabel,
+} from '../../src/utils/aranacaklarContactSide';
+import { syncAranacaklarListNotifications } from '../../services/aranacaklarLocalNotifications';
 
 const COLORS = {
   textPrimary: '#0f172a',
@@ -54,7 +60,9 @@ export default function AranacaklarScreen() {
       setRows([]);
       return;
     }
-    setRows(Array.isArray(res.data?.results) ? res.data.results : []);
+    const list = Array.isArray(res.data?.results) ? res.data.results : [];
+    setRows(list);
+    void syncAranacaklarListNotifications(list);
   }, [isAuthenticated]);
 
   React.useEffect(() => {
@@ -122,6 +130,11 @@ export default function AranacaklarScreen() {
             const tel = c.phone_e164 || c.phone_raw;
             const parts = item.intent ? formatIntentCardParts(item.intent as Record<string, unknown>) : null;
             const ft = followupTone(item.followup as Record<string, unknown> | null, item.contact as Record<string, unknown>);
+            const countdownLabel = getNextSearchCountdownLabel(
+              item.followup as { next_due_at?: string; interval_months?: number } | null,
+            );
+            const sideLabel = formatContactSideLabel(c.contact_side);
+            const sideColors = contactSideBadgeColors(c.contact_side);
             const fuPillStyle =
               ft === 'overdue'
                 ? styles.fuPillOverdue
@@ -153,11 +166,28 @@ export default function AranacaklarScreen() {
                 )}
               >
                 <View style={styles.card}>
+                  {countdownLabel ? (
+                    <Text style={styles.countdown} numberOfLines={2}>
+                      {countdownLabel}
+                    </Text>
+                  ) : null}
                   <View style={styles.cardRow}>
                     <View style={styles.cardLeft}>
-                      <Text style={styles.name} numberOfLines={2}>
-                        {c.full_name}
-                      </Text>
+                      <View style={styles.nameRow}>
+                        <Text style={styles.name} numberOfLines={2}>
+                          {c.full_name}
+                        </Text>
+                        {sideLabel ? (
+                          <View
+                            style={[
+                              styles.sideBadge,
+                              { backgroundColor: sideColors.bg, borderColor: sideColors.border },
+                            ]}
+                          >
+                            <Text style={[styles.sideBadgeText, { color: sideColors.text }]}>{sideLabel}</Text>
+                          </View>
+                        ) : null}
+                      </View>
                       <Text style={styles.phone}>{c.phone_raw || c.phone_e164}</Text>
                       <Text style={[styles.fuPill, fuPillStyle]}>{followupToneLabel(ft)}</Text>
                       {parts ? (
@@ -254,10 +284,24 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.borderSoft,
   },
+  countdown: {
+    color: COLORS.accentBlue,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   cardLeft: { flex: 1, minWidth: 0 },
   cardRight: { width: 96, flexShrink: 0, alignItems: 'stretch', gap: 8 },
-  name: { color: COLORS.textPrimary, fontSize: 17, fontWeight: '600' },
+  nameRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  name: { color: COLORS.textPrimary, fontSize: 17, fontWeight: '600', flexShrink: 1 },
+  sideBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  sideBadgeText: { fontSize: 11, fontWeight: '800' },
   phone: { color: COLORS.textSecondary, marginTop: 4, fontSize: 14 },
   intentBlock: { marginTop: 10, gap: 4 },
   intentHeadline: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '600' },

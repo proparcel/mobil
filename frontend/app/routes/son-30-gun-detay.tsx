@@ -1501,6 +1501,9 @@ export default function Son30GunDetayScreen() {
     router.push('portal-v5-report-webview', {
       snapshotId: String(data.snapshot_id),
       sharePdf: '1',
+      mahalle: String(data.quarter_name ?? '').trim(),
+      ada: String(data.ada ?? '').trim(),
+      parsel: String(data.parsel ?? '').trim(),
     });
   }, [data, router]);
 
@@ -3841,7 +3844,6 @@ export default function Son30GunDetayScreen() {
               const morphRows = [
                 { label: 'Arazi Sınıfı', value: String(morphology.type_label || '—') },
                 { label: 'Morfoloji Tipi', value: String(morphology.type || '—') },
-                { label: 'Açıklama', value: String(morphology.description || '—') },
                 {
                   label: 'Güven Seviyesi',
                   value: morphology.confidence != null && morphology.confidence !== ''
@@ -3884,15 +3886,8 @@ export default function Son30GunDetayScreen() {
 
               return (
                 <View ref={slopeSectionRef}>
-                  <View style={s.card}>
-                    <View style={s.cardTitleRow}>
-                      <Ionicons name="trending-up" size={16} color={COLORS.accentBlue} />
-                      <Text style={s.cardTitle}>Parsel Eğimi</Text>
-                    </View>
-                    <Text style={s.slopeTabSubtitle}>Parselin eğim, rakım ve arazi formu özeti (web ile aynı kaynak)</Text>
-                    <View style={s.slopeTerrainWrap}>
-                      <PortalSlopeTerrainCard slope={avgSlope} />
-                    </View>
+                  <View style={[s.card, s.slopeTerrainTopCard]}>
+                    <PortalSlopeTerrainCard slope={avgSlope} />
                   </View>
                   {renderSlopeBlock('Morfoloji Özeti', morphRows)}
                   <View style={s.card}>
@@ -4882,7 +4877,7 @@ const s = StyleSheet.create({
     paddingBottom: 32,
   },
   slopeTabSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10 },
-  slopeTerrainWrap: { alignItems: 'center', marginTop: 4 },
+  slopeTerrainTopCard: { paddingVertical: 12, paddingHorizontal: 10 },
   slopeDetailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

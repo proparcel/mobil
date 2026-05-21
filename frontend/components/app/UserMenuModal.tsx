@@ -134,6 +134,14 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
         });
         return;
       }
+      if (itemId === "ai-video") {
+        setSubmenuOpenId((prev) => {
+          const next = prev === "ai-video" ? null : "ai-video";
+          setMenuSheetIndex(next ? 1 : 0);
+          return next;
+        });
+        return;
+      }
 
       onClose();
       setSubmenuOpenId(null);
@@ -143,7 +151,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
       const run = () => {
         switch (itemId) {
           case "landing-intro":
-            router.push("landing");
+            router.push("landing", { skipIntro: true });
             break;
           case "emlak-vitrini":
             router.push("emlak-vitrini");
@@ -199,15 +207,28 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
           case "ilanlarim":
             router.push("ilanlarim");
             break;
-          case "ai-video-olusturucu":
+          case "ai-video-studio":
             if (!isAuthenticated) {
-              Alert.alert("Giriş gerekli", "AI Video Oluşturucu için giriş yapın.", [
+              Alert.alert("Giriş gerekli", "AI Video için giriş yapın.", [
                 { text: "İptal", style: "cancel" },
                 { text: "Giriş", onPress: () => router.push("login") },
               ]);
               return;
             }
             router.push("ai-video-studio");
+            break;
+          case "ai-image-animation":
+            if (!isAuthenticated) {
+              Alert.alert("Giriş gerekli", "AI Resim için giriş yapın.", [
+                { text: "İptal", style: "cancel" },
+                { text: "Giriş", onPress: () => router.push("login") },
+              ]);
+              return;
+            }
+            router.push("ai-image-animation-purchase");
+            break;
+          case "ai-drone-video":
+            router.push("ai-drone-video-info");
             break;
           case "ilan-mesajlar":
             if (!isAuthenticated) {

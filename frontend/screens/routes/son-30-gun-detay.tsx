@@ -17,12 +17,13 @@ import {
   Pressable,
   FlatList,
   Platform,
+  DeviceEventEmitter,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AppBottomSheetModal from '../../components/app/AppBottomSheetModal';
-import UserMenuModal from '../../components/app/UserMenuModal';
+import { KeyboardAwareScrollScreen } from '../../components/app/KeyboardAwareScrollScreen';
 import ListingFavoriteMenuMobile from '../../components/app/ListingFavoriteMenuMobile';
 import QueryFavoriteMenuMobile from '../../components/app/QueryFavoriteMenuMobile';
 import { usePortalDetailScoresData } from '../../components/app/PortalDetailScoresBlock';
@@ -34,8 +35,13 @@ import PortalWindEnergyCard from '../../components/app/PortalWindEnergyCard';
 import ListingDescriptionRich from '../../components/app/ListingDescriptionRich';
 import PortalSlopeTerrainCard from '../../components/app/PortalSlopeTerrainCard';
 import PortalParcelSplitDetailCard from '../../components/app/PortalParcelSplitDetailCard';
+import PortalDfaTableCard from '../../components/app/PortalDfaTableCard';
 import { formatListingAttributeValueTr, listingAttributeLabelTr } from '../../src/utils/listingAttributeLabels';
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
+import {
+  PORTAL_RECENT_QUERIES_CHANGED,
+  type PortalRecentQueriesChangedPayload,
+} from '../../src/constants/portalEvents';
 import { useAuth } from '../contexts/AuthContext';
 import {
   createPortalQueryComment,
@@ -56,6 +62,7 @@ import {
   updatePortalQueryComment,
   getPortalSolarEnergyScore,
   getPortalWindEnergyScore,
+  getPortalDetailSection,
 } from '../../services/portalService';
 import { authJsonFetch } from '../../services/apiClient';
 import { authService } from '../../services/authService';
@@ -63,18 +70,12 @@ import type {
   PortalQueryComment,
   PortalQueryDetail,
   PortalListingVideoItem,
-  PortalDfaStep,
   PortalExpertResponse,
   PortalRatingsResponse,
   QueryRatingCreatePayload,
   PortalSolarEnergyScoreResponse,
   PortalWindEnergyScoreResponse,
 } from '../../src/types/portal';
-import {
-  buildDfaRowsFromSteps,
-  formatTotalAppliedPercent,
-  getPortalDfaPriceFooter,
-} from '../../src/utils/portalDfaHelpers';
 import { normalizeParcelShapeLabel } from '../../src/utils/normalizeParcelShapeLabel';
 import { API_URL, FALLBACK_API_URL } from '../../config/api';
 import { portalPageUrl } from '../../config/portalSite';
@@ -1094,7 +1095,13 @@ function getStaticMapUrl(coords: number[][] | null): string | null {
 export default function Son30GunDetayScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ snapshotId?: string; commentId?: string; ratingId?: string; listingId?: string }>();
+  const params = useLocalSearchParams<{
+    snapshotId?: string;
+    commentId?: string;
+    ratingId?: string;
+    listingId?: string;
+    fromProQuery?: string;
+  }>();
   const { user, isAuthenticated } = useAuth();
   const expertSectionRef = useRef<View>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -1103,7 +1110,6 @@ export default function Son30GunDetayScreen() {
   const kmSectionRef = useRef<View>(null);
   const slopeSectionRef = useRef<View>(null);
   const electricSectionRef = useRef<View>(null);
-  const streetViewSectionRef = useRef<View>(null);
   const dfaSectionRef = useRef<View>(null);
   const listingDescSectionRef = useRef<View>(null);
   const listingInfoSectionRef = useRef<View>(null);
@@ -1112,7 +1118,6 @@ export default function Son30GunDetayScreen() {
   const snapshotId = params.snapshotId ? parseInt(params.snapshotId, 10) : NaN;
   const targetCommentId = params.commentId ? parseInt(params.commentId, 10) : null;
   const [detailMenuVisible, setDetailMenuVisible] = useState(false);
-  const [userMenuVisible, setUserMenuVisible] = useState(false);
   const [detailMenuLihkabOpen, setDetailMenuLihkabOpen] = useState(false);
   const [activeDetailTabId, setActiveDetailTabId] = useState<string>('overview');
   const [solarEnergyPayload, setSolarEnergyPayload] = useState<PortalSolarEnergyScoreResponse | null>(null);
@@ -1123,6 +1128,10 @@ export default function Son30GunDetayScreen() {
   const [windEnergyLoading, setWindEnergyLoading] = useState(false);
   const [windEnergyErr, setWindEnergyErr] = useState<string | null>(null);
   const windEnergyFetchedRef = useRef(false);
+  const [splitAnalysis, setSplitAnalysis] = useState<Record<string, unknown> | null>(null);
+  const [splitLoading, setSplitLoading] = useState(false);
+  const [splitErr, setSplitErr] = useState<string | null>(null);
+  const splitFetchedRef = useRef(false);
 
   const scrollToSection = useCallback((tabId: string, ref: React.RefObject<View>) => {
     setActiveDetailTabId(tabId);
@@ -1136,9 +1145,16 @@ export default function Son30GunDetayScreen() {
     }, 450);
   }, []);
 
+  const ensureOverviewTabForDfaInput = useCallback(() => {
+    if (activeDetailTabId !== 'overview') {
+      setActiveDetailTabId('overview');
+    }
+  }, [activeDetailTabId]);
+
   const [data, setData] = useState<PortalQueryDetail | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const detailLoadedRef = useRef(false);
+  const detailFetchSeqRef = useRef(0);
   const [expertModalOpen, setExpertModalOpen] = useState(false);
   const [expertNote, setExpertNote] = useState('');
   const [expertPrice, setExpertPrice] = useState<string>('');
@@ -1257,25 +1273,57 @@ export default function Son30GunDetayScreen() {
     }
   }, [detailTabDefs, activeDetailTabId]);
 
-  // Load detail
-  const loadDetail = useCallback(async () => {
-    if (!isFinite(snapshotId)) {
+  // Portal detay — tam ekran loading yok; ilk açılışta kabuk, veri arka planda gelir
+  const loadDetail = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!Number.isFinite(snapshotId)) {
       setError('Geçersiz sorgu ID');
-      setLoading(false);
       return;
     }
-    setLoading(true);
-    setError(null);
+    const silent = opts?.silent ?? detailLoadedRef.current;
+    const seq = ++detailFetchSeqRef.current;
+    if (!silent) {
+      setError(null);
+    }
     const res = await getPortalRecentQueryDetail(snapshotId);
+    if (seq !== detailFetchSeqRef.current) {
+      return;
+    }
     if (res.ok) {
       setData(res.data);
-    } else {
+      setError(null);
+      detailLoadedRef.current = true;
+    } else if (!detailLoadedRef.current) {
       setError(res.error || 'Bir hata oluştu');
     }
-    setLoading(false);
   }, [snapshotId]);
 
-  useEffect(() => { loadDetail(); }, [loadDetail]);
+  useEffect(() => {
+    detailLoadedRef.current = false;
+    detailFetchSeqRef.current = 0;
+    setData(null);
+    setError(null);
+    loadDetail({ silent: false });
+  }, [snapshotId, loadDetail]);
+
+  /** Pro sorgudan sonra: tek sessiz yenileme (thumbnail / DFA gecikmesi) */
+  useEffect(() => {
+    if (params.fromProQuery !== '1' || !Number.isFinite(snapshotId)) return;
+    const t = setTimeout(() => loadDetail({ silent: true }), 2500);
+    return () => clearTimeout(t);
+  }, [params.fromProQuery, snapshotId, loadDetail]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      PORTAL_RECENT_QUERIES_CHANGED,
+      (payload: PortalRecentQueriesChangedPayload) => {
+        const sid = payload?.snapshotId;
+        if (sid != null && Number(sid) === snapshotId) {
+          loadDetail({ silent: true });
+        }
+      },
+    );
+    return () => sub.remove();
+  }, [snapshotId, loadDetail]);
 
   useEffect(() => {
     heroTopDefaultAppliedRef.current = false;
@@ -1296,6 +1344,9 @@ export default function Son30GunDetayScreen() {
     setWindEnergyPayload(null);
     setWindEnergyErr(null);
     windEnergyFetchedRef.current = false;
+    setSplitAnalysis(null);
+    setSplitErr(null);
+    splitFetchedRef.current = false;
     setHeroVideoPausedByIndex({});
     setHeroVideoTapNonce({});
     setHeroVideoMuted(true);
@@ -1363,6 +1414,40 @@ export default function Son30GunDetayScreen() {
       })
       .finally(() => {
         if (!cancelled) setWindEnergyLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDetailTabId, data?.snapshot_id, snapshotId]);
+
+  useEffect(() => {
+    if (activeDetailTabId !== 'split') return;
+    const sid = Number(data?.snapshot_id ?? snapshotId);
+    if (!Number.isFinite(sid) || sid <= 0) return;
+    if (splitFetchedRef.current) return;
+    splitFetchedRef.current = true;
+    let cancelled = false;
+    setSplitLoading(true);
+    setSplitErr(null);
+    getPortalDetailSection(sid, 'split')
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok && res.data) {
+          const analysis = res.data.parcel_split_analysis;
+          setSplitAnalysis(analysis && typeof analysis === 'object' ? (analysis as Record<string, unknown>) : null);
+        } else {
+          setSplitErr(res.error || 'Bölünebilirlik verisi alınamadı');
+          splitFetchedRef.current = false;
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setSplitErr(e instanceof Error ? e.message : 'Hata');
+          splitFetchedRef.current = false;
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSplitLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1501,6 +1586,9 @@ export default function Son30GunDetayScreen() {
     router.push('portal-v5-report-webview', {
       snapshotId: String(data.snapshot_id),
       sharePdf: '1',
+      mahalle: String(data.quarter_name ?? '').trim(),
+      ada: String(data.ada ?? '').trim(),
+      parsel: String(data.parsel ?? '').trim(),
     });
   }, [data, router]);
 
@@ -1680,7 +1768,7 @@ export default function Son30GunDetayScreen() {
       setElectricDraftStart(null);
       setElectricDraftCursor(null);
       setElectricSelectedVoltageKv(64);
-      await loadDetail();
+      await loadDetail({ silent: true });
       Alert.alert('Başarılı', 'Sorgu kullanıcı yol/hat bildirimine göre güncellendi.');
     } finally {
       setRoadRerunSubmitting(false);
@@ -1727,7 +1815,7 @@ export default function Son30GunDetayScreen() {
       }
       setExpertModalOpen(false);
       Alert.alert('Başarılı', 'Uzman talebi oluşturuldu');
-      loadDetail();
+      loadDetail({ silent: true });
     } catch (err: any) {
       Alert.alert('Hata', err?.message || 'Bir hata oluştu');
     } finally {
@@ -1836,7 +1924,7 @@ export default function Son30GunDetayScreen() {
       if (res.ok) {
         setEvalModalVisible(false);
         const coins = res.data?.coin_awarded ?? 5;
-        loadDetail();
+        loadDetail({ silent: true });
         loadRatingModalData(data.snapshot_id);
         Alert.alert('Teşekkürler!', `${coins} Tepe Coin hesabınıza eklendi.`);
       } else if (res.status === 409) {
@@ -1894,7 +1982,7 @@ export default function Son30GunDetayScreen() {
         setCommentDraft('');
         setEditingCommentId(null);
         setReplyParentCommentId(null);
-        await Promise.all([loadDetail(), loadRatingModalData(data.snapshot_id)]);
+        await Promise.all([loadDetail({ silent: true }), loadRatingModalData(data.snapshot_id)]);
       } else {
         setCommentError(res.error || 'Yorum kaydedilemedi.');
       }
@@ -1928,7 +2016,7 @@ export default function Son30GunDetayScreen() {
           setCommentDraft('');
         }
         if (data) {
-          await Promise.all([loadDetail(), loadRatingModalData(data.snapshot_id)]);
+          await Promise.all([loadDetail({ silent: true }), loadRatingModalData(data.snapshot_id)]);
         }
       } else {
         setCommentError(res.error || 'Yorum silinemedi.');
@@ -1992,104 +2080,6 @@ export default function Son30GunDetayScreen() {
   }, [data]);
 
   // ── Render Helpers ──
-
-  const renderDfaTable = (steps: PortalDfaStep[]) => {
-    if (!steps || !steps.length || !data) return null;
-    const rows = buildDfaRowsFromSteps(steps);
-    const footer = getPortalDfaPriceFooter(data);
-    const appliedPct = formatTotalAppliedPercent(data, rows);
-    return (
-      <View style={s.card}>
-        <Text style={s.cardTitle}>Detaylı Fiyat Analizi Tablosu</Text>
-        <View>
-          <View style={s.dfaHeaderRow}>
-            <Text style={[s.dfaCell, s.dfaCellDesc, s.dfaHeaderText]}>Açıklama</Text>
-            <Text style={[s.dfaCell, s.dfaCellPctCol, s.dfaHeaderText]}>Yüzde</Text>
-          </View>
-          {rows.map((row, i) => {
-            const isPositive = row.tone === 'positive';
-            const isNegative = row.tone === 'negative';
-            const descLower = String(row.description || '').toLowerCase();
-            const canReportRoad = descLower.includes('yola bağlantısı yok');
-            const canReportElectric = descLower.includes('yüksek gerilim hattı')
-              || descLower.includes('elektrik hattı');
-            const isElectricRelatedRow = descLower.includes('yüksek gerilim') || descLower.includes('elektrik hattı');
-            return (
-              <View
-                key={row.key}
-                style={[s.dfaRow, i % 2 === 0 && s.dfaRowAlt, isPositive && s.dfaRowPos, isNegative && s.dfaRowNeg]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.dfaCell, s.dfaCellDesc]}>{row.description}</Text>
-                  {isElectricRelatedRow && hasElectricOverrideNote ? (
-                    <Text style={s.dfaUserNote}>Hat bildirimi kullanıcı tarafından yapılmıştır.</Text>
-                  ) : null}
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text
-                    style={[
-                      s.dfaCell,
-                      s.dfaCellPctCol,
-                      s.dfaPctText,
-                      isPositive && s.dfaPctPos,
-                      isNegative && s.dfaPctNeg,
-                    ]}
-                  >
-                    {row.percent}
-                  </Text>
-                  {canReportRoad && (
-                    <TouchableOpacity
-                      onPress={() => setRoadReportModalVisible(true)}
-                      style={s.roadReportBtn}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={s.roadReportBtnText}>Yol Bildir</Text>
-                    </TouchableOpacity>
-                  )}
-                  {canReportElectric && (
-                    <TouchableOpacity
-                      onPress={() => setElectricMapVisible(true)}
-                      style={s.roadReportBtn}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={s.roadReportBtnText}>Hat Bildir</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            );
-          })}
-        </View>
-        <View style={s.dfaSummaryWrap}>
-          <Text style={s.dfaSummaryTitle}>Değerleme özeti (özet API)</Text>
-          <View style={s.dfaSummaryGrid}>
-            <View style={s.dfaSummaryItem}>
-              <Text style={s.dfaSummaryLabel}>Başlangıç (TL/m²)</Text>
-              <Text style={s.dfaSummaryValue}>
-                {footer.startUnit != null ? formatPrice(footer.startUnit) : '—'}
-              </Text>
-            </View>
-            <View style={s.dfaSummaryItem}>
-              <Text style={s.dfaSummaryLabel}>Bitiş (TL/m²)</Text>
-              <Text style={s.dfaSummaryValue}>
-                {footer.endUnit != null ? formatPrice(footer.endUnit) : '—'}
-              </Text>
-            </View>
-            <View style={s.dfaSummaryItem}>
-              <Text style={s.dfaSummaryLabel}>Uygulanan %</Text>
-              <Text style={s.dfaSummaryValue}>{appliedPct}</Text>
-            </View>
-            <View style={s.dfaSummaryItem}>
-              <Text style={s.dfaSummaryLabel}>Toplam (TL)</Text>
-              <Text style={s.dfaSummaryValue}>
-                {footer.total != null ? formatPrice(footer.total) : '—'}
-              </Text>
-            </View>
-          </View>
-        </View>
-      </View>
-    );
-  };
 
   const renderTahminModule = () => {
     if (!data) return null;
@@ -2509,47 +2499,33 @@ export default function Son30GunDetayScreen() {
     [heroListingMediaItems],
   );
 
-  // ── Loading / Error states ──
-
-  if (loading) {
+  // ── İlk yükleme / hata: tam ekran “Yükleniyor” yok; yalnızca kabuk + satır içi gösterge ──
+  if (!data) {
     return (
       <SafeAreaView style={s.safeArea} edges={['top']}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.headerBg} />
         <View style={s.header}>
-          <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}><Ionicons name="arrow-back" size={18} color="#f8fafc" /></TouchableOpacity>
-          <Text style={s.headerTitle}>Sorgu Detayı</Text>
-          <TouchableOpacity onPress={() => setUserMenuVisible(true)} style={s.headerBtn} accessibilityLabel="Uygulama menüsü">
-            <Ionicons name="menu" size={22} color="#fff" />
+          <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
+            <Ionicons name="arrow-back" size={18} color="#f8fafc" />
           </TouchableOpacity>
+          <View style={s.headerCenter}>
+            <Text style={s.headerTitle}>Sorgu Detayı</Text>
+          </View>
+          <View style={s.headerRight} />
         </View>
         <View style={s.centerContainer}>
-          <ActivityIndicator size="large" color={COLORS.accentBlue} />
-          <Text style={s.loadingText}>Yükleniyor...</Text>
+          {error ? (
+            <>
+              <Ionicons name="alert-circle-outline" size={48} color={COLORS.dangerRed} />
+              <Text style={s.errorText}>{error}</Text>
+              <TouchableOpacity style={s.retryBtn} onPress={() => loadDetail({ silent: false })}>
+                <Text style={s.retryBtnText}>Tekrar Dene</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <ActivityIndicator size="small" color={COLORS.accentBlue} />
+          )}
         </View>
-        <UserMenuModal visible={userMenuVisible} onClose={() => setUserMenuVisible(false)} currentScreen="son-30-gun-detay" />
-      </SafeAreaView>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.headerBg} />
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}><Ionicons name="arrow-back" size={18} color="#f8fafc" /></TouchableOpacity>
-          <Text style={s.headerTitle}>Sorgu Detayı</Text>
-          <TouchableOpacity onPress={() => setUserMenuVisible(true)} style={s.headerBtn} accessibilityLabel="Uygulama menüsü">
-            <Ionicons name="menu" size={22} color="#fff" />
-          </TouchableOpacity>
-        </View>
-        <View style={s.centerContainer}>
-          <Ionicons name="alert-circle-outline" size={48} color={COLORS.dangerRed} />
-          <Text style={s.errorText}>{error || 'Sorgu bulunamadı'}</Text>
-          <TouchableOpacity style={s.retryBtn} onPress={loadDetail}>
-            <Text style={s.retryBtnText}>Tekrar Dene</Text>
-          </TouchableOpacity>
-        </View>
-        <UserMenuModal visible={userMenuVisible} onClose={() => setUserMenuVisible(false)} currentScreen="son-30-gun-detay" />
       </SafeAreaView>
     );
   }
@@ -3273,9 +3249,6 @@ export default function Son30GunDetayScreen() {
           <TouchableOpacity onPress={handleShareMenu} style={s.headerBtn} accessibilityLabel="Paylaş">
             <Ionicons name="share-outline" size={18} color="#f8fafc" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setUserMenuVisible(true)} style={s.headerBtn} accessibilityLabel="Uygulama menüsü">
-            <Ionicons name="menu" size={22} color="#fff" />
-          </TouchableOpacity>
           <TouchableOpacity onPress={() => setDetailMenuVisible(true)} style={s.headerBtn} accessibilityLabel="Sorgu işlemleri">
             <Ionicons name="ellipsis-horizontal" size={22} color="#fff" />
           </TouchableOpacity>
@@ -3295,12 +3268,13 @@ export default function Son30GunDetayScreen() {
         <Text style={s.modeNoticeText}>{detailModeNoticeText}</Text>
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollScreen
         ref={scrollRef}
+        headerHeight={56}
+        backgroundColor={COLORS.pageBg}
+        avoidingStyle={s.keyboardAvoidingFill}
         style={s.scrollView}
-        contentContainerStyle={s.scrollContent}
-        showsVerticalScrollIndicator={false}
-        nestedScrollEnabled
+        contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 24 }]}
       >
         {/* Breadcrumb */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.breadcrumbWrap} contentContainerStyle={s.breadcrumbContent}>
@@ -3703,7 +3677,7 @@ export default function Son30GunDetayScreen() {
                 </TouchableOpacity>
               ))}
               <TouchableOpacity
-                style={[s.detailTabSquare, s.detailTabSquareAux]}
+                style={s.detailTabSquare}
                 onPress={() => {
                   router.push('promahalle', {
                     city_id: String(data?.city_id || ''),
@@ -3717,14 +3691,14 @@ export default function Son30GunDetayScreen() {
                 }}
                 activeOpacity={0.7}
               >
-                <Text style={[s.detailTabSquareText, s.detailTabSquareAuxText]}>Mahalle Bilgileri</Text>
+                <Text style={s.detailTabSquareText}>Mahalle Bilgileri</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.detailTabSquare, s.detailTabSquareAux]}
+                style={s.detailTabSquare}
                 onPress={() => handleViewReport()}
                 activeOpacity={0.7}
               >
-                <Text style={[s.detailTabSquareText, s.detailTabSquareAuxText]}>Rapor</Text>
+                <Text style={s.detailTabSquareText}>Rapor</Text>
               </TouchableOpacity>
             </ScrollView>
 
@@ -3796,7 +3770,16 @@ export default function Son30GunDetayScreen() {
                 <View ref={bilgiSectionRef}>
                   <PortalInsightSummaryCard detail={data} data={scores.insightData} />
                 </View>
-                <View ref={dfaSectionRef}>{renderDfaTable(data.dfa_json)}</View>
+                <View ref={dfaSectionRef}>
+                  <PortalDfaTableCard
+                    detail={data}
+                    scrollRef={scrollRef}
+                    onBeforeMahalleInputFocus={ensureOverviewTabForDfaInput}
+                    hasElectricOverrideNote={hasElectricOverrideNote}
+                    onOpenRoadModal={() => setRoadReportModalVisible(true)}
+                    onOpenElectricModal={() => setElectricMapVisible(true)}
+                  />
+                </View>
               </>
             )}
 
@@ -3841,7 +3824,6 @@ export default function Son30GunDetayScreen() {
               const morphRows = [
                 { label: 'Arazi Sınıfı', value: String(morphology.type_label || '—') },
                 { label: 'Morfoloji Tipi', value: String(morphology.type || '—') },
-                { label: 'Açıklama', value: String(morphology.description || '—') },
                 {
                   label: 'Güven Seviyesi',
                   value: morphology.confidence != null && morphology.confidence !== ''
@@ -3884,15 +3866,8 @@ export default function Son30GunDetayScreen() {
 
               return (
                 <View ref={slopeSectionRef}>
-                  <View style={s.card}>
-                    <View style={s.cardTitleRow}>
-                      <Ionicons name="trending-up" size={16} color={COLORS.accentBlue} />
-                      <Text style={s.cardTitle}>Parsel Eğimi</Text>
-                    </View>
-                    <Text style={s.slopeTabSubtitle}>Parselin eğim, rakım ve arazi formu özeti (web ile aynı kaynak)</Text>
-                    <View style={s.slopeTerrainWrap}>
-                      <PortalSlopeTerrainCard slope={avgSlope} />
-                    </View>
+                  <View style={[s.card, s.slopeTerrainTopCard]}>
+                    <PortalSlopeTerrainCard slope={avgSlope} />
                   </View>
                   {renderSlopeBlock('Morfoloji Özeti', morphRows)}
                   <View style={s.card}>
@@ -4063,21 +4038,15 @@ export default function Son30GunDetayScreen() {
             )}
 
             {activeDetailTabId === 'split' && (
-              <PortalParcelSplitDetailCard snapshotId={snapshotId} />
+              <PortalParcelSplitDetailCard
+                loading={splitLoading}
+                analysis={splitAnalysis}
+                fetchError={splitErr}
+              />
             )}
 
             {activeDetailTabId === 'expert' && (
               <>
-                <TouchableOpacity
-                  style={s.evalBtnInline}
-                  onPress={openEvalModal}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="star" size={16} color="#fbbf24" />
-                  <Text style={s.evalBtnInlineText}>Değerlendir Coin Kazan</Text>
-                  <Ionicons name="chevron-forward" size={14} color="#15803d" style={{ marginLeft: 'auto' }} />
-                </TouchableOpacity>
-
                 {data.ramsar_json?.is_ramsar && (
                   <View style={s.ramsarWarn}>
                     <Ionicons name="warning" size={18} color="#92400e" />
@@ -4089,7 +4058,7 @@ export default function Son30GunDetayScreen() {
                   </View>
                 )}
 
-                {hasExpertResponses && (
+                {hasExpertResponses ? (
                   <View ref={expertSectionRef} style={s.card}>
                     <View style={s.cardTitleRow}>
                       <Ionicons name="chatbubbles" size={16} color={COLORS.accentBlue} />
@@ -4104,18 +4073,9 @@ export default function Son30GunDetayScreen() {
                     )}
                     {expertResponses.map(renderExpertResponse)}
                   </View>
-                )}
-
-                {data.parcel_coords_lonlat && data.parcel_coords_lonlat.length > 0 && (
-                  <View ref={streetViewSectionRef} style={s.card}>
-                    <View style={s.cardTitleRow}>
-                      <Ionicons name="walk" size={16} color={COLORS.accentBlue} />
-                      <Text style={s.cardTitle}>Sokak Görüntüsü</Text>
-                    </View>
-                    <TouchableOpacity style={sec.linkBtn} onPress={openParcelStreetView} activeOpacity={0.7}>
-                      <Ionicons name="open-outline" size={18} color={COLORS.accentBlue} />
-                      <Text style={sec.linkBtnText}>Street View'ı tekrar aç</Text>
-                    </TouchableOpacity>
+                ) : (
+                  <View style={s.card}>
+                    <Text style={s.detailEmptyTabText}>Uzman Görüşü Bulunmamaktadır</Text>
                   </View>
                 )}
               </>
@@ -4298,7 +4258,7 @@ export default function Son30GunDetayScreen() {
         )}
 
         <View style={{ height: insets.bottom + 20 }} />
-      </ScrollView>
+      </KeyboardAwareScrollScreen>
 
       {/* Expert Request Bottom Sheet */}
       <AppBottomSheetModal
@@ -4307,6 +4267,7 @@ export default function Son30GunDetayScreen() {
         snapPoints={['70%']}
         backdropOpacity={0.25}
         backdropPressBehavior="close"
+        keyboardForm
       >
         <View style={s.modalContent}>
           <Text style={s.modalTitle}>
@@ -4341,6 +4302,7 @@ export default function Son30GunDetayScreen() {
         snapPoints={['70%']}
         backdropOpacity={0.4}
         backdropPressBehavior="close"
+        keyboardForm
       >
         <View style={ev.container}>
           <View style={ev.titleRow}>
@@ -4453,8 +4415,6 @@ export default function Son30GunDetayScreen() {
         </BottomSheetScrollView>
       </AppBottomSheetModal>
 
-      <UserMenuModal visible={userMenuVisible} onClose={() => setUserMenuVisible(false)} currentScreen="son-30-gun-detay" />
-
       {/* ── Sorgu detay işlemleri (uzman talebi, paylaşım, LİHKAB) ── */}
       <AppBottomSheetModal
         visible={detailMenuVisible}
@@ -4543,6 +4503,19 @@ export default function Son30GunDetayScreen() {
             <Ionicons name="share-outline" size={20} color={COLORS.accentBlue} />
             <Text style={dm.itemText}>Paylaş</Text>
           </TouchableOpacity>
+
+          {data.parcel_coords_lonlat && data.parcel_coords_lonlat.length > 0 ? (
+            <TouchableOpacity
+              style={dm.item}
+              onPress={() => {
+                setDetailMenuVisible(false);
+                setTimeout(() => openParcelStreetView(), 350);
+              }}
+            >
+              <Ionicons name="walk-outline" size={20} color={COLORS.accentBlue} />
+              <Text style={dm.itemText}>Sokak Görüntüsü</Text>
+            </TouchableOpacity>
+          ) : null}
 
           <TouchableOpacity
             style={dm.item}
@@ -4808,6 +4781,7 @@ const s = StyleSheet.create({
   errorText: { marginTop: 16, fontSize: 15, fontWeight: '600', color: COLORS.textPrimary, textAlign: 'center' },
   retryBtn: { marginTop: 16, backgroundColor: COLORS.accentBlue, borderRadius: 8, paddingHorizontal: 24, paddingVertical: 10 },
   retryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  keyboardAvoidingFill: { flex: 1, backgroundColor: COLORS.pageBg },
   scrollView: { flex: 1, backgroundColor: COLORS.pageBg },
   scrollContent: { paddingBottom: 20 },
 
@@ -4882,7 +4856,7 @@ const s = StyleSheet.create({
     paddingBottom: 32,
   },
   slopeTabSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10 },
-  slopeTerrainWrap: { alignItems: 'center', marginTop: 4 },
+  slopeTerrainTopCard: { paddingVertical: 12, paddingHorizontal: 10 },
   slopeDetailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -20,6 +20,7 @@ import {
   FlatList,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
 import { StatusBar } from "react-native";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../contexts/AuthContext";
@@ -1153,7 +1154,9 @@ export default function ProfileScreen() {
         onSelectSection={setProfileSection}
       />
 
-      <ScrollView
+      <KeyboardAwareScrollScreen
+        headerHeight={52}
+        backgroundColor="#1e293b"
         style={styles.content}
         contentContainerStyle={styles.contentContainer}
         refreshControl={
@@ -2515,7 +2518,7 @@ export default function ProfileScreen() {
             </View>
           </View>
         ) : null}
-      </ScrollView>
+      </KeyboardAwareScrollScreen>
 
       {/* Şifre Değiştirme Modal */}
       <Modal

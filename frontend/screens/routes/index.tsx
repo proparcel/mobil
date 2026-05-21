@@ -23,6 +23,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Linking } from 'react-native';
+import { proparcelFavicon } from '../../components/landing/proparcelBrandAssets';
+import { MapFloatingCreditBadge } from '../../components/app/MapFloatingCreditBadge';
 import { useRouter, useLocalSearchParams } from '../../src/hooks/useNavigation';
 import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/native';
 import Svg, { Rect } from 'react-native-svg';
@@ -40,11 +42,36 @@ import {
 import UserMenuSheetList from '../../components/app/UserMenuSheetList';
 import { getMenuItems } from '../../components/app/userMenuItems';
 import { SavedQuery, upsertSavedQuery } from '../../src/utils/savedQueries';
+import { persistTkgmResponseToMyQueries } from '../../src/utils/persistSimpleQuery';
+import {
+  createParcelFillLayer,
+  createParcelStrokeLayer,
+} from '../../components/map/ParcelMapLayers';
+import { ParcelPatternLayer } from '../../components/map/ParcelPatternLayer';
+import { ParcelLabelLayer } from '../../components/map/ParcelLabelLayer';
+import { HomeMapToolsSheet } from '../../components/app/HomeMapToolsSheet';
+import { ParcelPolygonDesignSheet } from '../../components/app/ParcelPolygonDesignSheet';
+import type { ParcelPolygonDesignConfig } from '../../src/constants/parcelPolygonDesign';
 import { putReportMemory } from '../../src/utils/reportMemory';
 import { buildDfaRowsFromValuationSteps, parseAreaM2 } from '../../src/utils/dfaRows';
 import type { ReportPayload, ReportLocationHeader } from '../../src/types/reportPayload';
 import { API_URL, FALLBACK_API_URL } from '../../config/api';
 import { createSavedQueryApi } from '../../services/savedQueriesApi';
+import { captureAndUploadProQueryMapImage } from '../../src/utils/proQueryMapCapture';
+import { navigateAfterProQuery } from '../../src/utils/proQueryNavigation';
+import {
+  runProParcelQuery,
+  ProQueryLimitError,
+  ProQueryFailedError,
+  getProQueryErrorAlert,
+  extractProQueryCityId,
+  extractProQueryIdentifiers,
+  resolveDfaSnapshotId,
+} from '../../src/utils/proQueryApi';
+import {
+  PORTAL_RECENT_QUERIES_CHANGED,
+  type PortalRecentQueriesChangedPayload,
+} from '../../src/constants/portalEvents';
 import { fetchTkgmByCoordsWithFallback } from '../../src/utils/tkgmApi';
 // Conditional Location import
 let Location: any = null;
@@ -87,7 +114,6 @@ import ShareModal from '../../components/ShareModal';
 import StreetViewModal from '../../components/StreetViewModal';
 // 3D model görüntüleyici kaldırıldı - native Mapbox'a geçildi
 import ShapeDrawingModal from '../../components/app/ShapeDrawingModal';
-import { HomeMapToolsSheet } from '../../components/app/HomeMapToolsSheet';
 import { DrawingToolbox } from '../../components/app/shapeDrawingModal/DrawingToolbox';
 import { FreehandDrawOverlay } from '../../components/app/shapeDrawingModal/FreehandDrawOverlay';
 import { ScreenShapesOverlay } from '../../components/app/shapeDrawingModal/ScreenShapesOverlay';
@@ -328,6 +354,7 @@ export default function Index() {
       pendingNavProQueryRef.current = { mahalleTkgmValue: mahalle, ada, parsel };
       // Pro moda geç
       if (!isProMode) setIsProMode(true);
+      setQueryModeChoice('pro');
       // Params temizle (bir kere çalışsın)
       navigation.setParams({ proQueryMahalle: undefined, proQueryAda: undefined, proQueryParsel: undefined } as any);
     }
@@ -490,6 +517,9 @@ export default function Index() {
   // Menus & 3D state
   const [shapeDrawingModalVisible, setShapeDrawingModalVisible] = useState(false);
   const [homeMapToolsSheetOpen, setHomeMapToolsSheetOpen] = useState(false);
+  const [homeParcelDesignSheetOpen, setHomeParcelDesignSheetOpen] = useState(false);
+  /** Onaylanmış parsel poligon stili; null = varsayılan tema */
+  const [homeParcelPolygonDesign, setHomeParcelPolygonDesign] = useState<ParcelPolygonDesignConfig | null>(null);
   const [rulerQuickMenuVisible, setRulerQuickMenuVisible] = useState(false);
   const [homeRulerColor, setHomeRulerColor] = useState('#3b82f6');
   const [homeAreaColor, setHomeAreaColor] = useState('#fbbf24');
@@ -515,6 +545,8 @@ export default function Index() {
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [showUserLocation, setShowUserLocation] = useState(false);
   const [infoModeActive, setInfoModeActive] = useState(false);
+  /** Bilgi alt menüsünde görsel seçim — yalnızca kullanıcı ProMod/BasitMod'a basınca set edilir */
+  const [queryModeChoice, setQueryModeChoice] = useState<'pro' | 'simple' | null>(null);
   const [infoMenuVisible, setInfoMenuVisible] = useState(false);
   const [infoButtonLayout, setInfoButtonLayout] = useState<{ x: number; width: number } | null>(null);
   const [infoMenuWidth, setInfoMenuWidth] = useState(160);
@@ -541,9 +573,93 @@ export default function Index() {
   const isProgrammaticMoveRef = useRef(false);
   const programmaticTimerRef = useRef<any>(null);
   const combinedContainerRef = useRef<any>(null);
+  /** Pro sorgu capture anında güncel parsel (state commit gecikmesine karşı) */
+  const proQueryCaptureParcelRef = useRef<ParcelData | null>(null);
   const modalContentRef = useRef<any>(null);
   const camRef = useRef({ center: [34.0, 39.0] as [number, number], zoom: 4, pitch: 0, heading: 0 });
   const mapReadyRef = useRef({ didFinishLoadingMap: false, didFinishLoadingStyle: false, isIdle: false });
+  /** Pro sorgu bitince harita görüntüsü yükle + son 30 gün detayına git (rapor ekranına değil). */
+  const finishProQueryNavigation = useCallback(
+    async (
+      data: any,
+      normalizedGeometry: any | null,
+      unitNum: number | null,
+      totalNum: number | null,
+      captureParcel: ParcelData | null = null,
+    ) => {
+      proQueryCaptureParcelRef.current = captureParcel;
+
+      if (normalizedGeometry) {
+        setShowEdgeMeasurements(false);
+        setParcelData(captureParcel);
+        try {
+          const settings = calculateBoundsAndCamera(normalizedGeometry);
+          if (settings && cameraRef.current) {
+            cameraRef.current.setCamera({
+              centerCoordinate: settings.center,
+              zoomLevel: settings.zoom,
+              pitch: camRef.current.pitch,
+              animationDuration: 0,
+            });
+          }
+        } catch (_) {}
+      }
+
+      // Loader haritayı kapatır — static map / snapshot için
+      setIsLoadingParcel(false);
+      await new Promise((r) => setTimeout(r, 200));
+
+      const identifiers = extractProQueryIdentifiers(data);
+      let snapshotId =
+        data?.parameters_data?.dfa_snapshot_id != null
+          ? Number(data.parameters_data.dfa_snapshot_id)
+          : null;
+      if (!Number.isFinite(snapshotId) || snapshotId <= 0) {
+        snapshotId = null;
+      }
+      if (!snapshotId) {
+        snapshotId = await resolveDfaSnapshotId(data, identifiers);
+        if (snapshotId && data?.parameters_data) {
+          data.parameters_data.dfa_snapshot_id = snapshotId;
+        }
+      }
+
+      if (isAuthenticated) {
+        if (unitNum != null || totalNum != null) {
+          setScreenshotPriceOverride({ unitPrice: unitNum, totalPrice: totalNum });
+          await new Promise((r) => setTimeout(r, 80));
+        }
+        await captureAndUploadProQueryMapImage({
+          mapRef,
+          mapReadyRef,
+          combinedContainerRef,
+          setCapturedMapUri,
+          data,
+          normalizedGeometry,
+          snapshotId,
+          identifiers,
+        });
+        setScreenshotPriceOverride(null);
+      }
+
+      proQueryCaptureParcelRef.current = null;
+
+      const navResult = await navigateAfterProQuery(router, data);
+      const finalSnapshotId = navResult.snapshotId ?? snapshotId;
+      const cityId = navResult.cityId ?? extractProQueryCityId(data);
+
+      const eventPayload: PortalRecentQueriesChangedPayload = {
+        snapshotId: finalSnapshotId ?? undefined,
+        cityId: cityId ?? undefined,
+      };
+      DeviceEventEmitter.emit(PORTAL_RECENT_QUERIES_CHANGED, eventPayload);
+
+      setActiveScreen(null);
+      clearPendingPropertyTypeState();
+      setInfoModeActive(false);
+    },
+    [router, isAuthenticated, clearPendingPropertyTypeState],
+  );
   const isSharingRef = useRef(false);
   const menuItemClickedRef = useRef(false);
   /** Alt menü satırına (cetvel listesi, Bilgi→ProMod/BasitMod vb.) basıldıktan sonra Mapbox’un ürettiği hayalet harita onPress’ini bir kez yut */
@@ -899,13 +1015,28 @@ export default function Index() {
       });
       return;
     }
+    if (itemId === 'ai-video') {
+      setSubmenuOpenId((prev) => {
+        const next = prev === 'ai-video' ? null : 'ai-video';
+        setMenuSheetIndex(next ? 1 : 0);
+        return next;
+      });
+      return;
+    }
+    if (itemId === 'sorgularim') {
+      setMenuVisible(false);
+      setSubmenuOpenId(null);
+      setMenuSheetIndex(0);
+      setMyQueriesVisible(true);
+      return;
+    }
     menuItemClickedRef.current = true;
     setMenuVisible(false);
     setSubmenuOpenId(null);
     setUzmanGorusuOpen(false);
     setMenuSheetIndex(0);
     if (itemId === 'landing-intro') {
-      router.push('landing');
+      router.push('landing', { skipIntro: true });
     } else if (itemId === 'emlak-vitrini') {
       router.push('emlak-vitrini');
     } else if (itemId === 'son-30-gun-pro') {
@@ -916,8 +1047,6 @@ export default function Index() {
       router.push('sosyal-medya-sablonu', { source: 'menu' });
     } else if (itemId === 'aranacaklar') {
       router.push('aranacaklar');
-    } else if (itemId === 'sorgularim') {
-      setMyQueriesVisible(true);
     } else if (itemId === 'hisseli-parsel-projelerim') {
       setParcelSplitProjectsVisible(true);
     } else if (itemId === '3d-tasarimlarim') {
@@ -947,15 +1076,26 @@ export default function Index() {
       void openIlanVer();
     } else if (itemId === 'ilanlarim') {
       router.push('ilanlarim');
-    } else if (itemId === 'ai-video-olusturucu') {
+    } else if (itemId === 'ai-video-studio') {
       if (!isAuthenticated) {
-        Alert.alert('Giriş gerekli', 'AI Video Oluşturucu için giriş yapın.', [
+        Alert.alert('Giriş gerekli', 'AI Video için giriş yapın.', [
           { text: 'İptal', style: 'cancel' },
           { text: 'Giriş', onPress: () => router.push('login') },
         ]);
         return;
       }
       router.push('ai-video-studio');
+    } else if (itemId === 'ai-image-animation') {
+      if (!isAuthenticated) {
+        Alert.alert('Giriş gerekli', 'AI Resim için giriş yapın.', [
+          { text: 'İptal', style: 'cancel' },
+          { text: 'Giriş', onPress: () => router.push('login') },
+        ]);
+        return;
+      }
+      router.push('ai-image-animation-purchase');
+    } else if (itemId === 'ai-drone-video') {
+      router.push('ai-drone-video-info');
     } else if (itemId === 'ilan-mesajlar') {
       if (!isAuthenticated) {
         Alert.alert('Giriş gerekli', 'Mesajları görmek için giriş yapın.', [
@@ -996,122 +1136,6 @@ export default function Index() {
       console.log('[Index] Unknown menu item:', itemId);
     }
   }, [router, logout, openIlanVer, isAuthenticated]);
-
-  const handleSelectSavedQuery = useCallback((q: SavedQueryItem) => {
-    setMyQueriesVisible(false);
-    const local = '_fromApi' in q && q._fromApi ? q.local : undefined;
-    const hasLocalDfa = local && Array.isArray(local.dfaRows) && local.dfaRows.length > 0 && local.location_header;
-    const pushParams = (unitPrice?: number | null, totalPrice?: number | null, createdAt?: string, dfaRows?: string, locationHeader?: string, geometry?: string) => ({
-      pathname: 'report_mobil_viewver',
-      params: {
-        proparcel_value: (q.proparcel_value ?? local?.proparcel_value) != null ? String(q.proparcel_value ?? local?.proparcel_value) : '',
-        tkgm_value: String(q.tkgm_value),
-        ada: String(q.ada),
-        parsel: String(q.parsel),
-        unit_price: unitPrice != null ? String(unitPrice) : '',
-        total_price: totalPrice != null ? String(totalPrice) : '',
-        createdAt: createdAt ?? '',
-        dfaRows: dfaRows ?? '',
-        location_header: locationHeader ?? '',
-        geometry: geometry ?? '',
-      },
-    });
-    if (hasLocalDfa) {
-      router.push(pushParams(
-        local!.price_snapshot?.unit_price,
-        local!.price_snapshot?.total_price,
-        local!.createdAt,
-        JSON.stringify(local!.dfaRows),
-        JSON.stringify(local!.location_header),
-        local!.geometry ? JSON.stringify(local!.geometry) : ''
-      ));
-      return;
-    }
-    if ('_fromApi' in q && q._fromApi && !local) {
-      const backendUrl = (FALLBACK_API_URL || API_URL || '').replace(/\/$/, '');
-      fetchWithAuth(`${backendUrl}/api/mobile/report_payload/`, {
-        method: 'POST',
-        headers: { 'ngrok-skip-browser-warning': 'true' },
-        body: JSON.stringify({
-          tkgm_value: q.tkgm_value,
-          ada: q.ada,
-          parsel: q.parsel,
-          proparcel_value: q.proparcel_value ?? undefined,
-          map_mode: '2d',
-          is3D: false,
-        }),
-      })
-        .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
-        .then(async (payload: ReportPayload) => {
-          const pd = (payload as any)?.parameters_data || {};
-          const pv = pd?.parcel_values || {};
-          const areaRaw = pv?.arazi_m2 ?? pv?.area_m2 ?? pv?.alan ?? pv?.yuzolcum;
-          const areaM2 = parseAreaM2(areaRaw);
-          const dfaRows = payload.dfaRows ?? buildDfaRowsFromValuationSteps(payload.valuation_steps, areaM2);
-          const location_header = payload.properties ?? {};
-          const payloadGeometry = (payload as any)?.geometry ?? null;
-          await upsertSavedQuery({
-            proparcel_value: q.proparcel_value ?? null,
-            tkgm_value: q.tkgm_value,
-            ada: q.ada,
-            parsel: q.parsel,
-            price_snapshot: { unit_price: null, total_price: null },
-            dfaRows,
-            location_header,
-            geometry: payloadGeometry || undefined,
-          });
-          const reportPayload: ReportPayload = {
-            properties: location_header,
-            valuation_steps: payload.valuation_steps ?? [],
-            parameters_graphics: payload.parameters_graphics,
-            dfaRows,
-            geometry: payloadGeometry || undefined,
-            areaM2: areaM2 > 0 ? areaM2 : undefined,
-            parameters_data: Object.keys(pd).length > 0 ? pd : undefined,
-            villa_result: payload.villa_result,
-            factory_result: payload.factory_result,
-          };
-          const cacheId = String(Date.now());
-          putReportMemory(cacheId, reportPayload);
-          router.push({
-            pathname: 'report_mobil_viewver',
-            params: {
-              cacheId,
-              proparcel_value: q.proparcel_value != null ? String(q.proparcel_value) : '',
-              tkgm_value: String(q.tkgm_value),
-              ada: String(q.ada),
-              parsel: String(q.parsel),
-              unit_price: '',
-              total_price: '',
-              createdAt: '',
-            },
-          });
-        })
-        .catch((e: any) => {
-          if (e instanceof QueryLimitError) {
-            Alert.alert(
-              'Günlük Sorgu Limiti',
-              `${e.message}\n\nGünlük ücretsiz sorgu hakkınız: ${e.dailyLimit}`,
-              isAuthenticated
-                ? [{ text: 'Tamam' }]
-                : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]
-            );
-          } else {
-            Alert.alert('Bağlantı Hatası', e?.message ?? 'Rapor verisi alınamadı.');
-          }
-        });
-      return;
-    }
-    const sq = q as SavedQuery;
-    router.push(pushParams(
-      sq.price_snapshot?.unit_price,
-      sq.price_snapshot?.total_price,
-      sq.createdAt,
-      Array.isArray(sq.dfaRows) && sq.dfaRows.length > 0 ? JSON.stringify(sq.dfaRows) : '',
-      sq.location_header ? JSON.stringify(sq.location_header) : '',
-      sq.geometry ? JSON.stringify(sq.geometry) : ''
-    ));
-  }, [router]);
 
   const handleCloseForm = useCallback(() => setActiveScreen(null), []);
 
@@ -1798,6 +1822,12 @@ export default function Index() {
           setActiveScreen(null);
         } catch (_) {}
 
+        try {
+          await persistTkgmResponseToMyQueries(tkgmData, !!isAuthenticated, "pro", payload);
+        } catch (saveErr) {
+          console.warn("[handleAdaParselSubmit] PRO MOD: Sorgularım kaydı başarısız:", saveErr);
+        }
+
         // Nitelik metnini çıkar (property type modal başlığı onaydan sonra kullanılacak)
         const nitelikText = extractNitelikText(tkgmData);
         const { title, suggestedType } = generatePropertyTypeTitle(nitelikText);
@@ -1833,6 +1863,13 @@ export default function Index() {
         const newParcel: ParcelData = { geometry: data.geometry, properties: data.properties || {}, analysisData: null };
         // Basit modda array'e ekle (30 limit kontrolü addParcelToSimpleMode içinde)
         addParcelToSimpleMode(newParcel);
+
+        // Web sidebar Sorgularım: basit sorguyu kayıtlı listeye ekle
+        try {
+          await persistTkgmResponseToMyQueries(data, !!isAuthenticated, "simple", payload);
+        } catch (saveErr) {
+          console.warn('[handleAdaParselSubmit] BASIT MOD: Sorgularım kaydı başarısız:', saveErr);
+        }
         
         const settings = calculateBoundsAndCamera(data.geometry);
         if (settings && cameraRef.current) setTimeout(() => cameraRef.current.setCamera({ centerCoordinate: settings.center, zoomLevel: settings.zoom, pitch: camRef.current.pitch, animationDuration: 900 }), 100);
@@ -1861,7 +1898,46 @@ export default function Index() {
         );
       }
     }
-  }, [isProMode, is3DMode, isAuthenticated, router]);
+  }, [isProMode, is3DMode, isAuthenticated, router, addParcelToSimpleMode]);
+
+  /** Web sidebar "Sorgularım" — kayıtlı sorguyu basit modda haritada yeniden çalıştır */
+  const openMyQueriesSheet = useCallback(() => {
+    setMenuVisible(false);
+    setSubmenuOpenId(null);
+    setUzmanGorusuOpen(false);
+    setMenuSheetIndex(0);
+    setMyQueriesVisible(true);
+  }, []);
+
+  const runSimpleQueryFromSaved = useCallback(
+    (q: SavedQueryItem) => {
+      setMyQueriesVisible(false);
+      closeMenu();
+      if (isProMode) setIsProMode(false);
+      setQueryModeChoice('simple');
+      const proparcelVal =
+        ('proparcel_value' in q && q.proparcel_value != null ? q.proparcel_value : null) ??
+        (q as SavedQuery).proparcel_value;
+      const payload: {
+        mahalleTkgmValue: number;
+        mahalle: string;
+        ada: string;
+        parsel: string;
+        proparcelValue?: number;
+      } = {
+        mahalleTkgmValue: Number(q.tkgm_value),
+        mahalle: '',
+        ada: String(q.ada),
+        parsel: String(q.parsel),
+      };
+      if (proparcelVal != null && Number.isFinite(Number(proparcelVal))) {
+        payload.proparcelValue = Number(proparcelVal);
+      }
+      setActiveScreen(null);
+      void handleAdaParselSubmit(payload);
+    },
+    [closeMenu, isProMode, handleAdaParselSubmit]
+  );
 
   // Basit moda geçtikten sonra pending payload varsa otomatik sorgu çalıştır
   useEffect(() => {
@@ -2205,6 +2281,11 @@ export default function Index() {
         setPropertyTypeModalTitle(title);
         setPropertyTypeModalSuggested(suggestedType);
         setInfoModeActive(false); // Parsel seçildi, info mode'u pasif yap
+        try {
+          await persistTkgmResponseToMyQueries(data, !!isAuthenticated, "pro");
+        } catch (saveErr) {
+          console.warn("[handleMapPress] PRO MOD: Sorgularım kaydı başarısız:", saveErr);
+        }
         console.log('[handleMapPress] PRO MOD: Overlay kapatılıyor ve onay modal açılıyor');
         // Overlay kapat ve onay modal'ı aç
         setIsLoadingParcel(false);
@@ -2215,6 +2296,12 @@ export default function Index() {
         // Basit mod: Array'e ekle
         const newParcel: ParcelData = { geometry: data.geometry, properties: data.properties || {}, analysisData: null };
         addParcelToSimpleMode(newParcel);
+
+        try {
+          await persistTkgmResponseToMyQueries(data, !!isAuthenticated, "simple");
+        } catch (saveErr) {
+          console.warn("[handleMapPress] BASIT MOD: Sorgularım kaydı başarısız:", saveErr);
+        }
         
         const s = calculateBoundsAndCamera(data.geometry);
         if (s) cameraRef.current?.setCamera({ centerCoordinate: s.center, zoomLevel: s.zoom, pitch: camRef.current.pitch, animationDuration: 900 });
@@ -2509,26 +2596,8 @@ export default function Index() {
         }
       }
 
-      console.log('[handlePropertyTypeSelect] İstek gönderiliyor:', backendUrl + '/api/get_parcel_info/');
-      const response = await fetchWithAuth(`${backendUrl}/api/get_parcel_info/`, {
-        method: 'POST',
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        // Hata detayını logla — status kodu ve body sorun tespiti için kritik
-        let errorBody = '';
-        try { errorBody = await response.text(); } catch (_) {}
-        console.error(
-          '[handlePropertyTypeSelect] Pro sorgu başarısız:',
-          'status:', response.status,
-          'statusText:', response.statusText,
-          'body:', errorBody.slice(0, 500)
-        );
-        throw new Error(`HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
-      }
-      
-      const data = await response.json();
+      console.log('[handlePropertyTypeSelect] Pro sorgu başlatılıyor (dağıtık modda poll dahil)');
+      const data = await runProParcelQuery(requestBody);
       console.log('[handlePropertyTypeSelect] Pro sorgu tamamlandı, data keys:', Object.keys(data));
       if (data.error) {
         console.error('[handlePropertyTypeSelect] Backend hata:', data.error);
@@ -2537,29 +2606,15 @@ export default function Index() {
 
       // Geometri opsiyonel - yoksa harita güncellenmez ama rapor açılır
       // parcel_polygon server swap'ı bazen başarısız olabiliyor — HER ZAMAN normalize et
-      const geometryRaw = data.parameters_polygons?.parcel_polygon || data.geometry;
+      const parcelPoly = data.parameters_polygons?.parcel_polygon;
+      let geometryRaw: any = parcelPoly || data.geometry;
+      if (geometryRaw?.type === 'Feature' && geometryRaw.geometry) {
+        geometryRaw = geometryRaw.geometry;
+      }
       let normalizedGeometry: any = null;
-      if (geometryRaw && geometryRaw.coordinates) {
+      if (geometryRaw?.coordinates) {
         normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
       }
-      if (normalizedGeometry) {
-        setShowEdgeMeasurements(false);
-        setParcelData({
-          geometry: normalizedGeometry,
-          properties: { ...data.properties, ...data.parameters_data?.parcel_values },
-          analysisData: data
-        });
-        // Kamerayı doğru konuma güncelle
-        try {
-          const camUpdate = calculateBoundsAndCamera(normalizedGeometry);
-          if (camUpdate) cameraRef.current?.setCamera?.({ centerCoordinate: camUpdate.center, zoomLevel: camUpdate.zoom, pitch: camRef.current.pitch, animationDuration: 600 });
-        } catch (_) {}
-        console.log('[handlePropertyTypeSelect] Geometry bulundu, parsel data güncellendi, first coord:', JSON.stringify(normalizedGeometry?.coordinates?.[0]?.[0]).slice(0, 40));
-      } else {
-        console.warn('[handlePropertyTypeSelect] Geometry yok — parcel_polygon:', !!parcelPoly, 'data.geometry:', !!data.geometry, 'rapor yine açılacak');
-      }
-
-      // Mobil: Rapor için minimal payload (DFA + parsel eğimi + konum); kaydet + report_mobil_viewver ekranına geç
       const pd: any = data?.parameters_data || {};
       const pv: any = pd?.parcel_values || {};
       const tkgmProps: any = pd?.tkgm_data?.properties || pendingTkgmData?.properties || {};
@@ -2590,26 +2645,6 @@ export default function Index() {
         parselNo: pv?.parselNo ?? pv?.parsel ?? (parselVal || null),
       };
 
-      const pg: any = data?.parameters_graphics || {};
-      const parametersGraphicsSlice = {
-        ...(pg.parcel_slope_graphics != null && { parcel_slope_graphics: pg.parcel_slope_graphics }),
-        ...(pg.slope_surface != null && { slope_surface: pg.slope_surface }),
-      };
-
-      const reportPayload: ReportPayload = {
-        properties: propertiesSlice,
-        valuation_steps: valuationSteps,
-        parameters_graphics: Object.keys(parametersGraphicsSlice).length ? parametersGraphicsSlice : undefined,
-        dfaRows,
-        geometry: normalizedGeometry || undefined,
-        areaM2: areaM2 > 0 ? areaM2 : undefined,
-        // Tahmin Modülü kartı ve köy içi uyarısı için parameters_data (pro sorgu verisi)
-        parameters_data: Object.keys(pd).length > 0 ? pd : undefined,
-      };
-
-      const cacheId = String(Date.now());
-      putReportMemory(cacheId, reportPayload);
-
       // Kayıt işlemleri (hata olursa navigasyonu engellemesin)
       try {
         if (tkgmValue && adaVal && parselVal) {
@@ -2618,7 +2653,12 @@ export default function Index() {
             tkgm_value: Number(tkgmValue),
             ada: String(adaVal),
             parsel: String(parselVal),
-            price_snapshot: { unit_price: unitNum, total_price: totalNum },
+            mode: "pro",
+            price_snapshot: {
+              unit_price: unitNum,
+              total_price: totalNum,
+              area_m2: areaM2 > 0 ? areaM2 : null,
+            },
             dfaRows,
             location_header: propertiesSlice,
             geometry: normalizedGeometry || undefined,
@@ -2645,46 +2685,25 @@ export default function Index() {
         console.warn('[handlePropertyTypeSelect] save failed:', saveErr);
       }
 
-      router.push({
-        pathname: '/routes/report_mobil_viewver',
-        params: {
-          cacheId,
-          proparcel_value: proparcelValue != null ? String(proparcelValue) : '',
-          tkgm_value: tkgmValue != null ? String(tkgmValue) : '',
-          ada: String(adaVal),
-          parsel: String(parselVal),
-          unit_price: unitNum != null ? String(unitNum) : '',
-          total_price: totalNum != null ? String(totalNum) : '',
-        },
-      });
-
-      if (normalizedGeometry) {
-        const settings = calculateBoundsAndCamera(normalizedGeometry);
-        if (settings && cameraRef.current) {
-          setTimeout(() => cameraRef.current.setCamera({
-            centerCoordinate: settings.center,
-            zoomLevel: settings.zoom,
-            pitch: camRef.current.pitch,
-            animationDuration: 900
-          }), 100);
-        }
-      }
-
-      // Ada/Parsel formundan geldiyse ekranı kapat
-      setActiveScreen(null);
-
-      // Pending state'leri temizle
-      clearPendingPropertyTypeState();
-      
-      // Parsel seçildi, info mode'u pasif yap
-      setInfoModeActive(false);
-      console.log('[handlePropertyTypeSelect] İşlem başarıyla tamamlandı, overlay kapatılıyor');
+      const captureParcel: ParcelData | null = normalizedGeometry
+        ? {
+            geometry: normalizedGeometry,
+            properties: { ...data.properties, ...pd?.parcel_values },
+            analysisData: data,
+          }
+        : null;
+      await finishProQueryNavigation(data, normalizedGeometry, unitNum, totalNum, captureParcel);
+      console.log('[handlePropertyTypeSelect] İşlem başarıyla tamamlandı, portal detaya yönlendirildi');
     } catch (error: any) {
       console.error('[handlePropertyTypeSelect] Ana pro sorgu hatası:', error);
-      if (error instanceof QueryLimitError) {
+      if (error instanceof ProQueryFailedError && error.failedTask) {
+        console.warn('[handlePropertyTypeSelect] Celery görev hatası:', error.failedTask, error.rawMessage);
+      }
+      if (error instanceof QueryLimitError || error instanceof ProQueryLimitError) {
+        const limitErr = error as QueryLimitError | ProQueryLimitError;
         Alert.alert(
           'Günlük Sorgu Limiti',
-          `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
+          `${limitErr.message}\n\nGünlük ücretsiz sorgu hakkınız: ${limitErr.dailyLimit}`,
           isAuthenticated
             ? [{ text: 'Tamam' }]
             : [
@@ -2693,17 +2712,14 @@ export default function Index() {
               ]
         );
       } else {
-        Alert.alert(
-          'Bağlantı Hatası',
-          'Backend sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.',
-          [{ text: 'Tamam' }]
-        );
+        const { title, message } = getProQueryErrorAlert(error);
+        Alert.alert(title, message, [{ text: 'Tamam' }]);
       }
     } finally {
       console.log('[handlePropertyTypeSelect] finally: setIsLoadingParcel(false) çağrılıyor');
       setIsLoadingParcel(false);
     }
-  }, [pendingTkgmData, pendingCoordinates, is3DMode, router, isAuthenticated, applyShareSelectionToRequest, clearPendingPropertyTypeState]);
+  }, [pendingTkgmData, pendingCoordinates, is3DMode, router, isAuthenticated, applyShareSelectionToRequest, clearPendingPropertyTypeState, finishProQueryNavigation]);
 
   const handleShowMyLocation = async () => {
     menuItemClickedRef.current = true; setLocationMenuVisible(false);
@@ -2794,27 +2810,45 @@ export default function Index() {
           Platform.OS === 'android' && styles.headerAndroidLayer,
         ]}
       >
-        <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>ProParcel</Text>
+        <View style={styles.headerSideLeft}>
+          <TouchableOpacity
+            testID="notifications-button"
+            style={styles.headerIconBtn}
+            onPress={() => router.push('notifications')}
+            activeOpacity={0.75}
+            accessibilityLabel="Bildirimler"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="notifications-outline" size={24} color="#fff" />
+            {isAuthenticated && notificationsUnread > 0 ? (
+              <View testID="header-notif-dot" style={styles.headerNotifDot} />
+            ) : null}
+          </TouchableOpacity>
         </View>
-        <View style={styles.headerRight}>
+
+        <View style={styles.headerCenter}>
+          <Image
+            source={proparcelFavicon}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+          <TouchableOpacity
+            onPress={() => router.push('landing', { skipIntro: true })}
+            activeOpacity={0.75}
+            accessibilityLabel="ProParcel ana sayfa"
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 12 }}
+          >
+            <Text style={styles.headerTitle}>ProParcel</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.headerSideRight}>
           {isAuthenticated && (user?.role === 'vip' || user?.role === 'vip_limited') && (
             <View style={styles.topbarVipBadge}>
               <Ionicons name="star" size={11} color="#fff" />
               <Text style={styles.topbarVipText}>VIP</Text>
             </View>
           )}
-          <TouchableOpacity
-            testID="credit-badge"
-            style={styles.creditBadge}
-            onPress={() => router.push('pricing')}
-            activeOpacity={0.7}
-          >
-            <Image source={TepeCoinIcon} style={styles.creditBadgeIcon} resizeMode="contain" />
-            <Text style={styles.creditBadgeText}>
-              {isAuthenticated && creditBalance !== null ? creditBalance.toLocaleString('tr-TR') : '—'}
-            </Text>
-          </TouchableOpacity>
           <TouchableOpacity
             testID="menu-open-button"
             style={styles.headerButton}
@@ -2823,21 +2857,23 @@ export default function Index() {
               setUzmanGorusuOpen(false);
               setMenuVisible(true);
             }}
+            accessibilityLabel="Menü"
           >
-            <View style={styles.headerMenuIconWrapper}>
-              <Ionicons name="menu" size={28} color="#fff" />
-              {isAuthenticated && notificationsUnread > 0 ? (
-                <View
-                  testID="menu-unread-dot"
-                  style={[styles.headerMenuUnreadDot, !isProMode && styles.headerMenuUnreadDotSimple]}
-                />
-              ) : null}
-            </View>
+            <Ionicons name="menu" size={28} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
 
       <View testID="content-area" style={styles.content}>
+        <MapFloatingCreditBadge
+          testID="credit-badge"
+          label={
+            isAuthenticated && creditBalance !== null
+              ? `${creditBalance.toLocaleString('tr-TR')} K`
+              : '— K'
+          }
+          onPress={() => router.push('pricing')}
+        />
         <View testID="home-view" style={styles.homeContainer}>
           <View testID="map-view-container" style={styles.mapContainer}>
             {(measurementMode || homeMapShapeDrawingMode || homeMapSelectedShapeId) && !shapeDrawingModalVisible ? (
@@ -3051,11 +3087,6 @@ export default function Index() {
                 {isProMode && parcelData?.geometry && (() => {
                   const centroid = getParcelCentroid(parcelData.geometry);
                   const labelText = getParcelLabelText(parcelData.properties || {});
-                  const isSelected = true; // Pro modda her zaman seçili
-                  const fillColor = isSelected ? '#f87171' : '#dc2626'; // Açık kırmızı highlight
-                  const fillOpacity = isSelected ? 0.5 : 0.3;
-                  const lineColor = isSelected ? '#ef4444' : '#dc2626';
-                  const lineWidth = isSelected ? 3 : 2;
                   return (
                     <>
                       <Mapbox.ShapeSource
@@ -3063,32 +3094,25 @@ export default function Index() {
                         shape={{ type: 'Feature', geometry: parcelData.geometry, properties: parcelData.properties || {} }}
                         onPress={isMeasurementPlacementActive ? undefined : () => setParcelModalVisible(true)}
                       >
-                        <Mapbox.FillLayer id="parcelFill" style={{ fillColor, fillOpacity }} />
-                        <Mapbox.LineLayer id="parcelStroke" style={{ lineColor, lineWidth }} />
+                        {createParcelFillLayer(Mapbox, 'parcel', true, homeParcelPolygonDesign)}
                       </Mapbox.ShapeSource>
-                      {centroid && labelText && (
-                        <Mapbox.ShapeSource
-                          id="parcelLabelSource"
-                          shape={{
-                            type: 'Feature',
-                            geometry: { type: 'Point', coordinates: centroid },
-                            properties: { label: labelText }
-                          }}
-                        >
-                          <Mapbox.SymbolLayer
-                            id="parcelLabelLayer"
-                            style={{
-                              textField: ['get', 'label'],
-                              textSize: 12,
-                              textColor: '#ffffff',
-                              textHaloColor: '#000000',
-                              textHaloWidth: 2,
-                              textAnchor: 'center',
-                              textAllowOverlap: true,
-                            }}
-                          />
-                        </Mapbox.ShapeSource>
-                      )}
+                      {homeParcelPolygonDesign?.patternId &&
+                      homeParcelPolygonDesign.patternId !== 'none' ? (
+                        <ParcelPatternLayer
+                          Mapbox={Mapbox}
+                          idPrefix="parcel"
+                          geometry={parcelData.geometry}
+                          patternId={homeParcelPolygonDesign.patternId}
+                          tintColor={homeParcelPolygonDesign.strokeColor}
+                          patternSizeScale={homeParcelPolygonDesign.patternSizeScale}
+                        />
+                      ) : null}
+                      <Mapbox.ShapeSource
+                        id="parcelStrokeSource"
+                        shape={{ type: 'Feature', geometry: parcelData.geometry, properties: {} }}
+                      >
+                        {createParcelStrokeLayer(Mapbox, 'parcel', true, homeParcelPolygonDesign)}
+                      </Mapbox.ShapeSource>
                     </>
                   );
                 })()}
@@ -3099,10 +3123,6 @@ export default function Index() {
                   const centroid = getParcelCentroid(parcel.geometry);
                   const labelText = getParcelLabelText(parcel.properties || {});
                   const isSelected = selectedParcelForModal?.id === parcel.id;
-                  const fillColor = isSelected ? '#f87171' : '#dc2626'; // Açık kırmızı highlight
-                  const fillOpacity = isSelected ? 0.5 : 0.3;
-                  const lineColor = isSelected ? '#ef4444' : '#FF0000'; // Seçili olmayan için saf kırmızı
-                  const lineWidth = isSelected ? 3 : 2;
                   return (
                     <React.Fragment key={`simple-parcel-${parcel.id}`}>
                       <Mapbox.ShapeSource
@@ -3120,32 +3140,35 @@ export default function Index() {
                               }
                         }
                       >
-                        <Mapbox.FillLayer id={`parcelFill-${parcel.id}`} style={{ fillColor, fillOpacity }} />
-                        <Mapbox.LineLayer id={`parcelStroke-${parcel.id}`} style={{ lineColor, lineWidth }} />
+                        {createParcelFillLayer(
+                          Mapbox,
+                          `parcel-${parcel.id}`,
+                          isSelected,
+                          homeParcelPolygonDesign
+                        )}
                       </Mapbox.ShapeSource>
-                      {centroid && labelText && (
-                        <Mapbox.ShapeSource
-                          id={`parcelLabelSource-${parcel.id}`}
-                          shape={{
-                            type: 'Feature',
-                            geometry: { type: 'Point', coordinates: centroid },
-                            properties: { label: labelText }
-                          }}
-                        >
-                          <Mapbox.SymbolLayer
-                            id={`parcelLabelLayer-${parcel.id}`}
-                            style={{
-                              textField: ['get', 'label'],
-                              textSize: 12,
-                              textColor: '#ffffff',
-                              textHaloColor: '#000000',
-                              textHaloWidth: 2,
-                              textAnchor: 'center',
-                              textAllowOverlap: true,
-                            }}
-                          />
-                        </Mapbox.ShapeSource>
-                      )}
+                      {homeParcelPolygonDesign?.patternId &&
+                      homeParcelPolygonDesign.patternId !== 'none' ? (
+                        <ParcelPatternLayer
+                          Mapbox={Mapbox}
+                          idPrefix={`parcel-${parcel.id}`}
+                          geometry={parcel.geometry}
+                          patternId={homeParcelPolygonDesign.patternId}
+                          tintColor={homeParcelPolygonDesign.strokeColor}
+                          patternSizeScale={homeParcelPolygonDesign.patternSizeScale}
+                        />
+                      ) : null}
+                      <Mapbox.ShapeSource
+                        id={`parcelStrokeSource-${parcel.id}`}
+                        shape={{ type: 'Feature', geometry: parcel.geometry, properties: {} }}
+                      >
+                        {createParcelStrokeLayer(
+                          Mapbox,
+                          `parcel-${parcel.id}`,
+                          isSelected,
+                          homeParcelPolygonDesign
+                        )}
+                      </Mapbox.ShapeSource>
                     </React.Fragment>
                   );
                 })}
@@ -3423,6 +3446,38 @@ export default function Index() {
                   Mapbox={Mapbox}
                   interactionLocked={isMeasurementPlacementActive || homeMapShapeDrawingMode === 'pen'}
                 />
+                {/* Parsel etiketleri en üstte — desen gliflerinin üzerinde */}
+                {isProMode &&
+                  parcelData?.geometry &&
+                  (() => {
+                    const centroid = getParcelCentroid(parcelData.geometry);
+                    const labelText = getParcelLabelText(parcelData.properties || {});
+                    if (!centroid || !labelText) return null;
+                    return (
+                      <ParcelLabelLayer
+                        Mapbox={Mapbox}
+                        idPrefix="parcel"
+                        centroid={centroid}
+                        labelText={labelText}
+                      />
+                    );
+                  })()}
+                {!isProMode &&
+                  simpleModeParcels.map((parcel) => {
+                    if (!parcel.geometry) return null;
+                    const centroid = getParcelCentroid(parcel.geometry);
+                    const labelText = getParcelLabelText(parcel.properties || {});
+                    if (!centroid || !labelText) return null;
+                    return (
+                      <ParcelLabelLayer
+                        key={`parcel-label-${parcel.id}`}
+                        Mapbox={Mapbox}
+                        idPrefix={`parcel-${parcel.id}`}
+                        centroid={centroid}
+                        labelText={labelText}
+                      />
+                    );
+                  })}
               </Mapbox.MapView>
               <ScreenShapesOverlay
                 shapes={homeMapSketchShapes}
@@ -3695,7 +3750,7 @@ export default function Index() {
         <MyQueriesModal
           visible={myQueriesVisible}
           onClose={() => setMyQueriesVisible(false)}
-          onSelect={handleSelectSavedQuery}
+          onSelect={runSimpleQueryFromSaved}
           isAuthenticated={isAuthenticated}
         />
         <ErrorBoundary>
@@ -3888,14 +3943,19 @@ export default function Index() {
               >
                 <TouchableOpacity
                   testID="pro-mode-opt"
-                  style={[styles.infoSubMenuItem, isProMode && styles.infoSubMenuItemActive, !isAuthenticated && { opacity: 0.4 }]}
+                  style={[
+                    styles.infoSubMenuItem,
+                    queryModeChoice === 'pro' && styles.infoSubMenuItemActive,
+                    !isAuthenticated && { opacity: 0.4 },
+                  ]}
                   disabled={!isAuthenticated}
                   onPress={() => {
                     suppressGhostMapPress();
                     menuItemClickedRef.current = true;
-                    if (isProMode && infoModeActive) {
+                    if (queryModeChoice === 'pro' && infoModeActive) {
                       setInfoModeActive(false);
                     } else {
+                      setQueryModeChoice('pro');
                       setIsProMode(true);
                       setInfoModeActive(true);
                     }
@@ -3903,20 +3963,35 @@ export default function Index() {
                   }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons name="analytics" size={18} color={isProMode ? '#3b82f6' : '#fff'} />
-                    <Text style={[styles.infoSubMenuText, isProMode && styles.infoSubMenuTextActive]}>ProMod</Text>
+                    <Ionicons
+                      name="analytics"
+                      size={18}
+                      color={queryModeChoice === 'pro' ? '#3b82f6' : '#fff'}
+                    />
+                    <Text
+                      style={[
+                        styles.infoSubMenuText,
+                        queryModeChoice === 'pro' && styles.infoSubMenuTextActive,
+                      ]}
+                    >
+                      ProMod
+                    </Text>
                   </View>
                 </TouchableOpacity>
                 <View style={[styles.infoSubMenuDivider, !isProMode && styles.infoSubMenuDividerSimple]} />
                 <TouchableOpacity
                   testID="basit-mode-opt"
-                  style={[styles.infoSubMenuItem, !isProMode && styles.infoSubMenuItemActive]}
+                  style={[
+                    styles.infoSubMenuItem,
+                    queryModeChoice === 'simple' && styles.infoSubMenuItemActive,
+                  ]}
                   onPress={() => {
                     suppressGhostMapPress();
                     menuItemClickedRef.current = true;
-                    if (!isProMode && infoModeActive) {
+                    if (queryModeChoice === 'simple' && infoModeActive) {
                       setInfoModeActive(false);
                     } else {
+                      setQueryModeChoice('simple');
                       setIsProMode(false);
                       setInfoModeActive(true);
                     }
@@ -3924,8 +3999,19 @@ export default function Index() {
                   }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons name="leaf" size={18} color={!isProMode ? '#3b82f6' : '#fff'} />
-                    <Text style={[styles.infoSubMenuText, !isProMode && styles.infoSubMenuTextActive]}>BasitMod</Text>
+                    <Ionicons
+                      name="leaf"
+                      size={18}
+                      color={queryModeChoice === 'simple' ? '#3b82f6' : '#fff'}
+                    />
+                    <Text
+                      style={[
+                        styles.infoSubMenuText,
+                        queryModeChoice === 'simple' && styles.infoSubMenuTextActive,
+                      ]}
+                    >
+                      BasitMod
+                    </Text>
                   </View>
                 </TouchableOpacity>
               </View>
@@ -4100,6 +4186,16 @@ export default function Index() {
             setLocationMenuVisible(false);
           }}
           hasParcelForHisseli={hasParcelForHisseliHome}
+          onOpenParcelPolygonDesign={() => {
+            setHomeParcelDesignSheetOpen(true);
+          }}
+        />
+        <ParcelPolygonDesignSheet
+          visible={homeParcelDesignSheetOpen}
+          onClose={() => setHomeParcelDesignSheetOpen(false)}
+          insetsBottom={insets.bottom}
+          initialConfig={homeParcelPolygonDesign}
+          onConfirm={(cfg) => setHomeParcelPolygonDesign(cfg)}
         />
         <TextBoxEditModal
           visible={homeTextBoxEditVisible}
@@ -4210,6 +4306,7 @@ export default function Index() {
           if (!isProMode) {
             setIsProMode(true);
           }
+          setQueryModeChoice('pro');
         }}
       />
       <ProQueryConfirmModal
@@ -4287,17 +4384,8 @@ export default function Index() {
               requestBody.parsel = props.parselNo;
               if (props.mahalleId) requestBody.mahalleTkgmValue = props.mahalleId;
             }
-            const response = await fetchWithAuth(`${backendUrl}/api/get_parcel_info/`, {
-              method: 'POST',
-              body: JSON.stringify(requestBody),
-            });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const data = await response.json();
+            const data = await runProParcelQuery(requestBody);
             console.log('[FactoryEstimateModal] Backend yanıt anahtarları:', Object.keys(data));
-            if (data.error) {
-              console.error('[FactoryEstimateModal] Backend hata:', data.error);
-              throw new Error(data.error);
-            }
 
             // Geometri opsiyonel - yoksa harita güncellenmez ama rapor açılır
             // parcel_polygon server swap'ı bazen başarısız olabiliyor — HER ZAMAN normalize et
@@ -4357,27 +4445,6 @@ export default function Index() {
               parselNo: pv?.parselNo ?? pv?.parsel ?? (parselVal || null),
             };
 
-            const pg: any = data?.parameters_graphics || {};
-            const parametersGraphicsSlice = {
-              ...(pg.parcel_slope_graphics != null && { parcel_slope_graphics: pg.parcel_slope_graphics }),
-              ...(pg.slope_surface != null && { slope_surface: pg.slope_surface }),
-            };
-
-            const reportPayload: ReportPayload = {
-              properties: propertiesSlice,
-              valuation_steps: valuationSteps,
-              parameters_graphics: Object.keys(parametersGraphicsSlice).length ? parametersGraphicsSlice : undefined,
-              dfaRows,
-              factory_result: factoryResult || null,
-              parameters_data: pd,
-              geometry: normalizedGeometry || undefined,
-              areaM2: areaM2 > 0 ? areaM2 : undefined,
-            };
-
-            const cacheId = String(Date.now());
-            putReportMemory(cacheId, reportPayload);
-
-            // Kayıt işlemleri (hata olursa navigasyonu engellemesin)
             try {
               if (tkgmValue && adaVal && parselVal) {
                 await upsertSavedQuery({
@@ -4385,6 +4452,7 @@ export default function Index() {
                   tkgm_value: Number(tkgmValue),
                   ada: String(adaVal),
                   parsel: String(parselVal),
+                  mode: "pro",
                   price_snapshot: { unit_price: unitNum, total_price: totalNum },
                   dfaRows,
                   location_header: propertiesSlice,
@@ -4412,37 +4480,17 @@ export default function Index() {
               console.warn('[FactoryEstimateModal] save failed:', saveErr);
             }
 
-            console.log('[FactoryEstimateModal] Rapor sayfasına yönlendiriliyor, cacheId:', cacheId);
-            router.push({
-              pathname: '/routes/report_mobil_viewver',
-              params: {
-                cacheId,
-                proparcel_value: proparcelValue != null ? String(proparcelValue) : '',
-                tkgm_value: tkgmValue != null ? String(tkgmValue) : '',
-                ada: String(adaVal),
-                parsel: String(parselVal),
-                unit_price: unitNum != null ? String(unitNum) : '',
-                total_price: totalNum != null ? String(totalNum) : '',
-              },
-            });
-            if (normalizedGeometry) {
-              const settings = calculateBoundsAndCamera(normalizedGeometry);
-              if (settings && cameraRef.current) {
-                setTimeout(() => cameraRef.current.setCamera({
-                  centerCoordinate: settings.center,
-                  zoomLevel: settings.zoom,
-                  pitch: camRef.current.pitch,
-                  animationDuration: 900
-                }), 100);
-              }
-            }
-            // Pending state'leri temizle
-            setActiveScreen(null);
-            clearPendingPropertyTypeState();
-            setInfoModeActive(false);
+            const captureParcel: ParcelData | null = normalizedGeometry
+              ? {
+                  geometry: normalizedGeometry,
+                  properties: { ...data.properties, ...pd?.parcel_values },
+                  analysisData: data,
+                }
+              : null;
+            await finishProQueryNavigation(data, normalizedGeometry, unitNum, totalNum, captureParcel);
           } catch (error: any) {
             console.error('[FactoryEstimateModal] Pro sorgu hatasi:', error);
-            if (error instanceof QueryLimitError) {
+            if (error instanceof QueryLimitError || error instanceof ProQueryLimitError) {
               Alert.alert(
                 'Günlük Sorgu Limiti',
                 `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
@@ -4451,7 +4499,8 @@ export default function Index() {
                   : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]
               );
             } else {
-              Alert.alert('Bağlantı Hatası', 'Backend sunucusuna bağlanılamadı.', [{ text: 'Tamam' }]);
+              const { title, message } = getProQueryErrorAlert(error);
+              Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
             setIsLoadingParcel(false);
@@ -4494,17 +4543,8 @@ export default function Index() {
               requestBody.parsel = props.parselNo;
               if (props.mahalleId) requestBody.mahalleTkgmValue = props.mahalleId;
             }
-            const resp = await fetchWithAuth(`${backendUrl}/api/get_parcel_info/`, {
-              method: 'POST',
-              body: JSON.stringify(requestBody),
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
+            const data = await runProParcelQuery(requestBody);
             console.log('[VillaEstimateModal] Backend yanıt anahtarları:', Object.keys(data));
-            if (data.error) {
-              console.error('[VillaEstimateModal] Backend hata:', data.error);
-              throw new Error(data.error);
-            }
 
             // Geometri opsiyonel - yoksa harita güncellenmez ama rapor açılır
             // parcel_polygon server swap'ı bazen başarısız olabiliyor — HER ZAMAN normalize et
@@ -4565,27 +4605,6 @@ export default function Index() {
               parselNo: pv?.parselNo ?? pv?.parsel ?? (parselVal || null),
             };
 
-            const pg: any = data?.parameters_graphics || {};
-            const parametersGraphicsSlice = {
-              ...(pg.parcel_slope_graphics != null && { parcel_slope_graphics: pg.parcel_slope_graphics }),
-              ...(pg.slope_surface != null && { slope_surface: pg.slope_surface }),
-            };
-
-            const reportPayload: ReportPayload = {
-              properties: propertiesSlice,
-              valuation_steps: valuationSteps,
-              parameters_graphics: Object.keys(parametersGraphicsSlice).length ? parametersGraphicsSlice : undefined,
-              dfaRows,
-              villa_result: villaResult || null,
-              parameters_data: pd,
-              geometry: normalizedGeometry || undefined,
-              areaM2: areaM2 > 0 ? areaM2 : undefined,
-            };
-
-            const cacheId = String(Date.now());
-            putReportMemory(cacheId, reportPayload);
-
-            // Kayıt işlemleri (hata olursa navigasyonu engellemesin)
             try {
               if (tkgmValue && adaVal && parselVal) {
                 await upsertSavedQuery({
@@ -4593,6 +4612,7 @@ export default function Index() {
                   tkgm_value: Number(tkgmValue),
                   ada: String(adaVal),
                   parsel: String(parselVal),
+                  mode: "pro",
                   price_snapshot: { unit_price: unitNum, total_price: totalNum },
                   dfaRows,
                   location_header: propertiesSlice,
@@ -4620,37 +4640,17 @@ export default function Index() {
               console.warn('[VillaEstimateModal] save failed:', saveErr);
             }
 
-            console.log('[VillaEstimateModal] Rapor sayfasına yönlendiriliyor, cacheId:', cacheId);
-            router.push({
-              pathname: '/routes/report_mobil_viewver',
-              params: {
-                cacheId,
-                proparcel_value: proparcelValue != null ? String(proparcelValue) : '',
-                tkgm_value: tkgmValue != null ? String(tkgmValue) : '',
-                ada: String(adaVal),
-                parsel: String(parselVal),
-                unit_price: unitNum != null ? String(unitNum) : '',
-                total_price: totalNum != null ? String(totalNum) : '',
-              },
-            });
-            if (normalizedGeometry) {
-              const settings = calculateBoundsAndCamera(normalizedGeometry);
-              if (settings && cameraRef.current) {
-                setTimeout(() => cameraRef.current.setCamera({
-                  centerCoordinate: settings.center,
-                  zoomLevel: settings.zoom,
-                  pitch: camRef.current.pitch,
-                  animationDuration: 900
-                }), 100);
-              }
-            }
-            // Pending state'leri temizle
-            setActiveScreen(null);
-            clearPendingPropertyTypeState();
-            setInfoModeActive(false);
+            const captureParcel: ParcelData | null = normalizedGeometry
+              ? {
+                  geometry: normalizedGeometry,
+                  properties: { ...data.properties, ...pd?.parcel_values },
+                  analysisData: data,
+                }
+              : null;
+            await finishProQueryNavigation(data, normalizedGeometry, unitNum, totalNum, captureParcel);
           } catch (error: any) {
             console.error('[VillaEstimateModal] Pro sorgu hatasi:', error);
-            if (error instanceof QueryLimitError) {
+            if (error instanceof QueryLimitError || error instanceof ProQueryLimitError) {
               Alert.alert(
                 'Günlük Sorgu Limiti',
                 `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
@@ -4659,7 +4659,8 @@ export default function Index() {
                   : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]
               );
             } else {
-              Alert.alert('Bağlantı Hatası', 'Backend sunucusuna bağlanılamadı.', [{ text: 'Tamam' }]);
+              const { title, message } = getProQueryErrorAlert(error);
+              Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
             setIsLoadingParcel(false);
@@ -4692,10 +4693,7 @@ export default function Index() {
               requestBody.parsel = props.parselNo;
               if (props.mahalleId) requestBody.mahalleTkgmValue = props.mahalleId;
             }
-            const resp = await fetchWithAuth(`${backendUrl}/api/get_parcel_info/`, { method: 'POST', body: JSON.stringify(requestBody) });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (data.error) throw new Error(data.error);
+            const data = await runProParcelQuery(requestBody);
             const geometryRaw = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
             if (geometryRaw?.coordinates) normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
@@ -4728,18 +4726,6 @@ export default function Index() {
               adaNo: pv?.adaNo ?? pv?.ada ?? (adaVal || null),
               parselNo: pv?.parselNo ?? pv?.parsel ?? (parselVal || null),
             };
-            const pg: any = data?.parameters_graphics || {};
-            const reportPayload: ReportPayload = {
-              properties: propertiesSlice,
-              valuation_steps: valuationSteps,
-              parameters_graphics: (pg.parcel_slope_graphics != null || pg.slope_surface != null) ? { ...pg } : undefined,
-              dfaRows,
-              parameters_data: pd,
-              geometry: normalizedGeometry || undefined,
-              areaM2: areaM2 > 0 ? areaM2 : undefined,
-            };
-            const cacheId = String(Date.now());
-            putReportMemory(cacheId, reportPayload);
             try {
               if (tkgmValue && adaVal && parselVal) {
                 await upsertSavedQuery({
@@ -4747,6 +4733,7 @@ export default function Index() {
                   tkgm_value: Number(tkgmValue),
                   ada: String(adaVal),
                   parsel: String(parselVal),
+                  mode: "pro",
                   price_snapshot: { unit_price: unitNum, total_price: totalNum },
                   dfaRows,
                   location_header: propertiesSlice,
@@ -4768,38 +4755,21 @@ export default function Index() {
                 }
               }
             } catch (saveErr) { console.warn('[BinaEstimateModal] save failed:', saveErr); }
-            router.push({
-              pathname: '/routes/report_mobil_viewver',
-              params: {
-                cacheId,
-                proparcel_value: proparcelValue != null ? String(proparcelValue) : '',
-                tkgm_value: tkgmValue != null ? String(tkgmValue) : '',
-                ada: String(adaVal),
-                parsel: String(parselVal),
-                unit_price: unitNum != null ? String(unitNum) : '',
-                total_price: totalNum != null ? String(totalNum) : '',
-              },
-            });
-            if (normalizedGeometry) {
-              const settings = calculateBoundsAndCamera(normalizedGeometry);
-              if (settings && cameraRef.current) {
-                setTimeout(() => cameraRef.current.setCamera({
-                  centerCoordinate: settings.center,
-                  zoomLevel: settings.zoom,
-                  pitch: camRef.current.pitch,
-                  animationDuration: 900
-                }), 100);
-              }
-            }
-            setActiveScreen(null);
-            clearPendingPropertyTypeState();
-            setInfoModeActive(false);
+            const captureParcel: ParcelData | null = normalizedGeometry
+              ? {
+                  geometry: normalizedGeometry,
+                  properties: { ...data.properties, ...pd?.parcel_values },
+                  analysisData: data,
+                }
+              : null;
+            await finishProQueryNavigation(data, normalizedGeometry, unitNum, totalNum, captureParcel);
           } catch (error: any) {
-            if (error instanceof QueryLimitError) {
+            if (error instanceof QueryLimitError || error instanceof ProQueryLimitError) {
               Alert.alert('Günlük Sorgu Limiti', `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
                 isAuthenticated ? [{ text: 'Tamam' }] : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]);
             } else {
-              Alert.alert('Bağlantı Hatası', 'Backend sunucusuna bağlanılamadı.', [{ text: 'Tamam' }]);
+              const { title, message } = getProQueryErrorAlert(error);
+              Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
             setIsLoadingParcel(false);
@@ -4832,10 +4802,7 @@ export default function Index() {
               requestBody.parsel = props.parselNo;
               if (props.mahalleId) requestBody.mahalleTkgmValue = props.mahalleId;
             }
-            const resp = await fetchWithAuth(`${backendUrl}/api/get_parcel_info/`, { method: 'POST', body: JSON.stringify(requestBody) });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (data.error) throw new Error(data.error);
+            const data = await runProParcelQuery(requestBody);
             const geometryRaw = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
             if (geometryRaw?.coordinates) normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
@@ -4868,18 +4835,6 @@ export default function Index() {
               adaNo: pv?.adaNo ?? pv?.ada ?? (adaVal || null),
               parselNo: pv?.parselNo ?? pv?.parsel ?? (parselVal || null),
             };
-            const pg: any = data?.parameters_graphics || {};
-            const reportPayload: ReportPayload = {
-              properties: propertiesSlice,
-              valuation_steps: valuationSteps,
-              parameters_graphics: (pg.parcel_slope_graphics != null || pg.slope_surface != null) ? { ...pg } : undefined,
-              dfaRows,
-              parameters_data: pd,
-              geometry: normalizedGeometry || undefined,
-              areaM2: areaM2 > 0 ? areaM2 : undefined,
-            };
-            const cacheId = String(Date.now());
-            putReportMemory(cacheId, reportPayload);
             try {
               if (tkgmValue && adaVal && parselVal) {
                 await upsertSavedQuery({
@@ -4887,6 +4842,7 @@ export default function Index() {
                   tkgm_value: Number(tkgmValue),
                   ada: String(adaVal),
                   parsel: String(parselVal),
+                  mode: "pro",
                   price_snapshot: { unit_price: unitNum, total_price: totalNum },
                   dfaRows,
                   location_header: propertiesSlice,
@@ -4908,38 +4864,21 @@ export default function Index() {
                 }
               }
             } catch (saveErr) { console.warn('[MustakilEvEstimateModal] save failed:', saveErr); }
-            router.push({
-              pathname: '/routes/report_mobil_viewver',
-              params: {
-                cacheId,
-                proparcel_value: proparcelValue != null ? String(proparcelValue) : '',
-                tkgm_value: tkgmValue != null ? String(tkgmValue) : '',
-                ada: String(adaVal),
-                parsel: String(parselVal),
-                unit_price: unitNum != null ? String(unitNum) : '',
-                total_price: totalNum != null ? String(totalNum) : '',
-              },
-            });
-            if (normalizedGeometry) {
-              const settings = calculateBoundsAndCamera(normalizedGeometry);
-              if (settings && cameraRef.current) {
-                setTimeout(() => cameraRef.current.setCamera({
-                  centerCoordinate: settings.center,
-                  zoomLevel: settings.zoom,
-                  pitch: camRef.current.pitch,
-                  animationDuration: 900
-                }), 100);
-              }
-            }
-            setActiveScreen(null);
-            clearPendingPropertyTypeState();
-            setInfoModeActive(false);
+            const captureParcel: ParcelData | null = normalizedGeometry
+              ? {
+                  geometry: normalizedGeometry,
+                  properties: { ...data.properties, ...pd?.parcel_values },
+                  analysisData: data,
+                }
+              : null;
+            await finishProQueryNavigation(data, normalizedGeometry, unitNum, totalNum, captureParcel);
           } catch (error: any) {
-            if (error instanceof QueryLimitError) {
+            if (error instanceof QueryLimitError || error instanceof ProQueryLimitError) {
               Alert.alert('Günlük Sorgu Limiti', `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
                 isAuthenticated ? [{ text: 'Tamam' }] : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]);
             } else {
-              Alert.alert('Bağlantı Hatası', 'Backend sunucusuna bağlanılamadı.', [{ text: 'Tamam' }]);
+              const { title, message } = getProQueryErrorAlert(error);
+              Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
             setIsLoadingParcel(false);
@@ -4972,10 +4911,7 @@ export default function Index() {
               requestBody.parsel = props.parselNo;
               if (props.mahalleId) requestBody.mahalleTkgmValue = props.mahalleId;
             }
-            const resp = await fetchWithAuth(`${backendUrl}/api/get_parcel_info/`, { method: 'POST', body: JSON.stringify(requestBody) });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            if (data.error) throw new Error(data.error);
+            const data = await runProParcelQuery(requestBody);
             const geometryRaw = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
             if (geometryRaw?.coordinates) normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
@@ -5008,18 +4944,6 @@ export default function Index() {
               adaNo: pv?.adaNo ?? pv?.ada ?? (adaVal || null),
               parselNo: pv?.parselNo ?? pv?.parsel ?? (parselVal || null),
             };
-            const pg: any = data?.parameters_graphics || {};
-            const reportPayload: ReportPayload = {
-              properties: propertiesSlice,
-              valuation_steps: valuationSteps,
-              parameters_graphics: (pg.parcel_slope_graphics != null || pg.slope_surface != null) ? { ...pg } : undefined,
-              dfaRows,
-              parameters_data: pd,
-              geometry: normalizedGeometry || undefined,
-              areaM2: areaM2 > 0 ? areaM2 : undefined,
-            };
-            const cacheId = String(Date.now());
-            putReportMemory(cacheId, reportPayload);
             try {
               if (tkgmValue && adaVal && parselVal) {
                 await upsertSavedQuery({
@@ -5027,6 +4951,7 @@ export default function Index() {
                   tkgm_value: Number(tkgmValue),
                   ada: String(adaVal),
                   parsel: String(parselVal),
+                  mode: "pro",
                   price_snapshot: { unit_price: unitNum, total_price: totalNum },
                   dfaRows,
                   location_header: propertiesSlice,
@@ -5048,38 +4973,21 @@ export default function Index() {
                 }
               }
             } catch (saveErr) { console.warn('[KonutDaireModal] save failed:', saveErr); }
-            router.push({
-              pathname: '/routes/report_mobil_viewver',
-              params: {
-                cacheId,
-                proparcel_value: proparcelValue != null ? String(proparcelValue) : '',
-                tkgm_value: tkgmValue != null ? String(tkgmValue) : '',
-                ada: String(adaVal),
-                parsel: String(parselVal),
-                unit_price: unitNum != null ? String(unitNum) : '',
-                total_price: totalNum != null ? String(totalNum) : '',
-              },
-            });
-            if (normalizedGeometry) {
-              const settings = calculateBoundsAndCamera(normalizedGeometry);
-              if (settings && cameraRef.current) {
-                setTimeout(() => cameraRef.current.setCamera({
-                  centerCoordinate: settings.center,
-                  zoomLevel: settings.zoom,
-                  pitch: camRef.current.pitch,
-                  animationDuration: 900
-                }), 100);
-              }
-            }
-            setActiveScreen(null);
-            clearPendingPropertyTypeState();
-            setInfoModeActive(false);
+            const captureParcel: ParcelData | null = normalizedGeometry
+              ? {
+                  geometry: normalizedGeometry,
+                  properties: { ...data.properties, ...pd?.parcel_values },
+                  analysisData: data,
+                }
+              : null;
+            await finishProQueryNavigation(data, normalizedGeometry, unitNum, totalNum, captureParcel);
           } catch (error: any) {
-            if (error instanceof QueryLimitError) {
+            if (error instanceof QueryLimitError || error instanceof ProQueryLimitError) {
               Alert.alert('Günlük Sorgu Limiti', `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
                 isAuthenticated ? [{ text: 'Tamam' }] : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]);
             } else {
-              Alert.alert('Bağlantı Hatası', 'Backend sunucusuna bağlanılamadı.', [{ text: 'Tamam' }]);
+              const { title, message } = getProQueryErrorAlert(error);
+              Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
             setIsLoadingParcel(false);
@@ -5225,7 +5133,7 @@ export default function Index() {
         <CombinedScreenshotContainer
           ref={combinedContainerRef}
           capturedMapUri={capturedMapUri}
-          parcelData={activeParcelData}
+          parcelData={proQueryCaptureParcelRef.current ?? activeParcelData}
           isProMode={isProMode}
           priceOverride={screenshotPriceOverride}
           mapOnly={!hasActiveParcel}
@@ -5240,13 +5148,57 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1e293b', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 3, borderBottomColor: '#3b82f6' },
   /** Android: Mapbox SurfaceView ile aynı pencerede üstte kalarak dokunuşların header'a düşmesi */
   headerAndroidLayer: { elevation: 12, zIndex: 20 },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  // Ana sayfa header butonları: 3D sayfası ölçülerine göre
+  headerSideLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 8,
+    minWidth: 0,
+  },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 4,
+  },
+  headerSideRight: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    minWidth: 0,
+  },
+  headerIconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  headerNotifDot: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#36AAFF',
+    borderWidth: 1.5,
+    borderColor: '#1e293b',
+  },
+  headerLogo: {
+    width: 28,
+    height: 28,
+    shadowColor: '#38bdf8',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 10,
+    ...(Platform.OS === 'android' ? { elevation: 6 } : {}),
+  },
   headerButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: '#334155', borderRadius: 6 },
-  headerMenuIconWrapper: { position: 'relative', width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
-  headerMenuUnreadDot: { position: 'absolute', top: -3, right: -3, width: 10, height: 10, borderRadius: 5, backgroundColor: '#ef4444', borderWidth: 2, borderColor: '#1e293b' },
-  headerMenuUnreadDotSimple: { borderColor: '#ffffff' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   // Topbar VIP rozeti
   topbarVipBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#d97706', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, height: 32 },
   topbarVipText: { fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
@@ -5254,21 +5206,8 @@ const styles = StyleSheet.create({
   headerModeImgBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   headerModeImg: { width: 34, height: 34 },
   // Ana sayfa coin alanı: 3D sayfası ölçülerine göre
-  creditBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 32,
-    paddingHorizontal: 10,
-    backgroundColor: '#334155',
-    borderRadius: 6,
-    gap: 6,
-  },
-  creditBadgeIcon: { width: 16, height: 16 },
-  creditBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  titleContainer: { alignItems: 'flex-start', justifyContent: 'center', flex: 1 },
-  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
-  content: { flex: 1, backgroundColor: '#f5f5f5' },
+  headerTitle: { fontSize: 17, fontWeight: '700', color: '#fff', letterSpacing: 0.2 },
+  content: { flex: 1, backgroundColor: '#f5f5f5', position: 'relative', overflow: 'visible' },
   homeContainer: { flex: 1 },
   mapContainer: { flex: 1 },
   map: { flex: 1 },

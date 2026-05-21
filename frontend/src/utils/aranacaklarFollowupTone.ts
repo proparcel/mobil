@@ -1,13 +1,15 @@
+import { resolveNextSearchDueAt } from './aranacaklarFollowupSchedule';
+
 export type FollowupTone = 'none' | 'waiting' | 'soon' | 'called' | 'overdue';
 
 export function followupTone(
   fu: Record<string, unknown> | null | undefined,
   contact?: Record<string, unknown> | null,
 ): FollowupTone {
-  if (!fu?.next_due_at) return 'none';
-  const nd = new Date(String(fu.next_due_at)).getTime();
+  const resolved = resolveNextSearchDueAt(fu as { next_due_at?: string; interval_months?: number });
+  if (!resolved) return 'none';
+  const nd = resolved.getTime();
   const now = Date.now();
-  if (Number.isNaN(nd)) return 'none';
   if (nd <= now) return 'overdue';
   if (nd <= now + 72 * 3600 * 1000) return 'soon';
   const lp = contact?.last_phone_call_at ? new Date(String(contact.last_phone_call_at)).getTime() : 0;

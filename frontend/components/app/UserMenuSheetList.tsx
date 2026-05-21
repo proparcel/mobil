@@ -105,6 +105,28 @@ export default function UserMenuSheetList({
               />
             ) : null}
           </TouchableOpacity>
+          {item.id === "ai-video" && submenuOpenId === "ai-video" && (
+            <>
+              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-video-studio")}>
+                <View style={st.iconWrap}>
+                  <Ionicons name="film-outline" size={20} color={subIconColor} />
+                </View>
+                <Text style={st.itemText}>AI Video</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-image-animation")}>
+                <View style={st.iconWrap}>
+                  <Ionicons name="image-outline" size={20} color={subIconColor} />
+                </View>
+                <Text style={st.itemText}>AI Resim</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-drone-video")}>
+                <View style={st.iconWrap}>
+                  <Ionicons name="airplane-outline" size={20} color={subIconColor} />
+                </View>
+                <Text style={st.itemText}>AI Drone Video</Text>
+              </TouchableOpacity>
+            </>
+          )}
           {item.id === "ilan-islemleri" && submenuOpenId === "ilan-islemleri" && (
             <>
               <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ilan-ver")}>
@@ -129,12 +151,6 @@ export default function UserMenuSheetList({
           )}
           {item.id === "dosyalarim" && submenuOpenId === "dosyalarim" && (
             <>
-              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("sorgularim")}>
-                <View style={st.iconWrap}>
-                  <Ionicons name="list" size={20} color={subIconColor} />
-                </View>
-                <Text style={st.itemText}>Sorgularım</Text>
-              </TouchableOpacity>
               <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("hisseli-parsel-projelerim")}>
                 <View style={st.iconWrap}>
                   <MaterialCommunityIcons name="file-document-outline" size={20} color={subIconColor} />

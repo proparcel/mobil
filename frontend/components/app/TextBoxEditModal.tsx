@@ -1,14 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
+import { KeyboardAwareModal } from './KeyboardAwareModal';
 
 interface TextBoxEditModalProps {
   visible: boolean;
@@ -30,8 +28,7 @@ export const TextBoxEditModal: React.FC<TextBoxEditModalProps> = ({
   }, [visible, initialText]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.backdrop}>
+    <KeyboardAwareModal visible={visible} animationType="fade" onRequestClose={onCancel} backdropStyle={styles.backdrop}>
         <View style={styles.card}>
           <Text style={styles.title}>Metni Düzenle</Text>
           <TextInput
@@ -51,8 +48,7 @@ export const TextBoxEditModal: React.FC<TextBoxEditModalProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </KeyboardAvoidingView>
-    </Modal>
+    </KeyboardAwareModal>
   );
 };
 

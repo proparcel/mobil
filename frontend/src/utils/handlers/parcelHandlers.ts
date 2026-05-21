@@ -18,6 +18,7 @@ import {
 import { normalizeGeometryCoordinates, calculateBoundsAndCamera, isPointInParcel } from '../parcelUtils';
 import { extractNitelikText, generatePropertyTypeTitle } from '../propertyTypeUtils';
 import { API_URL } from "../../../config/api";
+import { runProParcelQuery, ProQueryLimitError } from '../proQueryApi';
 
 /**
  * Camera ref interface
@@ -90,10 +91,6 @@ export const createHandleAdaParselSubmit = (
     setIsLoadingParcel(true);
     setParcelData(null);
 
-    const backendUrl = (API_URL || "").replace(/\/$/, "");
-    const endpoint = isProMode ? '/api/get_parcel_info' : '/api/tkgm_view';
-    const fullUrl = `${backendUrl}${endpoint}`;
-
     const requestBody: any = {
       mahalle: payload.mahalle,
       mahalleTkgmValue: payload.mahalleTkgmValue,
@@ -104,28 +101,28 @@ export const createHandleAdaParselSubmit = (
     };
 
     try {
-      console.log('[parcelHandlers.ts:68] 🏠 Ada/Parsel sorgusu başlatılıyor...');
-      console.log('[parcelHandlers.ts:69] API Request:', fullUrl);
-      console.log('[parcelHandlers.ts:70] Request Body:', JSON.stringify(requestBody));
+      console.log('[parcelHandlers.ts] Ada/Parsel sorgusu başlatılıyor, pro:', isProMode);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-      const response = await fetch(fullUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const txt = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status} ${txt}`);
-      }
-
-      const data: ParcelResponse = await response.json();
+      const data: ParcelResponse = isProMode
+        ? ((await runProParcelQuery(requestBody)) as ProParcelResponse)
+        : await (async () => {
+            const backendUrl = (API_URL || '').replace(/\/$/, '');
+            const fullUrl = `${backendUrl}/api/tkgm_view/`;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 60000);
+            const response = await fetch(fullUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(requestBody),
+              signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            if (!response.ok) {
+              const txt = await response.text().catch(() => '');
+              throw new Error(`HTTP ${response.status} ${txt}`);
+            }
+            return (await response.json()) as TkgmViewResponse;
+          })();
 
       // Geometry çıkar
       let geometry: GeoJSONGeometry | null = null;
@@ -259,8 +256,12 @@ export const createHandleAdaParselSubmit = (
       setActiveScreen(null);
       setParcelModalVisible(true);
     } catch (e: any) {
-      console.error('[parcelHandlers.ts:217] ❌ Ada/Parsel sorgu hatası:', e);
-      Alert.alert('Hata', e?.message || 'Sorgu hatası');
+      console.error('[parcelHandlers.ts] Ada/Parsel sorgu hatası:', e);
+      if (e instanceof ProQueryLimitError) {
+        Alert.alert('Günlük Sorgu Limiti', e.message);
+      } else {
+        Alert.alert('Hata', e?.message || 'Sorgu hatası');
+      }
     } finally {
       setIsLoadingParcel(false);
     }

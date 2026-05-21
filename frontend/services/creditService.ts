@@ -17,6 +17,7 @@ const CREDIT_ENDPOINTS = {
   CHECK: "/api/credit/check/",
   USE: "/api/credit/use/",
   COSTS: "/api/credit/costs/",
+  GIFT_REWARDS: "/api/credit/gift-rewards/",
   PACKAGES: "/api/packages/",
   PURCHASE: "/api/packages/purchase/",
   VALIDATE_COUPON: "/api/credit/validate-coupon/",
@@ -245,6 +246,16 @@ export interface CreditCosts {
   items?: CreditCostItem[];
 }
 
+export interface GiftRewardItem {
+  event_type: string;
+  display_name: string;
+  credits: number;
+  description?: string;
+  icon?: string;
+  icon_fa?: string;
+  is_coming_soon?: boolean;
+}
+
 /** Sunucu build_3d_design_licenses_list ile uyumlu */
 export interface Parcel3dLicenseRow {
   reference_id: string;
@@ -361,6 +372,110 @@ class CreditService {
     return authFetch<CreditCosts>(CREDIT_ENDPOINTS.COSTS, {
       method: "GET",
     }, { requireAuth: false });
+  }
+
+  /**
+   * Tek action_type maliyeti — web ``get_credit_cost_for_action`` ile aynı kaynak (Mongo purchasing_kredits + fallback).
+   * Önce GET /api/credit/check/?action_type= (sunucu DB), sonra /api/credit/costs/ listesi.
+   */
+  async getCreditCostForAction(actionType: string): Promise<number | null> {
+    const key = String(actionType || "").trim();
+    if (!key) return null;
+    try {
+      const check = await this.checkCredit(key);
+      const checkRaw = check as CreditCheck & { required_credit?: number; data?: CreditCheck };
+      const fromCheck =
+        typeof checkRaw.required_credit === "number"
+          ? checkRaw.required_credit
+          : typeof checkRaw.data?.required_credit === "number"
+            ? checkRaw.data.required_credit
+            : null;
+      if (fromCheck != null && fromCheck >= 0) {
+        return fromCheck;
+      }
+    } catch {
+      /* check endpoint başarısız — costs listesine düş */
+    }
+    return this.getCreditCostFromCostsList([key]);
+  }
+
+  /**
+   * GET /api/credit/costs/ yanıtından maliyet (success alanı zorunlu değil).
+   */
+  private async getCreditCostFromCostsList(actionTypes: string[]): Promise<number | null> {
+    try {
+      const res = await this.getCreditCosts();
+      const raw = res as unknown as CreditCosts & { data?: CreditCosts; costs?: Record<string, number> };
+      const payload = raw.data ?? raw;
+      const costs = payload.costs ?? raw.costs;
+      const items = payload.items ?? raw.items;
+      for (const actionKey of actionTypes) {
+        if (!actionKey) continue;
+        if (costs && typeof costs[actionKey] === "number" && costs[actionKey] >= 0) {
+          return costs[actionKey];
+        }
+        const row = items?.find((it) => it.action_type === actionKey);
+        if (row && typeof row.credits === "number" && row.credits >= 0) {
+          return row.credits;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Kredi kullanımları tablosundan action_type maliyeti (sırayla dener).
+   */
+  async getCreditCostForActionTypes(actionTypes: string[]): Promise<number | null> {
+    for (const key of actionTypes) {
+      if (!key) continue;
+      const cost = await this.getCreditCostForAction(key);
+      if (cost != null && cost >= 0) return cost;
+    }
+    return this.getCreditCostFromCostsList(actionTypes);
+  }
+
+  /** Landing / paket — yalnızca vitrinde gösterilen kullanım maliyetleri */
+  async getCreditCostsForPricing(): Promise<GiftRewardItem[]> {
+    try {
+      const url = `${DJANGO_API_URL}${CREDIT_ENDPOINTS.COSTS}?visible_on_pricing=1`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      const items = Array.isArray(data?.items) ? data.items : [];
+      return items.map((row: CreditCostItem) => ({
+        event_type: row.action_type,
+        display_name: row.display_name,
+        credits: row.credits,
+        description: row.description,
+        icon: row.icon,
+        icon_fa: row.icon_fa,
+        is_coming_soon: false,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Web landing — Tepe Kredi kazanım kartları */
+  async getGiftRewards(): Promise<GiftRewardItem[]> {
+    try {
+      const url = `${DJANGO_API_URL}${CREDIT_ENDPOINTS.GIFT_REWARDS}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data?.items) ? data.items : [];
+    } catch {
+      return [];
+    }
   }
 
   /**

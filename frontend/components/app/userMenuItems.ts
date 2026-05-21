@@ -37,11 +37,12 @@ export function getMenuItems(
     corporateType === "spk";
 
   return [
+    { id: "sorgularim", title: "Sorgularım", icon: "time-outline", disabled: false },
     { id: "kullanici", title: "Profil", icon: "person", disabled: false },
     { id: "emlak-vitrini", title: "Emlak Vitrini", icon: "storefront-outline", disabled: false },
     { id: "son-30-gun-pro", title: "Son 30 Gün Pro Sorguları", icon: "calendar", disabled: false },
     { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
-    { id: "ai-video-olusturucu", title: "AI Video Oluşturucu", icon: "film-outline", disabled: false },
+    { id: "ai-video", title: "AI İşlemleri", icon: "film-outline", disabled: false, hasSubmenu: true },
     { id: "sosyal-medya-sablonu", title: "Sosyal Medya Postu", icon: "share-social-outline", disabled: false },
     { id: "aranacaklar", title: "Aranacaklar", icon: "call-outline", disabled: false },
     { id: "bildirimler", title: "Bildirimler", icon: "notifications", disabled: false },

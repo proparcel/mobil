@@ -11,9 +11,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   ActivityIndicator,
   Alert,
   Modal,
@@ -25,6 +22,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { authService } from "../../../services/authService";
 import { storageService } from "../../../services/storageService";
 import { StatusBar } from "react-native";
+import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 
 type MemberType = "individual" | "consultant" | "corporate";
 
@@ -317,10 +315,7 @@ export default function RegisterScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.topbar}>
         <TouchableOpacity
@@ -333,9 +328,11 @@ export default function RegisterScreen() {
         <Text style={styles.topbarTitle}>Kayıt Ol</Text>
         <View style={styles.headerRight} />
       </View>
-      <ScrollView
+      <KeyboardAwareScrollScreen
+        behaviorContext="auth"
+        headerHeight={56}
+        backgroundColor="#fff"
         contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
         <View style={styles.formHeader}>
@@ -683,7 +680,7 @@ export default function RegisterScreen() {
             <Text style={styles.loginLink}>Giriş Yap</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollScreen>
 
       {/* OTP Onay Modal */}
       <Modal
@@ -740,7 +737,7 @@ export default function RegisterScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

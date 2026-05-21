@@ -7,6 +7,7 @@ import {
   type BottomSheetBackdropProps,
   type BottomSheetModalProps,
 } from "@gorhom/bottom-sheet";
+import { KEYBOARD_SHEET_MODAL_PROPS } from "../../src/keyboard";
 
 export type AppBottomSheetModalProps = {
   visible: boolean;
@@ -55,6 +56,10 @@ export type AppBottomSheetModalProps = {
    * Extra props forwarded to BottomSheetModal when needed.
    */
   modalProps?: Partial<BottomSheetModalProps>;
+  /**
+   * Sheet içinde TextInput varsa true — adjustResize + interactive klavye (merkezi sözleşme).
+   */
+  keyboardForm?: boolean;
 };
 
 export default function AppBottomSheetModal({
@@ -72,6 +77,7 @@ export default function AppBottomSheetModal({
   backgroundStyle,
   handleIndicatorStyle,
   modalProps,
+  keyboardForm = false,
 }: AppBottomSheetModalProps) {
   const ref = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
@@ -174,6 +180,14 @@ export default function AppBottomSheetModal({
   const defaultHandleIndicatorStyle =
     variant === "dark" ? styles.handleIndicatorDark : styles.handleIndicatorLight;
 
+  const mergedModalProps = useMemo(
+    () =>
+      keyboardForm
+        ? { ...KEYBOARD_SHEET_MODAL_PROPS, ...modalProps }
+        : modalProps,
+    [keyboardForm, modalProps],
+  );
+
   return (
     <BottomSheetModal
       ref={ref}
@@ -189,7 +203,7 @@ export default function AppBottomSheetModal({
       // Keep modal mounted only while presented; notify caller on dismiss.
       onDismiss={handleDismiss}
       topInset={insets.top}
-      {...(modalProps as any)}
+      {...(mergedModalProps as any)}
     >
       {children}
     </BottomSheetModal>

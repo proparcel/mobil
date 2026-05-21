@@ -11,6 +11,8 @@ export type AranacaklarListRow = {
     phone_e164: string;
     source?: string;
     last_phone_call_at?: string;
+    created_at?: string;
+    contact_side?: 'alici' | 'satici' | string;
   };
   intent?: Record<string, unknown> | null;
   followup?: Record<string, unknown> | null;
@@ -37,6 +39,7 @@ export async function createAranacaklarContact(body: {
   phone_raw: string;
   phone_e164: string;
   source: 'manual' | 'phonebook';
+  contact_side: 'alici' | 'satici';
 }): Promise<ApiResult<Record<string, unknown>>> {
   return authJsonFetch<Record<string, unknown>>('/api/aranacaklar/', { method: 'POST', json: body });
 }

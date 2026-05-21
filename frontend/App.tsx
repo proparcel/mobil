@@ -29,6 +29,9 @@ import TepeCoinEarnScreen from './screens/routes/tepe-coin-earn';
 import NotificationsScreen from './screens/routes/notifications';
 import SalesReportScreen from './screens/routes/sales-report';
 import AiVideoStudioScreen from './screens/routes/ai-video-studio';
+import AiImageAnimationPurchaseScreen from './screens/routes/ai-image-animation-purchase';
+import AiImageAnimationEditorScreen from './screens/routes/ai-image-animation-editor';
+import AiDroneVideoInfoScreen from './screens/routes/ai-drone-video-info';
 import RequestCenterScreen from './screens/routes/expert-requests';
 import ExpertRequestReportScreen from './screens/routes/expert-request-report';
 import ReportExpertRequestScreen from './screens/routes/report-expert-request';
@@ -148,6 +151,9 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="expert-request-report" component={ExpertRequestReportScreen} />
           <Stack.Screen name="sales-report" component={SalesReportScreen} />
           <Stack.Screen name="ai-video-studio" component={AiVideoStudioScreen} />
+          <Stack.Screen name="ai-image-animation-purchase" component={AiImageAnimationPurchaseScreen} />
+          <Stack.Screen name="ai-image-animation-editor" component={AiImageAnimationEditorScreen} />
+          <Stack.Screen name="ai-drone-video-info" component={AiDroneVideoInfoScreen} />
           <Stack.Screen name="report_mobil_viewver" component={ReportMobilViewverScreen} />
           <Stack.Screen name="report-expert-request" component={ReportExpertRequestScreen} />
           <Stack.Screen name="parcel-split" component={ParcelSplitScreen} />

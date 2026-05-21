@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert } from "react-native";
+import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../src/hooks/useNavigation";
@@ -78,7 +79,11 @@ export default function SalesReportScreen() {
         <View style={styles.headerRight} />
       </View>
 
-      <View style={[styles.content, { paddingBottom: 16 + insets.bottom }]}>
+      <KeyboardAwareScrollScreen
+        headerHeight={56}
+        backgroundColor="#1e293b"
+        contentContainerStyle={[styles.content, { paddingBottom: 16 + insets.bottom }]}
+      >
         <View style={styles.card}>
           <Text style={styles.label}>İl (opsiyonel)</Text>
           <TextInput value={cityName} onChangeText={setCityName} style={styles.input} placeholder="İl" placeholderTextColor="#94a3b8" />
@@ -112,7 +117,7 @@ export default function SalesReportScreen() {
 
           <Text style={styles.muted}>Onay sonrası 30 Tepe Coin hesabına eklenir.</Text>
         </View>
-      </View>
+      </KeyboardAwareScrollScreen>
     </SafeAreaView>
   );
 }

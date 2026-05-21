@@ -17,7 +17,6 @@ import {
   RefreshControl,
   Linking,
   Alert,
-  KeyboardAvoidingView,
   Platform,
   Dimensions,
   StatusBar,
@@ -31,6 +30,7 @@ import { useRouter, useLocalSearchParams } from "../../src/hooks/useNavigation";
 import { parseTurkishPrice } from "../../src/utils/priceParser";
 import { useAuth } from "../contexts/AuthContext";
 import AppBottomSheetModal from "../../components/app/AppBottomSheetModal";
+import { KeyboardAwareBody } from "../../components/app/KeyboardAwareBody";
 import { PromahalleQuarterSelect } from "../../components/app/PromahalleQuarterSelect";
 import { PromahalleMapLayers } from "../../components/app/PromahalleMapLayers";
 import { promahallePageUrl } from "../../config/portalSite";
@@ -1978,11 +1978,7 @@ export default function PromahalleScreen() {
         {mainSegment === "experts" ? (
           expertsBody
         ) : (
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
-        >
+        <KeyboardAwareBody headerHeight={56} backgroundColor={COLORS.pageBg}>
           <FlatList
             style={{ flex: 1, backgroundColor: COLORS.pageBg }}
             data={visiblePosts}
@@ -2035,7 +2031,7 @@ export default function PromahalleScreen() {
             }
             ListFooterComponent={loadingMore ? <ActivityIndicator color={THEME.accent} style={{ marginVertical: 16 }} /> : null}
           />
-        </KeyboardAvoidingView>
+        </KeyboardAwareBody>
         )}
       </View>
 

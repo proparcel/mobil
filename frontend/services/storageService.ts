@@ -15,6 +15,8 @@ const STORAGE_KEYS = {
   USER: "proparcel_user",
   REDIRECT_AFTER_LOGIN: "proparcel_redirect_after_login",
   DEFERRED_REFERRAL_CODE: "proparcel_deferred_referral_code",
+  /** İlk açılış cinematic intro tamamlandı — sonraki cold start doğrudan haritaya */
+  SKIP_LANDING_INTRO: "proparcel_skip_landing_intro",
 } as const;
 
 /** Redirect-after-login target. Use "model-editor" to open ShapeDrawingModal after login/register. */
@@ -202,6 +204,31 @@ class StorageService {
 
   async clearDeferredReferralCode(): Promise<void> {
     await this.setDeferredReferralCode(null);
+  }
+
+  /**
+   * Landing cinematic intro bir kez gösterildi mi (App cold start route seçimi).
+   */
+  async getSkipLandingIntro(): Promise<boolean> {
+    try {
+      const v = await AsyncStorage.getItem(STORAGE_KEYS.SKIP_LANDING_INTRO);
+      return v === "1";
+    } catch (error) {
+      console.error("[storageService] getSkipLandingIntro error:", error);
+      return false;
+    }
+  }
+
+  async setSkipLandingIntro(skip: boolean): Promise<void> {
+    try {
+      if (skip) {
+        await AsyncStorage.setItem(STORAGE_KEYS.SKIP_LANDING_INTRO, "1");
+      } else {
+        await AsyncStorage.removeItem(STORAGE_KEYS.SKIP_LANDING_INTRO);
+      }
+    } catch (error) {
+      console.error("[storageService] setSkipLandingIntro error:", error);
+    }
   }
 }
 

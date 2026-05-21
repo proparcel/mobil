@@ -1,9 +1,25 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  RefreshControl,
+  Alert,
+  ActivityIndicator,
+  Linking,
+} from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
+import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "../../src/hooks/useNavigation";
-import { listNotifications, markNotificationRead, type NotificationItem } from "../../services/notificationService";
+import {
+  listNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  type NotificationItem,
+} from "../../services/notificationService";
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -11,6 +27,7 @@ export default function NotificationsScreen() {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unread, setUnread] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [markingAll, setMarkingAll] = useState(false);
 
   const load = useCallback(async () => {
     const res = await listNotifications(50, 0);
@@ -19,9 +36,11 @@ export default function NotificationsScreen() {
     setUnread(res.unread_count);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -32,14 +51,57 @@ export default function NotificationsScreen() {
     }
   }, [load]);
 
+  const onMarkAllRead = useCallback(async () => {
+    if (unread <= 0) return;
+    setMarkingAll(true);
+    try {
+      const res = await markAllNotificationsRead();
+      if (!res.ok) {
+        Alert.alert("Hata", res.error || "Bildirimler okundu işaretlenemedi.");
+        return;
+      }
+      await load();
+    } finally {
+      setMarkingAll(false);
+    }
+  }, [unread, load]);
+
   const onOpen = useCallback(
     async (n: NotificationItem) => {
       if (!n.is_read) {
-        await markNotificationRead(n.id);
-        await load();
+        const res = await markNotificationRead(n.id);
+        if (res.ok) {
+          setItems((prev) =>
+            prev.map((item) => (item.id === n.id ? { ...item, is_read: true } : item)),
+          );
+          setUnread((c) => Math.max(0, c - 1));
+        } else {
+          await load();
+        }
+      }
+      if (n.type === "listing_ai_video_ready") {
+        const data = (n.data_json || {}) as { job_id?: string; video_id?: string; source?: string };
+        const jobId = String(data.job_id || data.video_id || "").trim();
+        if (jobId) {
+          router.push("ai-video-studio", { tab: "videos", jobId });
+          return;
+        }
+      }
+      if (n.type === "ai_drone_request_ready") {
+        const data = (n.data_json || {}) as { delivery_url?: string };
+        const url = String(data.delivery_url || "").trim();
+        if (url) {
+          const can = await Linking.canOpenURL(url);
+          if (can) {
+            await Linking.openURL(url);
+            return;
+          }
+          Alert.alert("Video linki", url);
+          return;
+        }
       }
     },
-    [load]
+    [load, router],
   );
 
   return (
@@ -51,10 +113,24 @@ export default function NotificationsScreen() {
         <Text style={styles.headerTitle}>Bildirimler</Text>
         <View style={styles.headerRight}>
           {unread > 0 ? (
-            <View style={styles.unreadPill}>
-              <Text style={styles.unreadText}>{unread}</Text>
-            </View>
-          ) : null}
+            <TouchableOpacity
+              style={styles.markAllBtn}
+              onPress={onMarkAllRead}
+              disabled={markingAll}
+              accessibilityLabel="Tümünü okundu işaretle"
+            >
+              {markingAll ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-done" size={16} color="#fff" />
+                  <Text style={styles.markAllText}>Okundu</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.headerBtnPlaceholder} />
+          )}
         </View>
       </View>
 
@@ -116,10 +192,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.08)",
   },
+  headerBtnPlaceholder: { width: 72, height: 36 },
   headerTitle: { fontSize: 20, fontWeight: "bold", color: "#fff", flex: 1, textAlign: "center" },
-  headerRight: { width: 36, height: 36, alignItems: "flex-end", justifyContent: "center" },
-  unreadPill: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: "#ef4444", alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
-  unreadText: { color: "#fff", fontWeight: "900", fontSize: 12 },
+  headerRight: { minWidth: 72, alignItems: "flex-end", justifyContent: "center" },
+  markAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#2563eb",
+    borderWidth: 1,
+    borderColor: "rgba(96,165,250,0.5)",
+  },
+  markAllText: { color: "#fff", fontWeight: "800", fontSize: 12 },
   content: { flex: 1, backgroundColor: "#f5f5f5" },
   empty: { padding: 24, alignItems: "center", justifyContent: "center", gap: 10 },
   emptyText: { color: "#64748b", fontWeight: "700" },
@@ -131,4 +218,3 @@ const styles = StyleSheet.create({
   itemMessage: { color: "#64748b", marginTop: 4, fontWeight: "600" },
   badgeText: { marginTop: 10, color: "#3b82f6", fontWeight: "900" },
 });
-

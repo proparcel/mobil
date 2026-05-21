@@ -255,7 +255,7 @@ const PropertyTypeSelectionModal: React.FC<PropertyTypeSelectionModalProps> = ({
         onClose={closeShareDetailsModal}
         snapPoints={['70%']}
         initialIndex={0}
-        modalProps={{ android_keyboardInputMode: 'adjustResize', keyboardBehavior: 'interactive' as any }}
+        keyboardForm
       >
         <BottomSheetScrollView
           style={styles.content}

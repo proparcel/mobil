@@ -3,9 +3,10 @@
   "main": "index.js",
   "version": "1.0.0",
   "scripts": {
-    "start": "react-native start",
+    "start": "set NODE_ENV=development&& react-native start",
     "start:tunnel": "npx expo start --tunnel --clear --scheme proparcel",
-    "start:dev": "react-native start --reset-cache",
+    "start:dev": "set NODE_ENV=development&& react-native start --reset-cache",
+    "stop:metro": "powershell -NoProfile -Command \"$p=(Get-NetTCPConnection -LocalPort 8081 -EA SilentlyContinue|Select -First 1).OwningProcess;if($p){Stop-Process -Id $p -Force;Write-Host ('Metro durduruldu PID '+$p)}else{Write-Host '8081 bos'}\"",
     "reset-project": "node ./scripts/reset-project.js",
     "gen:model-packs-manifest": "node ./scripts/generate-models-pack-manifest.js",
     "gen:android-asset-packs": "node ./scripts/generate-android-asset-packs.js",

@@ -106,6 +106,8 @@ export interface PortalQueryListParams {
   category_leaf_id?: string;
   /** Önbellek anahtarı; PG liste süzgecinde v1 kullanılmaz */
   listing_attr?: string;
+  /** Liste önbelleğini atla (yeni pro sorgu sonrası) */
+  nocache?: boolean | string;
 }
 
 // ── Query Detail ──
@@ -183,6 +185,22 @@ export interface PortalDfaStep {
   final_avg?: number | null;
   new_total?: number;
   prev_total?: number;
+  details?: Array<string | { message?: string; text?: string; code?: string }>;
+}
+
+/** full_report.parameters_data.valuation_canonical — portal özet fiyat tek kaynağı */
+export interface PortalValuationCanonical {
+  initial_unit_price_m2?: number | null;
+  final_unit_price_m2?: number | null;
+  final_total_tl?: number | null;
+  net_multiplier_vs_initial?: number | null;
+  area_m2_used?: number | null;
+}
+
+export interface PortalSummaryPrices {
+  unit_price?: number | null;
+  total_price?: number | null;
+  valuation_canonical?: PortalValuationCanonical | null;
 }
 
 /** İlan vitrininde dönen video kaydı (Mongo + portal özet) */
@@ -218,6 +236,10 @@ export interface PortalQueryDetail {
   created_at: string | null;
   thumbnail_url: string | null;
   dfa_json: PortalDfaStep[];
+  /** Motor canonical fiyatlar (web portal detay ile aynı) */
+  valuation_canonical?: PortalValuationCanonical | null;
+  /** Rapor/PDF özet fiyat yedekleri */
+  portal_summary_prices?: PortalSummaryPrices | null;
   building_params: Record<string, string | number | boolean> | null;
   arsa_fiyati: number | null;
   bina_maliyeti: number | null;

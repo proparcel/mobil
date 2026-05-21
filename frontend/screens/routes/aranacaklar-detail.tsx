@@ -24,6 +24,7 @@ import {
 } from '../../services/aranacaklarService';
 import { getPublicListingCategories, type PublicListingCategoryNode } from '../../services/portalService';
 import AranacaklarScreenShell from '../../components/app/AranacaklarScreenShell';
+import { KeyboardAwareScrollScreen } from '../../components/app/KeyboardAwareScrollScreen';
 import {
   AranacaklarIntentLocationSection,
   hydrateSavedQuartersFromIntent,
@@ -33,6 +34,21 @@ import {
 import { AranacaklarSubCategorySelect } from '../../components/app/AranacaklarSubCategorySelect';
 import { INTENT_MAIN_TO_ROOT_ID, normalizeIntentLeafId } from '../../src/utils/aranacaklarIntentCategory';
 import { followupTone, type FollowupTone } from '../../src/utils/aranacaklarFollowupTone';
+import {
+  formatNextSearchDueDateTr,
+  getNextSearchCountdownLabel,
+} from '../../src/utils/aranacaklarFollowupSchedule';
+import {
+  formatContactCreatedAtTr,
+  followupMarkChipColors,
+  followupMarkStatusLabel,
+  getFollowupActionMark,
+} from '../../src/utils/aranacaklarFollowupMarks';
+import {
+  contactSideBadgeColors,
+  formatContactSideLabel,
+} from '../../src/utils/aranacaklarContactSide';
+import { scheduleAranacaklarContactNotification } from '../../services/aranacaklarLocalNotifications';
 import type { VitrinListingSearchParams } from '../../src/types/vitrin';
 import {
   pruneAranacaklarListingSearchExtra,
@@ -105,6 +121,21 @@ export default function AranacaklarDetailScreen() {
       return;
     }
     setData(res.data);
+    const c0 = res.data.contact as Record<string, unknown>;
+    if (c0?.contact_id) {
+      void scheduleAranacaklarContactNotification({
+        contact: {
+          contact_id: String(c0.contact_id),
+          full_name: String(c0.full_name || ''),
+          phone_raw: String(c0.phone_raw || ''),
+          phone_e164: String(c0.phone_e164 || ''),
+          last_phone_call_at: c0.last_phone_call_at as string | undefined,
+          created_at: c0.created_at as string | undefined,
+        },
+        followup: res.data.followup,
+        intent: res.data.intent,
+      });
+    }
     const i = res.data.intent as any;
     if (i) {
       const m = String(i.main_category || 'arsa');
@@ -248,6 +279,36 @@ export default function AranacaklarDetailScreen() {
     data?.contact as Record<string, unknown> | null,
   );
   const ct = followupChipTone(fuTone);
+  const nextSearchCountdown = getNextSearchCountdownLabel(
+    data?.followup as { next_due_at?: string; interval_months?: number } | null,
+  );
+  const nextSearchDateTr = formatNextSearchDueDateTr(
+    data?.followup as { next_due_at?: string; interval_months?: number } | null,
+  );
+  const createdAtTr = formatContactCreatedAtTr(data?.contact as Record<string, unknown> | null);
+  const sideLabel = formatContactSideLabel((data?.contact as Record<string, unknown> | null)?.contact_side);
+  const sideColors = contactSideBadgeColors((data?.contact as Record<string, unknown> | null)?.contact_side);
+  const actionMark = getFollowupActionMark(
+    data?.followup as { next_due_at?: string; interval_months?: number } | null,
+    data?.contact as Record<string, unknown> | null,
+  );
+  const markChip = followupMarkChipColors(actionMark);
+  const markStatus = followupMarkStatusLabel(actionMark);
+  const activeInterval = Number((data?.followup as Record<string, unknown> | null)?.interval_months) || null;
+
+  const chipColors = (months?: number) => {
+    if (actionMark !== 'none') {
+      const active = months != null && activeInterval === months;
+      return {
+        bg: markChip.bg,
+        border: markChip.border,
+        fg: markChip.fg,
+        dot: markChip.dot,
+        borderWidth: active ? 2.5 : 2,
+      };
+    }
+    return { bg: ct.bg, border: ct.border, fg: ct.fg, dot: '#94a3b8', borderWidth: 1 };
+  };
 
   if (loading && !data) {
     return (
@@ -259,7 +320,35 @@ export default function AranacaklarDetailScreen() {
 
   return (
     <AranacaklarScreenShell title={headerTitle}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollScreen
+        headerHeight={56}
+        backgroundColor="#f8fafc"
+        contentContainerStyle={styles.scroll}
+      >
+        <View style={styles.infoBanner}>
+          {sideLabel ? (
+            <View style={[styles.sideBadge, { backgroundColor: sideColors.bg, borderColor: sideColors.border }]}>
+              <Text style={[styles.sideBadgeText, { color: sideColors.text }]}>{sideLabel}</Text>
+            </View>
+          ) : null}
+          {createdAtTr ? (
+            <Text style={styles.infoBannerText}>
+              <Text style={styles.infoBannerLabel}>Kayıt tarihi: </Text>
+              {createdAtTr}
+            </Text>
+          ) : null}
+          {markStatus ? (
+            <Text
+              style={[
+                styles.infoBannerStatus,
+                actionMark === 'due_red' && styles.infoBannerStatusRed,
+                actionMark === 'called_green' && styles.infoBannerStatusGreen,
+              ]}
+            >
+              {markStatus}
+            </Text>
+          ) : null}
+        </View>
         {tel ? (
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Telefon</Text>
@@ -287,24 +376,60 @@ export default function AranacaklarDetailScreen() {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Sonraki hatırlatma</Text>
           <Text style={styles.sectionLead}>Bir sonraki aramayı ne zaman yapmak istediğinizi seçin</Text>
+          {nextSearchCountdown ? (
+            <Text style={styles.countdown}>{nextSearchCountdown}</Text>
+          ) : null}
+          {nextSearchDateTr ? (
+            <Text style={styles.countdownDate}>Arama tarihi: {nextSearchDateTr}</Text>
+          ) : null}
           <View style={styles.rowTight}>
-            {([1, 3, 6, 12] as const).map((m) => (
-              <TouchableOpacity
-                key={m}
-                style={[styles.chip, { backgroundColor: ct.bg, borderColor: ct.border }]}
-                onPress={() => fu(m)}
-                activeOpacity={0.85}
-              >
-                <Text style={[styles.chipText, { color: ct.fg }]}>{m} ay sonra</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={[styles.chip, { backgroundColor: ct.bg, borderColor: ct.border }]}
-              onPress={called}
-              activeOpacity={0.85}
-            >
-              <Text style={[styles.chipText, { color: ct.fg }]}>Şimdi arandı</Text>
-            </TouchableOpacity>
+            {([1, 3, 6, 12] as const).map((m) => {
+              const cc = chipColors(m);
+              return (
+                <TouchableOpacity
+                  key={m}
+                  style={[
+                    styles.chip,
+                    styles.chipMarked,
+                    {
+                      backgroundColor: cc.bg,
+                      borderColor: cc.border,
+                      borderWidth: cc.borderWidth,
+                    },
+                  ]}
+                  onPress={() => fu(m)}
+                  activeOpacity={0.85}
+                >
+                  {actionMark !== 'none' ? (
+                    <View style={[styles.chipMarkDot, { backgroundColor: cc.dot }]} />
+                  ) : null}
+                  <Text style={[styles.chipText, { color: cc.fg }]}>{m} ay sonra</Text>
+                </TouchableOpacity>
+              );
+            })}
+            {(() => {
+              const cc = chipColors();
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.chip,
+                    styles.chipMarked,
+                    {
+                      backgroundColor: cc.bg,
+                      borderColor: cc.border,
+                      borderWidth: cc.borderWidth,
+                    },
+                  ]}
+                  onPress={called}
+                  activeOpacity={0.85}
+                >
+                  {actionMark !== 'none' ? (
+                    <View style={[styles.chipMarkDot, { backgroundColor: cc.dot }]} />
+                  ) : null}
+                  <Text style={[styles.chipText, { color: cc.fg }]}>Şimdi arandı</Text>
+                </TouchableOpacity>
+              );
+            })()}
           </View>
         </View>
 
@@ -484,7 +609,7 @@ export default function AranacaklarDetailScreen() {
           </View>
         ))}
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollScreen>
       <AranacaklarVitrinFiltersSheet
         visible={vitrinSheetOpen}
         onClose={() => setVitrinSheetOpen(false)}
@@ -497,6 +622,38 @@ export default function AranacaklarDetailScreen() {
 
 const styles = StyleSheet.create({
   scroll: { paddingHorizontal: 12, paddingBottom: 40, paddingTop: 12, backgroundColor: COLORS.pageBg },
+  infoBanner: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.borderSoft,
+    padding: 14,
+    marginBottom: 12,
+    gap: 6,
+  },
+  sideBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 4,
+  },
+  sideBadgeText: { fontSize: 12, fontWeight: '800' },
+  infoBannerText: { fontSize: 14, color: COLORS.textPrimary, fontWeight: '600' },
+  infoBannerLabel: { color: COLORS.textSecondary, fontWeight: '600' },
+  infoBannerStatus: { fontSize: 13, fontWeight: '700', marginTop: 2 },
+  infoBannerStatusRed: { color: '#b91c1c' },
+  infoBannerStatusGreen: { color: '#15803d' },
+  chipMarked: { position: 'relative', paddingTop: 14 },
+  chipMarkDot: {
+    position: 'absolute',
+    top: 6,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   sectionCard: {
     backgroundColor: COLORS.cardBg,
     borderRadius: 12,
@@ -508,6 +665,18 @@ const styles = StyleSheet.create({
   lastSection: { marginBottom: 8 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 4 },
   sectionLead: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 12, lineHeight: 19 },
+  countdown: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.accentBlue,
+    marginBottom: 6,
+  },
+  countdownDate: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+    marginBottom: 12,
+  },
   emptyNotes: { fontSize: 13, color: COLORS.textSecondary, fontStyle: 'italic' },
   secondaryBtn: {
     backgroundColor: COLORS.chipBg,

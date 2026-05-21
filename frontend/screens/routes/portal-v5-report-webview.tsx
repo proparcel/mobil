@@ -21,6 +21,7 @@ import { storageService } from '../../services/storageService';
 import { authService } from '../../services/authService';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
+import { buildReportPdfFileName } from '../../src/utils/reportPdfFileName';
 
 function getServerOrigin(): string {
   const raw = (API_URL || FALLBACK_API_URL || '').trim().replace(/\/$/, '');
@@ -113,8 +114,31 @@ const EXPORT_PDF_INJECT = `
           sendErr('PDF verisi okunamadı');
           return;
         }
+        var pdfFileName = (function(){
+          function norm(s){ try {
+            var map={'ç':'c','Ç':'C','ğ':'g','Ğ':'G','ı':'i','I':'I','İ':'I','ö':'o','Ö':'O','ş':'s','Ş':'S','ü':'u','Ü':'U'};
+            return String(s||'').replace(/[çÇğĞıİöÖşŞüÜ]/g,function(ch){return map[ch]||ch;})
+              .replace(/[^0-9A-Za-z\\-\\s]/g,' ').trim().replace(/\\s+/g,' ');
+          } catch(e){ return String(s||''); } }
+          function num(v){ var m=String(v||'').match(/\\d+/); return m?m[0]:null; }
+          var data = window.__REPORT_V4_DATA__ || window.__PP_REPORT_DATA__ || null;
+          var pv = data && data.parameters_data && (data.parameters_data.parcel_values || data.parameters_data.parcel_dict);
+          if (pv) {
+            var mah = norm(pv.mahalleAd||pv.mahalle||pv.quarter||pv.quarter_name||'').replace(/\\s+/g,'');
+            if (mah) return mah + '_' + (num(pv.adaNo||pv.ada||pv.ada_no)||'0') + '_' + (num(pv.parselNo||pv.parsel||pv.parsel_no)||'0') + '.pdf';
+          }
+          try {
+            var place = document.getElementById('place-big-p1');
+            var mahT = place ? String(place.textContent||'').trim().split('/').filter(Boolean).pop() : '';
+            var adaT = document.getElementById('b-ada-p1');
+            var parT = document.getElementById('b-parsel-p1');
+            mah = norm(mahT).replace(/\\s+/g,'');
+            if (mah) return mah + '_' + (num(adaT&&adaT.textContent)||'0') + '_' + (num(parT&&parT.textContent)||'0') + '.pdf';
+          } catch(e2) {}
+          return '';
+        })();
         try {
-          window.ReactNativeWebView.postMessage(JSON.stringify({type:'pdf_base64', data: b64}));
+          window.ReactNativeWebView.postMessage(JSON.stringify({type:'pdf_base64', data: b64, fileName: pdfFileName}));
         } catch(e) {
           sendErr('PDF aktarılamadı (çok büyük olabilir)');
         }
@@ -208,9 +232,20 @@ true;
 
 export default function PortalV5ReportWebViewScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ snapshotId?: string; sharePdf?: string }>();
+  const params = useLocalSearchParams<{
+    snapshotId?: string;
+    sharePdf?: string;
+    mahalle?: string;
+    ada?: string;
+    parsel?: string;
+  }>();
   const snapshotId = params.snapshotId || '';
   const sharePdf = params.sharePdf === '1';
+
+  const pdfFilename = useMemo(
+    () => buildReportPdfFileName(params.mahalle, params.ada, params.parsel),
+    [params.mahalle, params.ada, params.parsel],
+  );
 
   const webRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
@@ -282,24 +317,34 @@ export default function PortalV5ReportWebViewScreen() {
       try {
         const raw = e.nativeEvent.data;
         if (!raw || raw[0] !== '{') return;
-        const msg = JSON.parse(raw) as { type?: string; data?: string; message?: string };
+        const msg = JSON.parse(raw) as { type?: string; data?: string; message?: string; fileName?: string };
         if (msg.type === 'mobile_report_ready') {
           setContentReady(true);
           setLoading(false);
           return;
         }
         if (msg.type === 'pdf_base64' && msg.data) {
-          const path = `${RNFS.CachesDirectoryPath}/ProParcel_Rapor_${snapshotId}.pdf`;
+          const webName = String(msg.fileName || '').trim();
+          const filename =
+            webName && webName.toLowerCase().endsWith('.pdf')
+              ? webName
+              : pdfFilename;
+          const path = `${RNFS.CachesDirectoryPath}/${filename}`;
           await RNFS.writeFile(path, msg.data, 'base64');
           setExporting(false);
           const fileUrl = path.startsWith('file://') ? path : `file://${path}`;
+          const mahalleLabel = String(params.mahalle ?? '').trim();
+          const adaLabel = String(params.ada ?? '').trim() || '0';
+          const parselLabel = String(params.parsel ?? '').trim() || '0';
           try {
             await Share.open({
               title: 'Analiz Raporu',
-              message: 'ProParcel Analiz Raporu (v5)',
+              message: mahalleLabel
+                ? `ProParcel Analiz Raporu — ${mahalleLabel} ${adaLabel}/${parselLabel}`
+                : 'ProParcel Analiz Raporu',
               url: fileUrl,
               type: 'application/pdf',
-              filename: `ProParcel_Rapor_${snapshotId}.pdf`,
+              filename,
             });
           } catch (shareErr: any) {
             if (shareErr?.message === 'User did not share' || shareErr?.message?.includes('cancel') || shareErr?.code === 'ECANCELLED') {
@@ -327,7 +372,7 @@ export default function PortalV5ReportWebViewScreen() {
         Alert.alert('Hata', err?.message || 'İşlem başarısız.');
       }
     },
-    [router, snapshotId],
+    [router, snapshotId, pdfFilename, params.mahalle, params.ada, params.parsel],
   );
 
   const handleSharePdfPress = useCallback(() => {

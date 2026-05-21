@@ -335,7 +335,7 @@ export default function ParcelSearchModal({
       snapPoints={['86%']}
       initialIndex={0}
       variant="dark"
-      modalProps={{ android_keyboardInputMode: 'adjustResize', keyboardBehavior: 'interactive' as any }}
+      keyboardForm
     >
       <View style={containerStyle as any}>
         <View style={styles.headerRow}>
@@ -360,7 +360,7 @@ export default function ParcelSearchModal({
 
         <BottomSheetScrollView style={styles.body} contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
           {tab === 'parcel' ? (
-            <AdaParselForm onClose={onClose} onSubmit={onSubmit} variant="dark" />
+            <AdaParselForm onClose={onClose} onSubmit={onSubmit} variant="dark" inBottomSheet />
           ) : (
             <View style={styles.smartContainer}>
               <View style={styles.smartCard}>

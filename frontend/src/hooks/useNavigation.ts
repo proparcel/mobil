@@ -10,8 +10,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 export const useRoute = useRNRoute;
 
 export type RootStackParamList = {
-  /** Web ana sayfa (landing) ile uyumlu tanıtım ekranı */
-  landing: undefined;
+  /** Web ana sayfa (landing) — skipIntro: header’dan gelince cinematic atlanır */
+  landing: { skipIntro?: boolean } | undefined;
   index:
     | {
         proQueryMahalle?: number;
@@ -35,7 +35,13 @@ export type RootStackParamList = {
   notifications: undefined;
   "expert-requests": { mode?: "mine" | "incoming" } | undefined;
   "sales-report": undefined;
-  "ai-video-studio": undefined;
+  "ai-video-studio": { tab?: "create" | "videos"; jobId?: string } | undefined;
+  "ai-image-animation-purchase": undefined;
+  "ai-image-animation-editor": {
+    image_animation_title?: string;
+    license_ref?: string;
+  };
+  "ai-drone-video-info": undefined;
   report_mobil_viewver: { reportId?: string; [key: string]: any };
   "report-expert-request": {
     il?: string;
@@ -70,7 +76,13 @@ export type RootStackParamList = {
   "son-30-gun": undefined;
   dosyalarim: undefined;
   "son-30-gun-detay": { snapshotId: string; commentId?: string; ratingId?: string; listingId?: string };
-  "portal-v5-report-webview": { snapshotId: string; sharePdf?: string };
+  "portal-v5-report-webview": {
+    snapshotId: string;
+    sharePdf?: string;
+    mahalle?: string;
+    ada?: string;
+    parsel?: string;
+  };
   /** ProMahalle — native; isteğe bağlı konum; boş = genel akış */
   promahalle: {
     city_id?: string;

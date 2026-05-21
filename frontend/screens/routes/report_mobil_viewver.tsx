@@ -12,6 +12,7 @@ import { ParcelModalContent } from '../../components/ParcelModalContent';
 // ShareModal ve CombinedScreenshotContainer kaldırıldı — paylaş butonu artık doğrudan PDF paylaşıyor
 import { API_URL, FALLBACK_API_URL } from "../../config/api";
 import { generateAnalysisReportPdf } from '../../src/utils/analysisReportPdf';
+import { buildReportPdfFileName } from '../../src/utils/reportPdfFileName';
 import { tryMapboxSnap, waitForMapIdle } from '../../src/utils/mapboxSnapshot';
 import { getCombinedImageDimensions } from '../../src/utils/screenshotManager';
 import RNFS from 'react-native-fs';
@@ -1452,12 +1453,12 @@ export default function ReportMobilViewver() {
         }
       }
 
-      // 3. Dosya adı
-      const parts = [summary.mahalle, summary.ada, summary.parsel]
-        .filter(x => x && x !== '-');
-      const fileNameBase = parts.length > 0
-        ? parts.join('_').replace(/\s+/g, '_')
-        : 'analiz_raporu';
+      // 3. Dosya adı (web: Mahalle_Ada_Parsel.pdf)
+      const fileNameBase = buildReportPdfFileName(
+        summary.mahalle !== '-' ? summary.mahalle : '',
+        summary.ada !== '-' ? summary.ada : '',
+        summary.parsel !== '-' ? summary.parsel : '',
+      ).replace(/\.pdf$/i, '');
 
       // 4. PDF oluştur — valuationSteps birden fazla kaynaktan dene
       let stepsForPdf = derived.valuationSteps;

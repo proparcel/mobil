@@ -15,6 +15,7 @@ import {
   Pressable,
   TextInput,
   Alert,
+  DeviceEventEmitter,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
@@ -37,7 +38,11 @@ import type {
   PortalQueryListParams,
 } from '../../src/types/portal';
 import UserMenuModal from '../../components/app/UserMenuModal';
-import { useRoute } from '@react-navigation/native';
+import { useFocusEffect, useRoute } from '@react-navigation/native';
+import {
+  PORTAL_RECENT_QUERIES_CHANGED,
+  type PortalRecentQueriesChangedPayload,
+} from '../../src/constants/portalEvents';
 import { API_URL } from '../../config/api';
 import { getPublicVitrinListings } from '../../services/vitrinSearchService';
 import type { VitrinListingItem, VitrinListingSearchParams } from '../../src/types/vitrin';
@@ -2094,10 +2099,15 @@ export default function Son30GunScreen() {
 
   // ── Load list ──
 
-  const loadList = useCallback(async (pageNum: number = 1, append: boolean = false) => {
+  const loadList = useCallback(async (
+    pageNum: number = 1,
+    append: boolean = false,
+    opts?: { nocache?: boolean; cityId?: number },
+  ) => {
     if (!isAuthenticated) return;
 
-    if (!appliedFilters.city_id) {
+    const effectiveCityId = opts?.cityId ?? appliedFilters.city_id;
+    if (!effectiveCityId) {
       setItems([]);
       setTotalCount(0);
       setPage(1);
@@ -2120,6 +2130,8 @@ export default function Son30GunScreen() {
         page_size: PAGE_SIZE,
         mine: mineOnly,
         ...appliedFilters,
+        city_id: effectiveCityId,
+        ...(opts?.nocache ? { nocache: true } : {}),
       };
       const sortByRaw = String(appliedFilters.sort_by || '').trim().toLowerCase();
       if (QUERY_API_SORT_FIELDS.has(sortByRaw)) {
@@ -2238,6 +2250,48 @@ export default function Son30GunScreen() {
     if (listMode !== 'proSorgular') return;
     loadList(1, false);
   }, [listMode, loadList]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (listMode === 'proSorgular') {
+        loadList(1, false);
+      } else if (listMode === 'ilanlar') {
+        loadListings(1, false);
+      }
+    }, [listMode, loadList, loadListings]),
+  );
+
+  const refreshListAfterProQuery = useCallback(
+    async (payload?: PortalRecentQueriesChangedPayload) => {
+      if (listMode !== 'proSorgular' || !isAuthenticated) return;
+
+      const cityOverride =
+        payload?.cityId != null && Number.isFinite(Number(payload.cityId))
+          ? Number(payload.cityId)
+          : undefined;
+      if (cityOverride != null) {
+        await setStoredPortalRecentCityId(String(cityOverride));
+        setAppliedFilters((prev) => ({ ...prev, city_id: cityOverride }));
+      }
+
+      const delays = [0, 800, 2000, 4000];
+      for (const delay of delays) {
+        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+        await loadList(1, false, { nocache: true, cityId: cityOverride });
+      }
+    },
+    [listMode, isAuthenticated, loadList],
+  );
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      PORTAL_RECENT_QUERIES_CHANGED,
+      (payload: PortalRecentQueriesChangedPayload) => {
+        refreshListAfterProQuery(payload);
+      },
+    );
+    return () => sub.remove();
+  }, [refreshListAfterProQuery]);
 
   useEffect(() => {
     if (listMode !== 'ilanlar') return;
@@ -2930,6 +2984,7 @@ export default function Son30GunScreen() {
         snapPoints={['87%']}
         backdropOpacity={0.25}
         backdropPressBehavior="close"
+        keyboardForm
       >
         <View style={styles.sheetHeader}>
           <View style={styles.sheetSegmentRow}>

@@ -262,6 +262,7 @@ export async function getPortalRecentQueries(
   if (filters.listing_attr && String(filters.listing_attr).trim()) {
     params.set('listing_attr', String(filters.listing_attr).trim());
   }
+  if (filters.nocache) params.set('nocache', '1');
   const qs = params.toString();
   const endpoint = `/api/portal/recent-queries/${qs ? '?' + qs : ''}`;
   return authDjangoJsonFetch<PortalQueryListResponse>(endpoint);

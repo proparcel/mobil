@@ -18,6 +18,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter, useLocalSearchParams } from "../../../src/hooks/useNavigation";
 import { useAuth } from "../../contexts/AuthContext";
 import { StatusBar } from "react-native";
+import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 
 export default function OTPVerifyScreen() {
   const router = useRouter();
@@ -158,7 +159,12 @@ export default function OTPVerifyScreen() {
         <View style={styles.headerRight} />
       </View>
 
-      <View style={styles.content}>
+      <KeyboardAwareScrollScreen
+        behaviorContext="auth"
+        headerHeight={56}
+        backgroundColor="#fff"
+        contentContainerStyle={styles.content}
+      >
         {/* Header */}
         <View style={styles.formHeader}>
           <Text style={styles.formTitle}>Doğrulama Kodu</Text>
@@ -211,7 +217,7 @@ export default function OTPVerifyScreen() {
             <Text style={styles.countdown}>{countdown}s</Text>
           )}
         </View>
-      </View>
+      </KeyboardAwareScrollScreen>
     </View>
   );
 }

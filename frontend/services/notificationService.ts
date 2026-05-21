@@ -31,3 +31,34 @@ export async function markNotificationRead(id: number): Promise<{ ok: true } | {
   return { ok: true };
 }
 
+export async function markAllNotificationsRead(): Promise<
+  { ok: true; updated: number } | { ok: false; error: string }
+> {
+  const res = await authJsonFetch<{ success: boolean; updated?: number }>(
+    `/api/notifications/read-all/`,
+    { method: "POST", json: {} },
+  );
+  if (res.ok) return { ok: true, updated: res.data.updated ?? 0 };
+
+  // Eski sunucu: tek tek okundu işaretle
+  const list = await listNotifications(100, 0);
+  if (!list.ok) return { ok: false, error: res.error || list.error };
+  const unreadItems = list.items.filter((i) => !i.is_read);
+  for (const item of unreadItems) {
+    const one = await markNotificationRead(item.id);
+    if (!one.ok) return { ok: false, error: one.error };
+  }
+  return { ok: true, updated: unreadItems.length };
+}
+
+export async function bulkDeleteNotifications(
+  ids: number[],
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const res = await authJsonFetch<{ success: boolean; deleted?: number }>(
+    `/api/notifications/bulk-delete/`,
+    { method: "POST", json: { ids } },
+  );
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, deleted: res.data.deleted ?? 0 };
+}
+

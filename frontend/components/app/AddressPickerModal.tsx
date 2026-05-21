@@ -1,5 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, Modal, FlatList, StyleSheet } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Modal,
+  FlatList,
+  StyleSheet,
+  KeyboardAvoidingView,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useKeyboardHeight, getKeyboardAvoidingBehavior } from "../../src/keyboard";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import locationsJson from "../../src/data/locations.json";
 
@@ -35,6 +46,8 @@ export function AddressPickerModal(props: {
   onSave: (value: AddressValue) => void;
 }) {
   const { visible, title, initialValue, isSaving, saveLabel, onCancel, onSave } = props;
+  const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
   const [pickerMode, setPickerMode] = useState<"city" | "town" | "quarter" | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
 
@@ -234,7 +247,7 @@ export function AddressPickerModal(props: {
                 );
               }}
             />
-          </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </Modal>
