@@ -20,6 +20,8 @@ import type {
   AuthState,
   AuthTokens,
   ProfileUpdateRequest,
+  LoginRequest,
+  LoginResult,
   RegisterRequest,
   User,
 } from "../../src/types/auth";
@@ -30,7 +32,7 @@ const defaultContextValue: AuthContextValue = {
   tokens: null,
   isLoading: true,
   isAuthenticated: false,
-  login: async () => false,
+  login: async () => ({ success: false }),
   loginWithOTP: async () => false,
   register: async () => false,
   logout: async () => {},
@@ -180,7 +182,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   /**
    * E-posta veya telefon/şifre ile giriş
    */
-  const login = useCallback(async (identifier: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (identifier: string, password: string): Promise<LoginResult> => {
     setState((prev) => ({ ...prev, isLoading: true }));
 
     const response = await authService.login({ identifier, password });
@@ -192,11 +194,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isLoading: false,
         isAuthenticated: true,
       });
-      return true;
+      return { success: true, message: response.message };
     }
 
     setState((prev) => ({ ...prev, isLoading: false }));
-    return false;
+    return {
+      success: false,
+      message: response.message || "Geçersiz e-posta/telefon veya şifre.",
+    };
   }, []);
 
   /**

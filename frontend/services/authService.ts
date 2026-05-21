@@ -206,10 +206,21 @@ async function authFetch<T>(
           }
         } else {
           const parsed = JSON.parse(errorData);
-          // Django REST: errors.non_field_errors veya errors.identifier
           const nfe = parsed.errors?.['non_field_errors'];
           const idErr = parsed.errors?.identifier;
-          const firstErr = Array.isArray(nfe) ? nfe[0] : Array.isArray(idErr) ? idErr[0] : null;
+          const errValues = parsed.errors && typeof parsed.errors === 'object'
+            ? Object.values(parsed.errors).flat().find((v) => typeof v === 'string' || (Array.isArray(v) && v.length))
+            : null;
+          const flatErr = Array.isArray(errValues)
+            ? errValues[0]
+            : typeof errValues === 'string'
+              ? errValues
+              : null;
+          const firstErr = Array.isArray(nfe)
+            ? nfe[0]
+            : Array.isArray(idErr)
+              ? idErr[0]
+              : flatErr;
           errorMessage = parsed.error || parsed.detail || firstErr || parsed.message || errorMessage;
           if (__DEV__ && isLoginEndpoint) {
             console.warn("[auth/login] Backend rejected login", {
