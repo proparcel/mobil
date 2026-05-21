@@ -5,7 +5,7 @@
   "scripts": {
     "start": "react-native start",
     "start:tunnel": "npx expo start --tunnel --clear --scheme proparcel",
-    "start:dev": "npx expo start -c --dev-client --lan --scheme proparcel",
+    "start:dev": "react-native start --reset-cache",
     "reset-project": "node ./scripts/reset-project.js",
     "gen:model-packs-manifest": "node ./scripts/generate-models-pack-manifest.js",
     "gen:android-asset-packs": "node ./scripts/generate-android-asset-packs.js",
@@ -27,7 +27,11 @@
     "eas:dev": "set EAS_NO_VCS=1 && eas build --platform ios --profile development",
     "eas:inspect": "eas build:inspect --platform ios --profile development --stage archive",
     "lint": "eslint .",
-    "postinstall": "patch-package"
+    "copy:icon-fonts": "node ./scripts/copy-icon-fonts-to-android.js",
+    "postinstall": "patch-package && npm run copy:icon-fonts",
+    "preandroid": "npm run copy:icon-fonts",
+    "preandroid:local": "npm run copy:icon-fonts",
+    "preandroid:run-only": "npm run copy:icon-fonts"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -54,7 +58,6 @@
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-contacts": "^8.0.4",
-    "react-native-document-picker": "^9.3.1",
     "react-native-dotenv": "^3.4.11",
     "react-native-fs": "^2.20.0",
     "react-native-geolocation-service": "^5.3.1",

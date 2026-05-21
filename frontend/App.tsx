@@ -29,7 +29,7 @@ import TepeCoinEarnScreen from './screens/routes/tepe-coin-earn';
 import NotificationsScreen from './screens/routes/notifications';
 import SalesReportScreen from './screens/routes/sales-report';
 import AiVideoStudioScreen from './screens/routes/ai-video-studio';
-import RequestCenterScreen from './screens/routes/request-center';
+import RequestCenterScreen from './screens/routes/expert-requests';
 import ExpertRequestReportScreen from './screens/routes/expert-request-report';
 import ReportExpertRequestScreen from './screens/routes/report-expert-request';
 import LoginScreen from './screens/routes/(auth)/login';
