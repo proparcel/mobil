@@ -4,6 +4,8 @@
 
 Projede hem AndroidX (`androidx.core:core:1.16.0`) hem de eski Support Library (`com.android.support:support-compat:26.1.0`) aynı anda bulunuyordu. Bu iki kütüphane aynı sınıfları içerdiği için `checkDebugDuplicateClasses` hatası oluşuyordu.
 
+**Kaynak (2026):** `react-native-splash-screen` kullanılmıyordu (splash Expo ile); paket kaldırıldı. `android/` gitignore'da olduğu için `prebuild:android` sonrası Gradle düzeltmeleri `scripts/apply-androidx-gradle-fix.js` ile otomatik uygulanır (`npm run fix:androidx`).
+
 ## ✅ Çözüm
 
 Support Library'yi tamamen devre dışı bırakıp AndroidX'e zorlandı.
