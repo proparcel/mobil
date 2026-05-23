@@ -1,5 +1,18 @@
 // Mapbox: EAS secret RNMAPBOX_MAPS_DOWNLOAD_TOKEN (sk.ey...) prebuild'de plugin'e geçirilir
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = "production";
+}
 const MAPBOX_DOWNLOAD_TOKEN = process.env.RNMAPBOX_MAPS_DOWNLOAD_TOKEN || "";
+const iosStandalone = process.env.IOS_STANDALONE === "1";
+
+// Android yerel gelistirme: RN CLI (index.js). Expo Dev Client menusu acilmasin.
+// iOS EAS development profili icin expo-dev-client pakette kalir; iOS'ta yalniz IOS_STANDALONE ile cikar.
+const DEV_CLIENT_PACKAGES = [
+  "expo-dev-client",
+  "expo-dev-launcher",
+  "expo-dev-menu",
+  "expo-dev-menu-interface",
+];
 
 // PLATFORM: Bu config öncelikle iOS (EAS Build) için kullanılır.
 // Android: react-native run-android ile build edilir, bu config Android native yapılandırmasını override etmez.
@@ -12,7 +25,17 @@ module.exports = {
     slug: "frontend",
     scheme: "proparcel",
     newArchEnabled: true,
-    jsEngine: "jsc",
+    autolinking: {
+      android: {
+        exclude: DEV_CLIENT_PACKAGES,
+      },
+      ...(iosStandalone
+        ? {
+            exclude: [...DEV_CLIENT_PACKAGES, "react-native-static-server"],
+          }
+        : {}),
+    },
+    jsEngine: "hermes",
     ios: {
       bundleIdentifier: "com.proparcel.app",
       supportsTablet: true,
@@ -35,6 +58,11 @@ module.exports = {
     android: {
       package: "com.proparcel.app",
       permissions: ["android.permission.READ_CONTACTS"],
+      icon: "./assets/images/icon.png",
+      adaptiveIcon: {
+        foregroundImage: "./assets/images/adaptive-icon.png",
+        backgroundColor: "#1a1f3a",
+      },
     },
     extra: {
       eas: {
@@ -49,11 +77,13 @@ module.exports = {
       router: { asyncRoutes: false },
     },
     plugins: [
+      "./plugins/withIosNoPushEntitlement.js",
       [
         "expo-build-properties",
         {
           ios: {
-            buildReactNativeFromSource: true,
+            useFrameworks: "static",
+            deploymentTarget: "15.1",
           },
         },
       ],
