@@ -1,7 +1,0 @@
-{
-  "publicIp": "176.238.6.240",
-  "downloadPort": 8002,
-  "djangoPort": 8000,
-  "appName": "ProParcel",
-  "version": "1.0.0"
-}

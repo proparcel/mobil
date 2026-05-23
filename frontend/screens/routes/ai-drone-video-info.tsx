@@ -2,11 +2,12 @@
  * AI Drone Video — masaüstü bilgilendirme + ProParcel drone üretim talebi (parsel seçimi + TKGM).
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -18,6 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AdaParselForm, { type AdaParselSubmitPayload } from "../../components/AdaParselForm";
 import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
+import { useScrollInputIntoView } from "../../src/keyboard";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../contexts/AuthContext";
 import { creditService } from "../../services/creditService";
@@ -47,6 +49,12 @@ const COLORS = {
 export default function AiDroneVideoInfoScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
+  const noteInputWrapRef = useRef<View>(null);
+  const { handleFocus: scrollNoteIntoView, handleBlur: scrollNoteBlur } = useScrollInputIntoView({
+    scrollRef,
+    inputWrapRef: noteInputWrapRef,
+  });
   const { isAuthenticated } = useAuth();
   const [creditCost, setCreditCost] = useState<number | null>(null);
   const [costLoading, setCostLoading] = useState(true);
@@ -219,10 +227,12 @@ export default function AiDroneVideoInfoScreen() {
       </View>
 
       <KeyboardAwareScrollScreen
+        ref={scrollRef}
         headerHeight={56}
         backgroundColor={COLORS.pageBg}
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + insets.bottom }]}
+        nestedScrollEnabled={false}
       >
         <View style={styles.card}>
           <View style={styles.iconCircle}>
@@ -276,7 +286,13 @@ export default function AiDroneVideoInfoScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Parsel bilgileri</Text>
           <Text style={styles.sectionHint}>Ana sayfadaki parsel sorgu formu ile aynı alanlar.</Text>
-          <AdaParselForm embedded onClose={() => {}} onSubmit={handleParcelQuery} variant="light" />
+          <AdaParselForm
+            embedded
+            scrollRef={scrollRef}
+            onClose={() => {}}
+            onSubmit={handleParcelQuery}
+            variant="light"
+          />
           {queryLoading ? (
             <View style={styles.queryLoadingRow}>
               <ActivityIndicator color={COLORS.accent} />
@@ -300,16 +316,20 @@ export default function AiDroneVideoInfoScreen() {
           <Text style={styles.sectionHint}>
             Videoda vurgulanmasını istediğiniz noktalar, müzik tercihi veya özel notlarınızı yazabilirsiniz.
           </Text>
-          <TextInput
-            style={styles.noteInput}
-            placeholder="Örn: Parselin güney cephesini öne çıkarın…"
-            placeholderTextColor="#94a3b8"
-            value={userNote}
-            onChangeText={setUserNote}
-            multiline
-            maxLength={4000}
-            textAlignVertical="top"
-          />
+          <View ref={noteInputWrapRef} collapsable={false}>
+            <TextInput
+              style={styles.noteInput}
+              placeholder="Örn: Parselin güney cephesini öne çıkarın…"
+              placeholderTextColor="#94a3b8"
+              value={userNote}
+              onChangeText={setUserNote}
+              multiline
+              maxLength={4000}
+              textAlignVertical="top"
+              onFocus={scrollNoteIntoView}
+              onBlur={scrollNoteBlur}
+            />
+          </View>
         </View>
 
         <View style={styles.card}>

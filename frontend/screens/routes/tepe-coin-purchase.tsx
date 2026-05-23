@@ -1,1 +1,1 @@
-export { default } from './pricing';
+export { default } from "./billing-checkout";

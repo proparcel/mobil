@@ -10,6 +10,7 @@ Bu rehber, ProParcel uygulamasını **Android App Bundle (AAB)** formatında der
 - **JDK 17** (Android Gradle için)
 - **Android SDK** (ANDROID_HOME ayarlı)
 - Proje bağımlılıkları yüklü: `yarn` veya `npm install`
+- **`android/` klasörü** (gitignore'da): `android\gradlew.bat` yoksa önce `npm run prebuild:android` veya geliştirme makinenizdeki tam `android\` kopyası gerekir
 
 ---
 
@@ -76,7 +77,57 @@ keyPassword=GÜÇLÜ_ŞİFRENİZ
 
 ---
 
-## 4. AAB derleme
+## 3b. İlk yayın: modeller olmadan AAB (önerilen başlangıç)
+
+Google Play **AAB** formatı zorunludur (düz APK yeni uygulamalarda genelde kabul edilmez). İlk sürümde 3D model pack'lerini dahil etmeden küçük bir base bundle yükleyebilirsiniz.
+
+### Ne olur?
+
+- **Parsel sorgu, harita, kredi, giriş** vb. çalışır.
+- **3D şekil editöründeki ev/araba/ağaç** modelleri bu sürümde **çalışmaz** (PAD pack yok; `ensureModelAvailable` başarısız olur).
+- Sonraki sürümde `build_google_play.bat` ile pack'li AAB yükleyerek modelleri ekleyebilirsiniz.
+
+### Build (modeller yok)
+
+```bash
+build_google_play_no_models.bat
+```
+
+veya:
+
+```bash
+npm run build:bundle:no-models
+```
+
+Script sırası:
+
+1. `npm run clear:android-asset-packs` — `ppAssetPacks` listesini boşaltır, pack içi `.glb` dosyalarını siler.
+2. `gradlew bundleRelease` — imzalı AAB üretir.
+
+Çıktı: `release_builds\ProParcel-1.0.1-no-models-*.aab` ve `android\app\build\outputs\bundle\release\app-release.aab`.
+
+### Test APK (Play dışı, sideload)
+
+```bash
+build_apk_no_models.bat
+# veya
+npm run build:apk:no-models
+```
+
+Çıktı: `apk_releases\ProParcel-no-models.apk`.
+
+### Pack'leri geri yüklemek (sonraki sürüm)
+
+```bash
+npm run gen:android-asset-packs
+build_google_play.bat
+```
+
+`versionCode` değerini her Play yüklemesinde +1 artırın.
+
+---
+
+## 4. AAB derleme (3D modeller dahil)
 
 ### Yöntem A: Batch script (önerilen)
 
@@ -139,9 +190,24 @@ defaultConfig {
 
 1. [Google Play Console](https://play.google.com/console) → Giriş.
 2. **Uygulama oluştur** (henüz yoksa) veya mevcut ProParcel uygulamasını seçin.
-3. **Release** → **Production** (veya **Internal testing** / **Closed testing**) → **Create new release**.
-4. **App bundle** alanına bu AAB dosyasını sürükleyip yükleyin (`release_builds\...aab` veya `app-release.aab`).
+3. **Release** → önce **Internal testing** (önerilen), sonra Production → **Create new release**.
+4. **App bundle** alanına AAB dosyasını yükleyin (`release_builds\ProParcel-*-no-models-*.aab` veya `app-release.aab`). **APK değil, AAB** kullanın.
 5. **Release name** ve **Release notes** girin, ardından **Review release** → **Start rollout**.
+
+### İlk yayın checklist (Play Console)
+
+| Madde | Not |
+|--------|-----|
+| **AAB + Play App Signing** | Upload key keystore'unuzu yedekleyin |
+| **Internal testing** | İlk doğrulama için Production yerine |
+| **Store listing** | Ad, açıklama, ikon, telefon ekran görüntüleri |
+| **Gizlilik politikası URL** | Konum, kişiler (`READ_CONTACTS`), medya izinleri |
+| **İçerik derecelendirmesi** | Anket tamamlanmalı |
+| **Hedef kitle / Veri güvenliği** | Toplanan verileri beyan edin |
+| **targetSdk** | Projede 36 (`android/app/build.gradle`) |
+| **64-bit** | `arm64-v8a` dahil (`gradle.properties`) |
+| **Mapbox** | `MAPBOX_DOWNLOADS_TOKEN` (build), `EXPO_PUBLIC_MAPBOX_TOKEN` (runtime) |
+| **versionCode** | Her yüklemede +1 |
 
 İlk yayın öncesi tamamlanması gerekenler:
 
@@ -195,13 +261,16 @@ npm run android
 
 | Amaç | Komut |
 |------|--------|
+| **Google Play AAB (modeller yok)** | `build_google_play_no_models.bat` veya `npm run build:bundle:no-models` |
+| **Test APK (modeller yok)** | `build_apk_no_models.bat` veya `npm run build:apk:no-models` |
+| Asset pack'leri temizle | `npm run clear:android-asset-packs` |
 | **Yerelde modellerle çalıştır** | `npm run android:local` |
 | Keystore oluştur | `keytool -genkeypair -v -storetype PKCS12 -keystore android\keystores\proparcel-release.keystore -alias proparcel -keyalg RSA -keysize 2048 -validity 10000` |
 | `keystore.properties` | `android\app\keystore.properties.example` → `keystore.properties` kopyala ve düzenle |
 | Asset pack'leri doldur | `npm run gen:android-asset-packs` |
 | Debug asset'lere kopyala | `npm run gen:debug-assets-models` |
-| AAB derle | `build_google_play.bat` (önerilen) veya `npm run gen:android-asset-packs` ardından `cd android && gradlew.bat bundleRelease` |
-| AAB konumu | `release_builds\ProParcel-1.0.0-*.aab` veya `android\app\build\outputs\bundle\release\app-release.aab` |
+| AAB derle (modeller dahil) | `build_google_play.bat` veya `npm run gen:android-asset-packs` ardından `cd android && gradlew.bat bundleRelease` |
+| AAB konumu | `release_builds\ProParcel-*.aab` veya `android\app\build\outputs\bundle\release\app-release.aab` |
 
 ---
 
@@ -210,6 +279,9 @@ npm run android
 - **`keystore.properties` bulunamıyor**: Dosyanın `android\app\keystore.properties` yolunda olduğundan emin olun.
 - **Gradle / NDK hataları**: `android\gradle.properties` içinde `ndkVersion` ve `reactNativeArchitectures` değerlerini kontrol edin; gerekirse Android SDK/NDK sürümünü güncelleyin.
 - **Mapbox token**: Harita kullanıyorsanız `MAPBOX_DOWNLOADS_TOKEN` veya proje içi Mapbox ayarlarının doğru olduğundan emin olun.
-- **Model pack'leri boş**: `npm run gen:android-asset-packs` çalıştırıldı mı? `assets/packs/models_manifest.json` mevcut mu? Backend erişilebilir mi (`staticUrl` ile indirme)?
+- **Model pack'leri boş (modelli build)**: `npm run gen:android-asset-packs` çalıştırıldı mı? `assets/packs/models_manifest.json` mevcut mu? Backend erişilebilir mi (`staticUrl` ile indirme)?
+- **Eski .glb hâlâ bundle'da**: `npm run clear:android-asset-packs` çalıştırıp yeniden `bundleRelease` alın.
+- **Play APK reddi**: AAB kullanın (`build_google_play_no_models.bat`).
+- **Debug imza uyarısı**: `keystore.properties` yoksa release debug key ile imzalanır; Play kabul etmez.
 
 Bu adımlarla ProParcel'i Google Play için AAB olarak derleyip yükleyebilirsiniz.

@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 import type { ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
 import { isModelUsable } from "@/src/services/modelUsageService";
 import { ensureModelAvailable } from "@/src/services/modelDelivery";
@@ -81,12 +81,20 @@ export function useModelSelectHandler(args: Args) {
           throw new Error("Model indirimi için DB id yok");
         }
 
+        const remoteUrl = m.source?.trim() || "";
+        if (!remoteUrl) {
+          throw new Error("Model dosya adresi (source) yok");
+        }
+
         setIsModelLoading(true);
         setModelLoadingProgress(null);
-        setModelLoadingText(`Play'dan indiriliyor: ${label}`);
+        const loadingPrefix =
+          Platform.OS === "ios" ? "Sunucudan indiriliyor" : "Play'dan indiriliyor";
+        setModelLoadingText(`${loadingPrefix}: ${label}`);
 
         const result = await ensureModelAvailable(m.id, {
           timeoutMs: 120_000,
+          remoteUrl,
           onProgress: (s) => {
             if (typeof s?.percent === "number" && Number.isFinite(s.percent)) {
               setModelLoadingProgress(Math.max(0, Math.min(100, s.percent)));
@@ -94,7 +102,7 @@ export function useModelSelectHandler(args: Args) {
               setModelLoadingProgress(null);
             }
             const status = s?.statusName ? ` (${s.statusName})` : "";
-            setModelLoadingText(`Play'dan indiriliyor: ${label}${status}`);
+            setModelLoadingText(`${loadingPrefix}: ${label}${status}`);
           },
         });
 
@@ -110,7 +118,11 @@ export function useModelSelectHandler(args: Args) {
 
         if (!result.ok) {
           const status = result?.lastState?.statusName ? `Durum: ${result.lastState.statusName}` : "Durum bilinmiyor";
-          throw new Error(`Asset pack indirilemedi veya hazır değil. ${status}`);
+          const errHint =
+            Platform.OS === "ios"
+              ? "Model indirilemedi veya doğrulanamadı"
+              : "Asset pack indirilemedi veya hazır değil";
+          throw new Error(`${errHint}. ${status}`);
         }
 
         setPlacingModelId(m.modelId);

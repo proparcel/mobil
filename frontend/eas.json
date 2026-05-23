@@ -1,0 +1,46 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      },
+      "env": {
+        "NODE_ENV": "development",
+        "EXPO_PUBLIC_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_AUTH_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_MODELS_URL": "https://www.proparcel.com"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release"
+      },
+      "env": {
+        "IOS_STANDALONE": "1",
+        "EAS_SKIP_AUTO_FINGERPRINT": "1",
+        "EXPO_PUBLIC_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_AUTH_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_MODELS_URL": "https://www.proparcel.com"
+      }
+    },
+    "production": {
+      "env": {
+        "NODE_ENV": "production",
+        "EXPO_PUBLIC_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_AUTH_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_MODELS_URL": "https://www.proparcel.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

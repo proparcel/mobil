@@ -1,4 +1,5 @@
 import { NativeModules, Platform } from "react-native";
+import { ensureCachedModelUri } from "@/src/utils/modelsCache";
 
 type PackState = {
   known: boolean;
@@ -39,17 +40,74 @@ function mapboxRegistryUri(modelId: number): string {
   return ppLocalModelUrl(modelId);
 }
 
-export async function ensureModelAvailable(modelId: number, opts?: { timeoutMs?: number; onProgress?: (s: PackState) => void }): Promise<EnsureAvailableResult> {
+export type EnsureModelAvailableOptions = {
+  timeoutMs?: number;
+  onProgress?: (s: PackState) => void;
+  /** iOS: katalog `source` (HTTPS static GLB). Android'de yok sayılır. */
+  remoteUrl?: string;
+};
+
+async function ensureModelAvailableIos(
+  modelId: number,
+  packName: string,
+  remoteUrl: string,
+  opts?: EnsureModelAvailableOptions
+): Promise<EnsureAvailableResult> {
+  const timeoutMs = opts?.timeoutMs ?? 120_000;
+  try {
+    const mapUri = await ensureCachedModelUri({
+      url: remoteUrl,
+      modelIdDb: modelId,
+      timeoutMs,
+      onProgress: (p) => {
+        opts?.onProgress?.({
+          known: true,
+          packName,
+          percent: p.percent ?? undefined,
+          bytesDownloaded: p.written,
+          totalBytesToDownload: p.total > 0 ? p.total : undefined,
+          statusName: p.percent != null ? "DOWNLOADING" : "FETCHING",
+        });
+      },
+    });
+    if (__DEV__) {
+      console.log(`[ModelDelivery] model_${modelId}: iOS hazır mapUri=${mapUri.substring(0, 80)}`);
+    }
+    return { ok: true, packName, mapUri, fileUrl: remoteUrl };
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e);
+    if (__DEV__) console.warn(`[ModelDelivery] model_${modelId}: iOS indirme hatası:`, msg);
+    return {
+      ok: false,
+      packName,
+      mapUri: remoteUrl,
+      fileUrl: remoteUrl,
+      lastState: { known: true, packName, statusName: "FAILED" },
+    };
+  }
+}
+
+export async function ensureModelAvailable(
+  modelId: number,
+  opts?: EnsureModelAvailableOptions
+): Promise<EnsureAvailableResult> {
   const packName = `pp_model_${modelId}`;
   const fileUrl = ppLocalModelUrl(modelId);
 
-  if (__DEV__) {
-    console.log(`[ModelDelivery] model_${modelId}: başlatılıyor pack=${packName} url=${fileUrl}`);
+  if (Platform.OS === "ios") {
+    const remoteUrl = String(opts?.remoteUrl || "").trim();
+    if (__DEV__) {
+      console.log(`[ModelDelivery] model_${modelId}: iOS remote=${remoteUrl ? remoteUrl.substring(0, 80) : "(yok)"}`);
+    }
+    if (!remoteUrl) {
+      if (__DEV__) console.warn(`[ModelDelivery] model_${modelId}: iOS için remoteUrl gerekli`);
+      return { ok: false, packName, mapUri: fileUrl, fileUrl, lastState: { known: false, packName } };
+    }
+    return ensureModelAvailableIos(modelId, packName, remoteUrl, opts);
   }
 
-  if (Platform.OS !== "android") {
-    if (__DEV__) console.warn(`[ModelDelivery] model_${modelId}: iOS desteklenmiyor, available=false`);
-    return { ok: false, packName, mapUri: fileUrl, fileUrl, lastState: { known: false, packName } };
+  if (__DEV__) {
+    console.log(`[ModelDelivery] model_${modelId}: başlatılıyor pack=${packName} url=${fileUrl}`);
   }
 
   if (!ANDROID_MODULE) {

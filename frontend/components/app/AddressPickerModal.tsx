@@ -7,10 +7,9 @@ import {
   Modal,
   FlatList,
   StyleSheet,
-  KeyboardAvoidingView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardHeight, getKeyboardAvoidingBehavior } from "../../src/keyboard";
+import { useKeyboardHeight, SCROLL_VIEW_KEYBOARD_PROPS } from "../../src/keyboard";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import locationsJson from "../../src/data/locations.json";
 
@@ -213,8 +212,8 @@ export function AddressPickerModal(props: {
         onRequestClose={() => setPickerMode(null)}
       >
         <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView
-            behavior={getKeyboardAvoidingBehavior('modal')}
+          {/* picker: View + keyboardHeight padding (merkezi useKeyboardHeight) */}
+          <View
             style={[
               styles.modalContent,
               styles.pickerModalContent,
@@ -243,7 +242,7 @@ export function AddressPickerModal(props: {
             <FlatList
               data={listData}
               keyExtractor={(item: any) => String(item?.Id)}
-              keyboardShouldPersistTaps="handled"
+              keyboardShouldPersistTaps={SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
               renderItem={({ item }: { item: any }) => {
                 const label = item?.Proparcel_text || item?.Tkgm_text || "";
                 return (
@@ -255,7 +254,7 @@ export function AddressPickerModal(props: {
                 );
               }}
             />
-          </KeyboardAvoidingView>
+          </View>
         </View>
       </Modal>
     </Modal>

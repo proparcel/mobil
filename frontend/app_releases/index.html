@@ -1,0 +1,57 @@
+﻿<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProParcel Mobil Indir</title>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #1a1f3a, #2d3561); color: #fff; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .container { background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 20px; padding: 32px; max-width: 560px; width: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+    h1 { margin: 0 0 6px; font-size: 30px; text-align: center; }
+    .subtitle { color: #b8c5d1; margin: 0 0 24px; text-align: center; font-size: 15px; }
+    .platform { background: rgba(0,0,0,0.2); border-radius: 14px; padding: 20px; margin-bottom: 16px; text-align: center; }
+    .platform h2 { margin: 0 0 14px; font-size: 18px; color: #e2e8f0; }
+    .download-btn { display: inline-block; color: #fff; padding: 14px 28px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 16px; margin: 6px 0; }
+    .download-btn.android { background: linear-gradient(135deg, #22c55e, #16a34a); }
+    .download-btn.ios { background: linear-gradient(135deg, #3b82f6, #6366f1); }
+    .link-hint { font-size: 12px; color: #94a3b8; word-break: break-all; margin: 6px 0; }
+    .link-hint a { color: #93c5fd; }
+    .size { font-size: 13px; color: #cbd5e1; margin: 4px 0; }
+    .note { font-size: 12px; color: #94a3b8; margin-top: 8px; text-align: left; }
+    .info { margin-top: 16px; padding: 14px; background: rgba(0,0,0,0.15); border-radius: 10px; font-size: 13px; color: #cbd5e1; }
+    .warning { margin-top: 14px; padding: 12px; background: rgba(255,193,7,0.12); border-left: 4px solid #ffc107; border-radius: 8px; font-size: 12px; text-align: left; }
+    .error-box { background: rgba(220,53,69,0.2); border-left: 4px solid #dc3545; padding: 12px; border-radius: 8px; text-align: left; font-size: 13px; }
+    .logo { width: 72px; height: 72px; margin: 0 auto 12px; border-radius: 18px; background: linear-gradient(135deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 28px; }
+    code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo" aria-hidden="true">PP</div>
+    <h1>ProParcel</h1>
+    <p class="subtitle">Akilli Parsel Analiz ve Degerleme</p>
+        <section class="platform">
+      <h2>Android</h2>
+      <a href="ProParcel.apk" class="download-btn android" download>APK Indir (v1.0.0)</a>
+      <p class="link-hint">Direkt: <a href="http://176.238.6.240:8002/ProParcel.apk">http://176.238.6.240:8002/ProParcel.apk</a></p>
+      <p class="size">Boyut: 102.32 MB</p>
+    </section>
+        <section class="platform">
+      <h2>iPhone / iPad</h2>
+      <a href="itms-services://?action=download-manifest&url=http://176.238.6.240:8002/manifest.plist" class="download-btn ios">iOS Kur (v1.0.0)</a>
+      <p class="link-hint">Ham IPA: <a href="http://176.238.6.240:8002/ProParcel.ipa">http://176.238.6.240:8002/ProParcel.ipa</a></p>
+      <p class="link-hint">Manifest: <a href="http://176.238.6.240:8002/manifest.plist">http://176.238.6.240:8002/manifest.plist</a></p>
+      <p class="size">Boyut: 49.61 MB</p>
+      <p class="note">Safari ile acin. Cihaz Apple Developer hesabinda kayitli olmali (ad-hoc / internal).</p>
+    </section>
+    <div class="info">
+      <div><strong>Versiyon:</strong> 1.0.0</div>
+      <div><strong>Sunucu:</strong> <a href="http://176.238.6.240:8002/" style="color:#93c5fd">http://176.238.6.240:8002/</a></div>
+    </div>
+    <div class="warning">
+      <strong>Android:</strong> Bilinmeyen kaynaklardan yuklemeye izin verin.<br>
+      <strong>iOS:</strong> Safari ile kurulum; HTTPS gerekebilir (bazi iOS surumlerinde HTTP calismaz).
+    </div>
+  </div>
+</body>
+</html>

@@ -7,15 +7,10 @@ set SERVER_IP=176.238.6.240
 set PORT=8002
 set APP_VERSION=1.0.0
 
-if not exist "apk_releases" mkdir apk_releases
+if not exist "app_releases" mkdir app_releases
+if exist "apk_releases\ProParcel.apk" if not exist "app_releases\ProParcel.apk" copy /Y "apk_releases\ProParcel.apk" "app_releases\ProParcel.apk"
 
-if not exist "apk_releases\ProParcel.apk" (
-    echo.
-    echo UYARI: APK yok. Once publish_apk_release.bat veya build_apk.bat calistirin.
-    echo.
-)
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\generate_apk_download_page.ps1" -PublicIp %SERVER_IP% -Port %PORT% -Version %APP_VERSION%
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\generate_mobile_download_page.ps1" -PublicIp %SERVER_IP% -Port %PORT% -Version %APP_VERSION%
 
 echo.
 echo ========================================
@@ -30,7 +25,7 @@ echo Durdurmak icin CTRL+C
 echo ========================================
 echo.
 
-cd apk_releases
+cd app_releases
 python -m http.server %PORT% --bind 0.0.0.0
 
 pause

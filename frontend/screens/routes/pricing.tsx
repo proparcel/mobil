@@ -35,12 +35,13 @@ import { StatusBar } from "react-native";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../contexts/AuthContext";
 import { creditService } from "../../services/creditService";
+import { DJANGO_API_URL } from "../../config/api";
 import type { CreditPackage, CreditBalance, CreditCostItem } from "../../services/creditService";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
 
 type PeriodType = "monthly" | "yearly";
-type CustomerType = "kurumsal" | "bireysel";
+type CustomerType = "kurumsal" | "bireysel" | "ek_paket";
 
 export default function PricingScreen() {
   const router = useRouter();
@@ -54,11 +55,9 @@ export default function PricingScreen() {
   const [period, setPeriod] = useState<PeriodType>("monthly");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [purchasingPackageId, setPurchasingPackageId] = useState<number | null>(
-    null
-  );
   const [coinModalVisible, setCoinModalVisible] = useState(false);
   const [creditUsageItems, setCreditUsageItems] = useState<CreditCostItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Icon rengi eşlemesi (icon key -> { bg, color })
   const ICON_COLORS: Record<string, { bg: string; color: string }> = {
@@ -103,6 +102,7 @@ export default function PricingScreen() {
    * Not: Paketler giriş yapılmamış kullanıcılar için de gösterilmeli (ana projedeki gibi)
    */
   const loadData = useCallback(async () => {
+    setLoadError(null);
     try {
       // Paketleri her zaman yükle (giriş yapılmamış kullanıcılar için de)
       const packagesRes = await creditService.listPackages();
@@ -110,14 +110,15 @@ export default function PricingScreen() {
       if (packagesRes.success && packagesRes.data) {
         const packagesList = packagesRes.data.packages || [];
         console.log("[Pricing] Paketler yüklendi:", packagesList.length, "paket");
-        console.log("[Pricing] Paket detayları:", packagesList);
         setPackages(packagesList);
-      } else {
-        console.error("[Pricing] Paketler yüklenemedi:", packagesRes);
-        // Giriş yapılmamış kullanıcılar için hata gösterme, sadece log
-        if (isAuthenticated) {
-          Alert.alert("Bilgi", packagesRes.message || "Paketler yüklenemedi.");
+        if (packagesList.length === 0) {
+          setLoadError("Sunucuda aktif paket bulunamadı.");
         }
+      } else {
+        const msg = packagesRes.message || "Paketler yüklenemedi.";
+        console.error("[Pricing] Paketler yüklenemedi:", packagesRes);
+        setLoadError(msg);
+        Alert.alert("Paketler yüklenemedi", msg);
       }
 
       // Bakiyeyi sadece giriş yapılmış kullanıcılar için yükle
@@ -132,22 +133,30 @@ export default function PricingScreen() {
         }
       }
 
-      // Kredi kullanım maliyetlerini yükle (pricing kartları için)
+      // Kredi kullanım maliyetleri — web ile aynı: visible_on_pricing=1
       try {
-        const costsRes = await creditService.getCreditCosts();
-        const raw = costsRes as { items?: CreditCostItem[] };
-        const items = raw?.items ?? (raw as { data?: { items?: CreditCostItem[] } })?.data?.items ?? [];
+        const items = await creditService.getCreditCostsForPricing();
         if (Array.isArray(items) && items.length > 0) {
-          setCreditUsageItems(items);
+          setCreditUsageItems(
+            items.map((row) => ({
+              action_type: row.event_type,
+              display_name: row.display_name,
+              credits: row.credits,
+              icon: row.icon || "circle",
+              icon_fa: row.icon_fa || "",
+              icon_ion: row.icon || "ellipse",
+              description: row.description,
+            }))
+          );
         }
       } catch (error) {
         console.warn("[Pricing] Kredi maliyetleri yüklenemedi:", error);
       }
     } catch (error) {
       console.error("[Pricing] Veri yükleme hatası:", error);
-      if (isAuthenticated) {
-        Alert.alert("Hata", "Paketler yüklenemedi.");
-      }
+      const msg = "Paketler yüklenemedi. Bağlantınızı kontrol edip tekrar deneyin.";
+      setLoadError(msg);
+      Alert.alert("Hata", msg);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -173,67 +182,45 @@ export default function PricingScreen() {
     }, [loadData])
   );
 
-  /**
-   * Paket satın al - Ana projedeki gibi direkt satın alma (onay modalı yok)
-   */
+  /** Web pricing: Satın Al → havale ödeme sayfası */
   const handlePurchase = useCallback(
-    async (packageId: number, packageName: string) => {
+    (pkg: CreditPackage) => {
       if (!isAuthenticated) {
         Alert.alert("Giriş Gerekli", "Paket satın almak için giriş yapmanız gerekiyor.", [
           { text: "İptal", style: "cancel" },
-          {
-            text: "Giriş Yap",
-            onPress: () => router.push("login"),
-          },
+          { text: "Giriş Yap", onPress: () => router.push("login") },
         ]);
         return;
       }
-
-      // Direkt satın alma işlemini başlat (ana projedeki gibi)
-      setPurchasingPackageId(packageId);
-      try {
-        const response = await creditService.purchasePackage(packageId);
-        if (response.success && response.data) {
-          // Başarı mesajı göster (ana projedeki gibi)
-          const message = response.data.message || 
-            `${response.data.package?.credits || 0} Tepe Coin hesabınıza eklendi!`;
-          const newBalance = response.data.new_balance || 0;
-          
-          Alert.alert(
-            "Başarılı",
-            `${message}\nYeni Bakiye: ${newBalance.toLocaleString("tr-TR")} Tepe Coin`,
-            [
-              {
-                text: "Tamam",
-                onPress: () => {
-                  // Bakiyeyi yenile
-                  loadData();
-                },
-              },
-            ]
-          );
-        } else {
-          Alert.alert(
-            "Hata",
-            response.message || "Paket satın alınamadı."
-          );
-        }
-      } catch (error) {
-        console.error("[Pricing] Satın alma hatası:", error);
-        Alert.alert("Hata", "Satın alma işlemi başarısız oldu. Lütfen tekrar deneyin.");
-      } finally {
-        setPurchasingPackageId(null);
-      }
+      router.push("tepe-coin-purchase", {
+        package_id: String(pkg.id),
+        package_name: pkg.name,
+        package_price: String(pkg.price),
+        package_credits: String(pkg.credits),
+      });
     },
-    [isAuthenticated, router, loadData]
+    [isAuthenticated, router]
   );
 
-  // Filtrelenmiş paketler: Bireysel/Kurumsal + Aylık/Yıllık (her iki sekmede de aylık/yıllık)
+  const targetAudienceText =
+    customerType === "bireysel"
+      ? "Bireysel kullanıcı paketleri"
+      : customerType === "ek_paket"
+        ? "Danışman ve Kurumsal abonelere özel ekstra kullanım paketleri"
+        : "Emlak firmaları, danışmanlar ve değerleme uzmanlarına özel paketler";
+
   const filteredPackages = packages.filter((pkg) => {
-    const pkgType = pkg.package_type ?? "kurumsal";
+    const slug = (pkg.slug || "").toLowerCase();
+    const isEk = pkg.is_ek_package || slug.startsWith("ek_");
+    const pkgType = (pkg.package_type ?? "kurumsal").toLowerCase();
+
+    if (customerType === "ek_paket") {
+      return isEk;
+    }
+    if (isEk) return false;
+
     if (customerType === "bireysel") {
-      if (pkgType !== "bireysel") return false;
-      return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
+      return pkgType === "bireysel";
     }
     if (pkgType !== "kurumsal") return false;
     return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
@@ -336,7 +323,9 @@ export default function PricingScreen() {
           </View>
         </TouchableOpacity>
 
-        {/* Bireysel / Kurumsal sekmeleri - Kurumsal varsayılan */}
+        <Text style={styles.targetAudience}>{targetAudienceText}</Text>
+
+        {/* Kurumsal | Bireysel | Ek Paket — web ile aynı */}
         <View style={styles.customerTypeToggle}>
           <TouchableOpacity
             style={[styles.customerTypeButton, customerType === "kurumsal" && styles.customerTypeButtonActive]}
@@ -354,9 +343,27 @@ export default function PricingScreen() {
               Bireysel
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.customerTypeButton, customerType === "ek_paket" && styles.customerTypeButtonActive]}
+            onPress={() => setCustomerType("ek_paket")}
+          >
+            <Text style={[styles.customerTypeButtonText, customerType === "ek_paket" && styles.customerTypeButtonTextActive]}>
+              Ek Paket
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Aylık / Yıllık - Kurumsal ve Bireysel altında */}
+        {customerType === "ek_paket" ? (
+          <View style={styles.ekPaketBanner}>
+            <Ionicons name="information-circle-outline" size={18} color="#b45309" />
+            <Text style={styles.ekPaketBannerText}>
+              Ek paketler yalnızca aktif yıllık aboneliği olan kullanıcılar içindir.
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Aylık / Yıllık — yalnızca kurumsal */}
+        {customerType === "kurumsal" ? (
         <View style={styles.periodToggle}>
           <View style={styles.periodTabsRow}>
             <TouchableOpacity
@@ -380,6 +387,7 @@ export default function PricingScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        ) : null}
 
         {/* Coin PNG modal - GIF'e tıklanınca açılır */}
         <Modal
@@ -428,8 +436,10 @@ export default function PricingScreen() {
           <View style={styles.packagesGrid}>
             {filteredPackages.map((pkg) => {
               const showYearlyStyle =
-                (customerType === "bireysel" && pkg.duration_months === 12) ||
-                (customerType === "kurumsal" && period === "yearly");
+                customerType === "kurumsal" && period === "yearly";
+              const discountPct = pkg.discount_percent ?? 0;
+              const showOriginal =
+                discountPct > 0 && (pkg.original_price ?? 0) > (pkg.price ?? 0);
               return (
               <View
                 key={pkg.id}
@@ -462,15 +472,29 @@ export default function PricingScreen() {
                 </View>
 
                 <View style={styles.packagePrice}>
-                  <Text style={styles.priceValue}>
-                    {showYearlyStyle && pkg.monthly_price
-                      ? pkg.monthly_price.toLocaleString("tr-TR")
-                      : pkg.price.toLocaleString("tr-TR")}
-                  </Text>
-                  <Text style={styles.priceCurrency}>TL</Text>
-                  <Text style={styles.pricePeriod}>
-                    {showYearlyStyle ? "/ay" : ""}
-                  </Text>
+                  {showOriginal ? (
+                    <View style={styles.originalPriceRow}>
+                      <Text style={styles.originalPrice}>
+                        {(showYearlyStyle && pkg.original_monthly_price
+                          ? pkg.original_monthly_price
+                          : pkg.original_price!
+                        ).toLocaleString("tr-TR")}{" "}
+                        TL
+                      </Text>
+                      <Text style={styles.discountPill}>%{discountPct}</Text>
+                    </View>
+                  ) : null}
+                  <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "center" }}>
+                    <Text style={styles.priceValue}>
+                      {showYearlyStyle && pkg.monthly_price
+                        ? pkg.monthly_price.toLocaleString("tr-TR")
+                        : pkg.price.toLocaleString("tr-TR")}
+                    </Text>
+                    <Text style={styles.priceCurrency}>TL</Text>
+                    <Text style={styles.pricePeriod}>
+                      {showYearlyStyle ? "/ay" : customerType === "bireysel" && pkg.duration_months === 12 ? `/${pkg.duration_months} ay` : ""}
+                    </Text>
+                  </View>
                 </View>
 
                 {showYearlyStyle && (
@@ -512,24 +536,11 @@ export default function PricingScreen() {
                 </View>
 
                 <TouchableOpacity
-                  style={[
-                    styles.purchaseButton,
-                    purchasingPackageId === pkg.id && styles.purchaseButtonDisabled,
-                  ]}
-                  onPress={() => handlePurchase(pkg.id, pkg.name)}
-                  disabled={purchasingPackageId === pkg.id}
+                  style={styles.purchaseButton}
+                  onPress={() => handlePurchase(pkg)}
                 >
-                  {purchasingPackageId === pkg.id ? (
-                    <>
-                      <ActivityIndicator size="small" color="#fff" />
-                      <Text style={styles.purchaseButtonText}>İşleniyor...</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Ionicons name="cart" size={20} color="#fff" />
-                      <Text style={styles.purchaseButtonText}>Satın Al</Text>
-                    </>
-                  )}
+                  <Ionicons name="cart" size={20} color="#fff" />
+                  <Text style={styles.purchaseButtonText}>Satın Al</Text>
                 </TouchableOpacity>
               </View>
             );
@@ -537,16 +548,33 @@ export default function PricingScreen() {
           </View>
         ) : (
           <View style={styles.emptyContainer}>
-            <Ionicons name="cube-outline" size={64} color="#cbd5e1" />
+            <Ionicons
+              name={loadError ? "cloud-offline-outline" : "cube-outline"}
+              size={64}
+              color="#cbd5e1"
+            />
             <Text style={styles.emptyText}>
-              {customerType === "bireysel"
-                ? period === "monthly"
-                  ? "Henüz bireysel aylık paket tanımlanmamış"
-                  : "Henüz bireysel yıllık paket tanımlanmamış"
-                : period === "monthly"
-                  ? "Henüz aylık paket tanımlanmamış"
-                  : "Henüz yıllık paket tanımlanmamış"}
+              {loadError
+                ? loadError
+                : customerType === "ek_paket"
+                  ? "Henüz ek paket tanımlanmamış"
+                  : customerType === "bireysel"
+                    ? "Henüz bireysel paket tanımlanmamış"
+                    : period === "monthly"
+                      ? "Henüz aylık paket tanımlanmamış"
+                      : "Henüz yıllık paket tanımlanmamış"}
             </Text>
+            {loadError ? (
+              <>
+                {__DEV__ ? (
+                  <Text style={styles.devApiHint}>API: {DJANGO_API_URL}</Text>
+                ) : null}
+                <TouchableOpacity style={styles.retryButton} onPress={() => { setIsLoading(true); loadData(); }}>
+                  <Ionicons name="refresh" size={18} color="#fff" />
+                  <Text style={styles.retryButtonText}>Tekrar Dene</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
           </View>
         )}
 
@@ -661,6 +689,28 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 16,
     color: "#64748b",
+    textAlign: "center",
+    paddingHorizontal: 16,
+  },
+  retryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 20,
+    backgroundColor: "#3b82f6",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  devApiHint: {
+    marginTop: 8,
+    fontSize: 11,
+    color: "#94a3b8",
     textAlign: "center",
   },
   loginButton: {
@@ -800,6 +850,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#64748b",
   },
+  targetAudience: {
+    fontSize: 13,
+    color: "#64748b",
+    textAlign: "center",
+    marginBottom: 12,
+    lineHeight: 18,
+  },
   customerTypeToggle: {
     flexDirection: "row",
     backgroundColor: "#fff",
@@ -811,10 +868,27 @@ const styles = StyleSheet.create({
   },
   customerTypeButton: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     borderRadius: 8,
     alignItems: "center",
+  },
+  ekPaketBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  ekPaketBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#92400e",
+    lineHeight: 17,
   },
   customerTypeButtonActive: {
     backgroundColor: "#3b82f6",
@@ -931,10 +1005,29 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   packagePrice: {
-    flexDirection: "row",
-    alignItems: "baseline",
+    alignItems: "center",
     justifyContent: "center",
     marginBottom: 8,
+  },
+  originalPriceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  originalPrice: {
+    fontSize: 14,
+    color: "#94a3b8",
+    textDecorationLine: "line-through",
+  },
+  discountPill: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#b45309",
+    backgroundColor: "#fef3c7",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   priceValue: {
     fontSize: 24,

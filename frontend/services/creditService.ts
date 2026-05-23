@@ -4,7 +4,7 @@
  * Backend credit API ile iletişim.
  */
 
-import { DJANGO_API_URL } from "../config/api";
+import { DJANGO_API_URL, API_URL, FALLBACK_API_URL } from "../config/api";
 import { storageService } from "./storageService";
 import { authService } from "./authService";
 import type { ApiResponse } from "../src/types/auth";
@@ -201,16 +201,22 @@ export interface CreditPackage {
   name: string;
   slug: string;
   credits: number;
+  /** İndirimli satış fiyatı (TL) — API `discounted_price` */
   price: number;
+  original_price?: number;
+  discounted_price?: number;
+  discount_percent?: number;
   duration_months: number;
   monthly_credits?: number;
   description?: string;
   features?: string[];
   is_popular: boolean;
   monthly_price?: number;
+  original_monthly_price?: number;
   price_per_credit: number;
   package_type?: PackageType;
   is_ek_package?: boolean;
+  max_users?: number;
 }
 
 export interface PackagesList {
@@ -557,92 +563,88 @@ class CreditService {
    * Not: Authentication gerektirmez - paketler herkese gösterilmeli (ana projedeki gibi)
    */
   async listPackages(): Promise<ApiResponse<PackagesList>> {
-    // Paketler authentication gerektirmez, bu yüzden normal fetch kullan
-    const url = `${DJANGO_API_URL}${CREDIT_ENDPOINTS.PACKAGES}`;
-    
-    console.log(`[creditService] listPackages çağrıldı: ${url}`);
-    
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "true",
-        },
-      });
+    const bases = [...new Set([DJANGO_API_URL, API_URL, FALLBACK_API_URL].filter(Boolean))];
+    const headers = {
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "true",
+    };
+    let lastMessage = "Paketler yüklenemedi.";
 
-      console.log(`[creditService] listPackages response:`, {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok,
-        contentType: response.headers.get('content-type'),
-      });
+    for (const base of bases) {
+      const url = `${base.replace(/\/$/, "")}${CREDIT_ENDPOINTS.PACKAGES}`;
+      if (__DEV__) {
+        console.log(`[creditService] listPackages deneniyor: ${url}`);
+      }
+      try {
+        const response = await fetch(url, { method: "GET", headers });
+        const rawText = await response.text();
 
-      if (!response.ok) {
-        let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
-        try {
-          const errorData = await response.text();
-          console.log(`[creditService] listPackages error data:`, errorData.substring(0, 200));
-          if (errorData.trim().startsWith('<')) {
-            errorMessage = "Paketler yüklenemedi. (HTML response)";
+        if (!response.ok) {
+          let parsedMsg = "";
+          try {
+            const parsed = JSON.parse(rawText) as {
+              error?: string;
+              detail?: string;
+              message?: string;
+            };
+            parsedMsg = parsed.message || parsed.error || parsed.detail || "";
+          } catch {
+            /* not JSON */
+          }
+          if (parsedMsg) {
+            lastMessage = parsedMsg;
+          } else if (rawText.trim().startsWith("<")) {
+            if (response.status >= 500) {
+              lastMessage =
+                `Sunucu hatası (HTTP ${response.status}). Paket API'si çalışmıyor; backend güncellemesi gerekebilir.`;
+            } else {
+              lastMessage =
+                `HTTP ${response.status}: Yanıt HTML (adres: ${base}). Doğru API kökü https://www.proparcel.com olmalı.`;
+            }
           } else {
-            const parsed = JSON.parse(errorData);
-            errorMessage = parsed.error || parsed.detail || parsed.message || errorMessage;
+            lastMessage = `HTTP ${response.status}: ${response.statusText || "İstek başarısız"}`;
           }
-        } catch (e) {
-          console.error(`[creditService] listPackages error parse hatası:`, e);
-        }
-        return {
-          success: false,
-          message: errorMessage,
-        } as ApiResponse<PackagesList>;
-      }
-
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.log(`[creditService] listPackages non-JSON response:`, text.substring(0, 200));
-        if (text.trim().startsWith('<')) {
-          return {
-            success: false,
-            message: "Paketler yüklenemedi. (HTML response)",
-          } as ApiResponse<PackagesList>;
-        }
-        // JSON değilse ama HTML de değilse, parse etmeyi dene
-      }
-
-      const data = await response.json();
-      console.log(`[creditService] listPackages success:`, {
-        success: data.success,
-        hasData: !!data.data,
-        packagesCount: data.data?.packages?.length || 0,
-      });
-      
-      // Response formatını kontrol et ve düzelt
-      if (data.success && data.data && Array.isArray(data.data.packages)) {
-        return data as ApiResponse<PackagesList>;
-      } else if (data.packages && Array.isArray(data.packages)) {
-        // Eğer direkt packages array'i döndüyse, formatı düzelt
-        return {
-          success: true,
-          data: {
-            packages: data.packages
+          if (__DEV__) {
+            console.warn(`[creditService] listPackages HTTP ${response.status} @ ${url}`);
           }
-        } as ApiResponse<PackagesList>;
-      } else {
-        console.warn(`[creditService] listPackages beklenmeyen format:`, data);
-        return {
-          success: false,
-          message: "Paketler yüklenemedi. (Beklenmeyen response formatı)",
-        } as ApiResponse<PackagesList>;
+          continue;
+        }
+
+        if (rawText.trim().startsWith("<")) {
+          lastMessage = `API HTML döndürdü (${base}). EXPO_PUBLIC_API_URL kontrol edin.`;
+          continue;
+        }
+
+        const data = JSON.parse(rawText) as {
+          success?: boolean;
+          data?: { packages?: CreditPackage[] };
+          packages?: CreditPackage[];
+          message?: string;
+          error?: string;
+        };
+
+        if (data.success === false) {
+          lastMessage = data.message || data.error || lastMessage;
+          continue;
+        }
+
+        if (data.data?.packages && Array.isArray(data.data.packages)) {
+          return { success: true, data: { packages: data.data.packages } };
+        }
+        if (data.packages && Array.isArray(data.packages)) {
+          return { success: true, data: { packages: data.packages } };
+        }
+
+        lastMessage = "Beklenmeyen API yanıtı.";
+      } catch (error) {
+        lastMessage = "Bağlantı hatası. İnternet veya API adresini kontrol edin.";
+        if (__DEV__) {
+          console.warn(`[creditService] listPackages başarısız (${url}):`, error);
+        }
       }
-    } catch (error) {
-      console.error(`[creditService.ts] API hatası (${CREDIT_ENDPOINTS.PACKAGES}):`, error);
-      return {
-        success: false,
-        message: "Bağlantı hatası. Lütfen internet bağlantınızı kontrol edin.",
-      };
     }
+
+    return { success: false, message: lastMessage };
   }
 
   /**

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,12 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import locationsJson from '../src/data/locations.json';
-import { useKeyboardHeight, getKeyboardAvoidingBehavior, SCROLL_VIEW_KEYBOARD_PROPS } from '../src/keyboard';
+import {
+  useKeyboardHeight,
+  getKeyboardAvoidingBehavior,
+  SCROLL_VIEW_KEYBOARD_PROPS,
+  useScrollInputIntoView,
+} from '../src/keyboard';
 
 interface AdaParselFormProps {
   onClose: () => void;
@@ -33,10 +38,12 @@ interface AdaParselFormProps {
    * - "dark": 3D editor bottomsheet theme (dark slate)
    */
   variant?: "light" | "dark";
-  /** ScrollView içinde gömülü kullanım — dış KeyboardAvoidingView yok */
+  /** Üst ekranın ScrollView’i kaydırır; iç ScrollView yok */
   embedded?: boolean;
   /** AppBottomSheetModal içinde — sheet klavyeyi yönetir, dış KAV yok */
   inBottomSheet?: boolean;
+  /** embedded + üst KeyboardAwareScrollScreen ref — ada/parsel scroll-into-view */
+  scrollRef?: React.RefObject<ScrollView | null>;
 }
 
 export type AdaParselSubmitPayload = {
@@ -106,11 +113,20 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
   variant = "light",
   embedded = false,
   inBottomSheet = false,
+  scrollRef,
 }) => {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight();
   const styles = useMemo(() => createStyles(variant), [variant]);
   const useOuterKav = !embedded && !inBottomSheet;
+  const adaParselWrapRef = useRef<View>(null);
+  const { handleFocus: scrollAdaParselIntoView, handleBlur: scrollAdaParselBlur } =
+    useScrollInputIntoView({
+      scrollRef: scrollRef ?? { current: null },
+      inputWrapRef: adaParselWrapRef,
+    });
+  const onAdaParselFocus = embedded && scrollRef ? scrollAdaParselIntoView : undefined;
+  const onAdaParselBlur = embedded && scrollRef ? scrollAdaParselBlur : undefined;
 
   // Lokasyon verileri yerel JSON dosyasından yüklenir
   const locations = locationsJson as unknown as LocationsResponse;
@@ -212,16 +228,7 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
     closePicker();
   };
 
-  const formBody = (
-    <>
-      <ScrollView
-        style={[styles.formContainer, { flex: 1 }]}
-        contentContainerStyle={{ paddingBottom: 16, flexGrow: 1 }}
-        keyboardShouldPersistTaps={SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
-        keyboardDismissMode={SCROLL_VIEW_KEYBOARD_PROPS.keyboardDismissMode}
-        showsVerticalScrollIndicator={true}
-        nestedScrollEnabled
-      >
+  const formFields = (
         <View style={styles.form} testID="search-fields-area">
           <View style={styles.fieldContainer}>
             <TouchableOpacity
@@ -270,28 +277,34 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
             </TouchableOpacity>
           </View>
 
-          <View style={styles.fieldContainer}>
-            <TextInput
-              testID="ada-input"
-              accessibilityLabel="Ada numarası giriş alanı"
-              style={styles.input}
-              placeholder="Ada"
-              value={ada}
-              onChangeText={setAda}
-              keyboardType="numeric"
-            />
-          </View>
+          <View ref={adaParselWrapRef} collapsable={false}>
+            <View style={styles.fieldContainer}>
+              <TextInput
+                testID="ada-input"
+                accessibilityLabel="Ada numarası giriş alanı"
+                style={styles.input}
+                placeholder="Ada"
+                value={ada}
+                onChangeText={setAda}
+                keyboardType="numeric"
+                onFocus={onAdaParselFocus}
+                onBlur={onAdaParselBlur}
+              />
+            </View>
 
-          <View style={styles.fieldContainer}>
-            <TextInput
-              testID="parsel-input"
-              accessibilityLabel="Parsel numarası giriş alanı"
-              style={styles.input}
-              placeholder="Parsel"
-              value={parsel}
-              onChangeText={setParsel}
-              keyboardType="numeric"
-            />
+            <View style={styles.fieldContainer}>
+              <TextInput
+                testID="parsel-input"
+                accessibilityLabel="Parsel numarası giriş alanı"
+                style={styles.input}
+                placeholder="Parsel"
+                value={parsel}
+                onChangeText={setParsel}
+                keyboardType="numeric"
+                onFocus={onAdaParselFocus}
+                onBlur={onAdaParselBlur}
+              />
+            </View>
           </View>
 
           <View style={styles.buttonContainer}>
@@ -318,8 +331,21 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </ScrollView>
-    </>
+  );
+
+  const formBody = embedded ? (
+    <View style={styles.formEmbed}>{formFields}</View>
+  ) : (
+    <ScrollView
+      style={[styles.formContainer, { flex: 1 }]}
+      contentContainerStyle={{ paddingBottom: 16, flexGrow: 1 }}
+      keyboardShouldPersistTaps={SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
+      keyboardDismissMode={SCROLL_VIEW_KEYBOARD_PROPS.keyboardDismissMode}
+      showsVerticalScrollIndicator={true}
+      nestedScrollEnabled
+    >
+      {formFields}
+    </ScrollView>
   );
 
   return (
@@ -415,6 +441,7 @@ const createStyles = (variant: "light" | "dark") => {
   return StyleSheet.create({
   container: { flex: 1 },
   containerEmbedded: { flexGrow: 0 },
+  formEmbed: { backgroundColor: COLORS.bg },
   formContainer: { flex: 1, backgroundColor: COLORS.bg },
   form: { padding: 16 },
   fieldContainer: { marginBottom: 12 },

@@ -73,5 +73,7 @@ assets/packs/**/*.json
 release_builds/
 apk_releases/*.apk
 apk_releases/*.aab
+app_releases/*.apk
+app_releases/*.ipa
 .metro-bundle-test.js
 .metro-assets-test/

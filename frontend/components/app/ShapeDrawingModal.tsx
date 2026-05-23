@@ -51,7 +51,11 @@ import { useShapeEditGestures, type RotationMode } from "./shapeDrawingModal/use
 import { useMapPressHandler, trySelectModelInstanceAtLngLat, normalizeLngLat } from "./shapeDrawingModal/useMapPressHandler";
 import { tryHitMeasurementForDelete } from "./shapeDrawingModal/measurementMapHit";
 import { ParcelSelectModal } from "./shapeDrawingModal/ParcelSelectModal";
-import { formatModelDisplayName, type ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
+import {
+  formatModelDisplayName,
+  getModelSourceByRowId,
+  type ModelCatalogFlatItem,
+} from "@/src/maps/models/modelCatalog";
 import { useModelUsage } from "./shapeDrawingModal/useModelUsage";
 import { decrementModelUsage } from "@/src/services/modelUsageService";
 import { ensureModelAvailable } from "@/src/services/modelDelivery";
@@ -640,7 +644,9 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
       console.log(`[ShapeDrawingModal] Pre-fetch: haritadaki modeller için pack kontrolü (id'ler: ${[...uniqueRowIds].join(", ")})`);
     }
     uniqueRowIds.forEach((rowId) => {
-      ensureModelAvailable(rowId, { timeoutMs: 60_000 })
+      const remoteUrl = getModelSourceByRowId(modelCatalogFlat, rowId);
+      if (!remoteUrl) return;
+      ensureModelAvailable(rowId, { timeoutMs: 60_000, remoteUrl })
         .then((r) => {
           if (__DEV__) {
             if (r.ok) console.log(`[ShapeDrawingModal] Pre-fetch model_${rowId}: VAR – çizilebilir`);
@@ -651,15 +657,17 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
           if (__DEV__) console.warn(`[ShapeDrawingModal] Pre-fetch model_${rowId}: HATA –`, err?.message || err);
         });
     });
-  }, [visible, modelState.instances, getModelIdFromStringId]);
+  }, [visible, modelState.instances, modelCatalogFlat, getModelIdFromStringId]);
 
-  // Yerleştirme moduna alınan modelin PAD pack'ini tap'ten önce iste (araba vb. pack henüz indirilmemişse ilk tıklamada çizilmiyordu).
+  // Yerleştirme moduna alınan modeli tap'ten önce hazırla (Android PAD / iOS cache) (araba vb. pack henüz indirilmemişse ilk tıklamada çizilmiyordu).
   useEffect(() => {
     if (!visible || !modelState.placingModelId || modelCatalogFlat.length === 0) return;
     const rowId = getModelIdFromStringId(modelState.placingModelId);
     if (rowId === undefined || rowId <= 0) return;
-    if (__DEV__) console.log(`[ShapeDrawingModal] Yerleştirme: model_${rowId} için pack/assets kontrolü`);
-    ensureModelAvailable(rowId, { timeoutMs: 60_000 })
+    const remoteUrl = getModelSourceByRowId(modelCatalogFlat, rowId);
+    if (!remoteUrl) return;
+    if (__DEV__) console.log(`[ShapeDrawingModal] Yerleştirme: model_${rowId} için model hazırlığı`);
+    ensureModelAvailable(rowId, { timeoutMs: 60_000, remoteUrl })
       .then((r) => {
         if (__DEV__) {
           if (r.ok) console.log(`[ShapeDrawingModal] Yerleştirme model_${rowId}: VAR – haritaya tıklanınca çizilebilir`);

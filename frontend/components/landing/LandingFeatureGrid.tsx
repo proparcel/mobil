@@ -19,12 +19,20 @@ export function LandingFeatureGrid({ onFeaturePress }: Props) {
       <Text style={styles.title}>Yapabilecekleriniz</Text>
       <View style={styles.grid}>
         {LANDING_CAPABILITIES.map((item) => (
-          <TouchableOpacity
+          <View
             key={item.id}
-            activeOpacity={0.9}
-            onPress={() => onFeaturePress(item.id)}
-            style={styles.cardTouch}
+            style={[styles.cardWrap, item.id === 'basit-sorgu' && styles.cardWrapWithPill]}
           >
+            {item.id === 'basit-sorgu' ? (
+              <View style={styles.freePill} pointerEvents="none">
+                <Text style={styles.freePillText}>ÜCRETSİZ</Text>
+              </View>
+            ) : null}
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => onFeaturePress(item.id)}
+              style={styles.cardTouch}
+            >
             <LandingGlassCard style={styles.featureCard}>
               <View style={[styles.iconWrap, { backgroundColor: `${item.iconColor}22` }]}>
                 <Ionicons name={item.icon as any} size={22} color={item.iconColor} />
@@ -37,7 +45,8 @@ export function LandingFeatureGrid({ onFeaturePress }: Props) {
                 <Ionicons name="arrow-forward" size={14} color={landingColors.textSoft} />
               </View>
             </LandingGlassCard>
-          </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
         ))}
       </View>
     </View>
@@ -60,8 +69,33 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 12,
   },
-  cardTouch: {
+  cardWrap: {
     width: CARD_WIDTH,
+    position: 'relative',
+  },
+  cardWrapWithPill: {
+    paddingTop: 10,
+  },
+  cardTouch: {
+    width: '100%',
+  },
+  freePill: {
+    position: 'absolute',
+    top: 0,
+    alignSelf: 'center',
+    zIndex: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: landingRadii.pill,
+    backgroundColor: 'rgba(42, 220, 190, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(54, 170, 255, 0.45)',
+  },
+  freePillText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    color: landingColors.cyanBright,
   },
   featureCard: {
     minHeight: 170,

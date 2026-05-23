@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native";
 import { fetchModelCatalogFlat, type ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
 
 type Result = {
@@ -93,20 +94,22 @@ export function useModelCatalog(visible: boolean, refreshKey?: number): Result {
     };
   }, [visible, refreshKey]);
 
-  // New strategy: store-delivered packs only.
-  // Mapbox.Models uses the stable pp-local URL; Android interceptor serves bytes from PAD packs.
-  // Tablo id kullanılır: key = String(id), URL = model_<id>.glb
+  // Android: pp-local + PAD interceptor. iOS: sunucu source (HTTPS); ShapeDrawingModal önceliği source.
   const modelsProp = useMemo(() => {
     const map: Record<string, string | number> = {};
     for (const item of modelCatalogFlat || []) {
       const id = typeof item?.id === "number" ? item.id : null;
       if (!id) continue;
-      const url = `https://pp-local/models/model_${id}.glb`;
-      map[String(id)] = url;
+      if (Platform.OS === "ios") {
+        if (item.source) map[String(id)] = item.source;
+      } else {
+        map[String(id)] = `https://pp-local/models/model_${id}.glb`;
+      }
     }
     if (__DEV__ && Object.keys(map).length > 0) {
       const ids = Object.keys(map).sort((a, b) => Number(a) - Number(b));
-      console.log(`[3DEDIT] modelsProp: ${ids.length} model gömülü URL ile kayıtlı (id'ler: ${ids.join(", ")}). Haritada çizilebilmesi için pack/assets'ta model_<id>.glb dosyası olmalı.`);
+      const strategy = Platform.OS === "ios" ? "HTTPS source" : "pp-local pack";
+      console.log(`[3DEDIT] modelsProp (${strategy}): ${ids.length} model (id'ler: ${ids.join(", ")})`);
     }
     return map;
   }, [modelCatalogFlat]);

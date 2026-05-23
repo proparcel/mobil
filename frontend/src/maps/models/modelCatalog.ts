@@ -268,6 +268,16 @@ async function fetchModelsListFromApiWithBase(): Promise<{ baseUrl: string | nul
  * - MODELS_URL ile API_URL farklı olabilir.
  * - Eğer MODELS_URL erişilemiyorsa liste API_URL'den gelebilir; bu durumda model dosyası base'i de aynı URL olmalıdır.
  */
+/** Harita / indirme için satır id (model_3d_objects.id) ile katalog kaydı. */
+export function getModelSourceByRowId(
+  catalog: ModelCatalogFlatItem[],
+  rowId: number
+): string | null {
+  const item = catalog.find((m) => m.id === rowId);
+  const src = item?.source?.trim();
+  return src || null;
+}
+
 export async function fetchModelCatalogFlat(): Promise<ModelCatalogFlatItem[]> {
   console.log("[modelCatalog] fetchModelCatalogFlat başladı");
   try {
