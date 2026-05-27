@@ -6,6 +6,9 @@
 
 import { useNavigation as useRNNavigation, useRoute as useRNRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { ProfileReturnRouteParams, ProfileSectionId } from '../../components/app/profileSectionTypes';
+
+type ProfileReturnParams = ProfileReturnRouteParams;
 
 export const useRoute = useRNRoute;
 
@@ -20,14 +23,14 @@ export type RootStackParamList = {
         launch?: 'my-queries' | 'parcel-split' | '3d-designs';
       }
     | undefined;
-  profile: undefined;
-  badges: undefined;
+  profile: { profileSection?: ProfileSectionId } | undefined;
+  badges: ProfileReturnParams | undefined;
   /** Başka kullanıcı rozet özeti (native) */
   "visitor-badges": { userId: string; displayName?: string };
   /** Web `VisitProfilePage` ile uyumlu ziyaretçi profil (herkese açık alanlar) */
   "visit-profile": { userId: string; displayName?: string };
   chatbot: undefined;
-  pricing: undefined;
+  pricing: ProfileReturnParams | undefined;
   "complete-registration": undefined;
   "tepe-coin-earn": undefined;
   "tepe-coin-purchase": { package_id?: string; package_name?: string; package_price?: string; package_credits?: string } | undefined;
@@ -82,9 +85,15 @@ export type RootStackParamList = {
     cityName?: string;
     city_name?: string;
   };
-  "son-30-gun": undefined;
+  "son-30-gun": ProfileReturnParams | undefined;
   dosyalarim: undefined;
-  "son-30-gun-detay": { snapshotId: string; commentId?: string; ratingId?: string; listingId?: string };
+  "son-30-gun-detay": {
+    snapshotId: string;
+    commentId?: string;
+    ratingId?: string;
+    listingId?: string;
+    fromProQuery?: string;
+  } & ProfileReturnParams;
   "portal-v5-report-webview": {
     snapshotId: string;
     sharePdf?: string;
@@ -101,7 +110,16 @@ export type RootStackParamList = {
     tkgm_value?: string;
     title?: string;
   };
-  login: undefined;
+  login:
+    | {
+        returnScreen?: 'son-30-gun-detay';
+        snapshotId?: string;
+        listingId?: string;
+        commentId?: string;
+        ratingId?: string;
+        fromProQuery?: string;
+      }
+    | undefined;
   /** Landing: Kurumsal veya Danışman sekmesi + tür ön seçimi */
   register: {
     presetCorporate?: 'emlak' | 'lihkab' | 'spk';
@@ -109,10 +127,10 @@ export type RootStackParamList = {
   } | undefined;
   "otp-verify": { phone?: string; mode?: string; [key: string]: any };
   "forgot-password": undefined;
-  "legal-hub": undefined;
+  "legal-hub": ProfileReturnParams | undefined;
   "legal-webview": { slug: string; title?: string };
-  "accounts-webview": { path: string; title?: string };
-  "portal-webview": { path: string; title?: string };
+  "accounts-webview": { path: string; title?: string } & ProfileReturnParams;
+  "portal-webview": { path: string; title?: string } & ProfileReturnParams;
   /** Sosyal medya şablonu — mobil native; listingId veya snapshotId ile */
   "sosyal-medya-sablonu": { listingId?: string; snapshotId?: string; source?: string } | undefined;
   ilanlarim: undefined;
@@ -120,7 +138,7 @@ export type RootStackParamList = {
   "favori-ilanlarim": undefined;
   /** Pro sorgu favorileri — GET /api/portal/recent-queries/favorites/ */
   "sorgu-favorilerim": undefined;
-  "ilan-islemleri": undefined;
+  "ilan-islemleri": ProfileReturnParams | undefined;
   aranacaklar: undefined;
   "aranacaklar-picker": undefined;
   "aranacaklar-detail": { contactId: string };

@@ -14,7 +14,7 @@ export function navigateLandingCapability(router: Router, id: string) {
       router.push('ilan-islemleri');
       break;
     case 'emlak-vitrini':
-      router.push('emlak-vitrini');
+      router.replace('emlak-vitrini-liste');
       break;
     case 'sandik':
       router.push('son-30-gun');

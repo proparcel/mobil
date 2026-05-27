@@ -4,7 +4,7 @@
  * E-posta/şifre ve OTP ile giriş.
  */
 
-import React, { useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -15,18 +15,55 @@ import {
   StatusBar,
   ScrollView,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import { useRouter } from "../../../src/hooks/useNavigation";
+import { useRouter, useLocalSearchParams } from "../../../src/hooks/useNavigation";
 import { useAuth } from "../../contexts/AuthContext";
+import { parsePortalDetailLoginReturn } from "../../../src/utils/portalDetailAuth";
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
+import { LandingLegalFooter } from "../../../components/landing/LandingLegalFooter";
 import { useScrollInputIntoView } from "../../../src/keyboard";
 
 type LoginMode = "email" | "phone";
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, isLoading } = useAuth();
+  const routeParams = useLocalSearchParams<{
+    returnScreen?: string;
+    snapshotId?: string;
+    listingId?: string;
+    commentId?: string;
+    ratingId?: string;
+    fromProQuery?: string;
+  }>();
+  const detailReturn = parsePortalDetailLoginReturn(routeParams);
+  const { login, isLoading, isAuthenticated } = useAuth();
+  const didNavigateAfterAuthRef = useRef(false);
+
+  const goAfterLogin = useCallback(() => {
+    if (didNavigateAfterAuthRef.current) return;
+    didNavigateAfterAuthRef.current = true;
+    if (detailReturn) {
+      router.replace("son-30-gun-detay", {
+        snapshotId: detailReturn.snapshotId,
+        listingId: detailReturn.listingId,
+        commentId: detailReturn.commentId,
+        ratingId: detailReturn.ratingId,
+        fromProQuery: detailReturn.fromProQuery,
+      });
+      return;
+    }
+    router.replace("index");
+  }, [detailReturn, router]);
+
+  useEffect(() => {
+    didNavigateAfterAuthRef.current = false;
+  }, [detailReturn?.snapshotId]);
+
+  useEffect(() => {
+    if (isLoading || !isAuthenticated) return;
+    goAfterLogin();
+  }, [isLoading, isAuthenticated, goAfterLogin]);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const emailWrapRef = useRef<View>(null);
@@ -69,7 +106,7 @@ export default function LoginScreen() {
     const result = await login(trimmedEmail, password);
 
     if (result.success) {
-      router.replace("index");
+      goAfterLogin();
     } else {
       setError(result.message || "Geçersiz e-posta veya şifre");
     }
@@ -94,19 +131,19 @@ export default function LoginScreen() {
     const result = await login(digits, password);
 
     if (result.success) {
-      router.replace("index");
+      goAfterLogin();
     } else {
       setError(result.message || "Geçersiz telefon numarası veya şifre");
     }
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.topbar}>
         <TouchableOpacity
           style={styles.headerBtn}
-          onPress={() => router.back()}
+          onPress={() => (detailReturn ? router.replace("index") : router.back())}
           accessibilityLabel="Geri"
         >
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -304,15 +341,17 @@ export default function LoginScreen() {
             <Text style={styles.registerLink}>Kayıt Ol</Text>
           </TouchableOpacity>
         </View>
+
+        <LandingLegalFooter tone="light" />
       </KeyboardAwareScrollScreen>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#1e293b",
   },
   scroll: {
     flex: 1,

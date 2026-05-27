@@ -15,6 +15,7 @@ const STORAGE_KEYS = {
   USER: "proparcel_user",
   REDIRECT_AFTER_LOGIN: "proparcel_redirect_after_login",
   DEFERRED_REFERRAL_CODE: "proparcel_deferred_referral_code",
+  DEFERRED_OPEN_DEEP_LINK: "proparcel_deferred_open_deep_link",
   /** İlk açılış cinematic intro tamamlandı — sonraki cold start doğrudan haritaya */
   SKIP_LANDING_INTRO: "proparcel_skip_landing_intro",
 } as const;
@@ -204,6 +205,32 @@ class StorageService {
 
   async clearDeferredReferralCode(): Promise<void> {
     await this.setDeferredReferralCode(null);
+  }
+
+  /** Install Referrer / cold start öncesi gelen deep link URL */
+  async setDeferredOpenDeepLink(url: string | null): Promise<void> {
+    try {
+      if (!url) {
+        await AsyncStorage.removeItem(STORAGE_KEYS.DEFERRED_OPEN_DEEP_LINK);
+      } else {
+        await AsyncStorage.setItem(STORAGE_KEYS.DEFERRED_OPEN_DEEP_LINK, url);
+      }
+    } catch (error) {
+      console.error("[storageService] setDeferredOpenDeepLink error:", error);
+    }
+  }
+
+  async getDeferredOpenDeepLink(): Promise<string | null> {
+    try {
+      return await AsyncStorage.getItem(STORAGE_KEYS.DEFERRED_OPEN_DEEP_LINK);
+    } catch (error) {
+      console.error("[storageService] getDeferredOpenDeepLink error:", error);
+      return null;
+    }
+  }
+
+  async clearDeferredOpenDeepLink(): Promise<void> {
+    await this.setDeferredOpenDeepLink(null);
   }
 
   /**

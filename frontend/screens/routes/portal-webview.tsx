@@ -4,8 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRouter, useLocalSearchParams } from '../../src/hooks/useNavigation';
+import { useProfileAwareBack } from '../../src/utils/profileReturnNavigation';
 import { portalPageUrl } from '../../config/portalSite';
-import { authService } from '../../services/authService';
+import { storageService } from '../../services/storageService';
 
 function buildFetchInject(token: string): string {
   const t = JSON.stringify(token);
@@ -48,6 +49,7 @@ export type PortalWebViewProps = {
 export function PortalWebViewContent({ path: pathProp, title: titleProp }: PortalWebViewProps) {
   const router = useRouter();
   const params = useLocalSearchParams<{ path?: string; title?: string }>();
+  const handleBack = useProfileAwareBack(() => router.back());
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -57,7 +59,7 @@ export function PortalWebViewContent({ path: pathProp, title: titleProp }: Porta
   const uri = useMemo(() => portalPageUrl(path), [path]);
 
   useEffect(() => {
-    authService.getAccessToken().then((t) => setToken(t || ''));
+    storageService.getAccessToken().then((t) => setToken(t || ''));
   }, []);
 
   const injectedBefore = useCallback(() => buildFetchInject(token), [token]);
@@ -66,7 +68,7 @@ export function PortalWebViewContent({ path: pathProp, title: titleProp }: Porta
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel="Geri">
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn} accessibilityLabel="Geri">
           <Ionicons name="chevron-back" size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>

@@ -215,7 +215,7 @@ export default function LandingScreen() {
 
   const [skipIntroOnMount, setSkipIntroOnMount] = useState<boolean | null>(
 
-    forceSkipIntro ? true : null,
+    forceSkipIntro || __DEV__ ? true : null,
 
   );
 

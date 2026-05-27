@@ -54,6 +54,8 @@ export interface PortalQueryListItem {
   /** Şehir / ilçe merkezine rota (m) — UserSavedQuery veya Mongo QuarterRouteResult */
   nav_in_distance_m_city?: number | null;
   nav_in_distance_m_town?: number | null;
+  /** İlan yayınından üretilmiş Pro snapshot (liste API) */
+  source_listing_id?: string | null;
 }
 
 export interface PortalQueryListResponse {
@@ -108,6 +110,8 @@ export interface PortalQueryListParams {
   listing_attr?: string;
   /** Liste önbelleğini atla (yeni pro sorgu sonrası) */
   nocache?: boolean | string;
+  /** `source_listing_id` dolu snapshot'ları hariç tut (Son 30 gün saf Pro listesi) */
+  exclude_listing_source?: string;
 }
 
 // ── Query Detail ──

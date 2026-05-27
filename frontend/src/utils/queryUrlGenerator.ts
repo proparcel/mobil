@@ -4,7 +4,9 @@
  * Parsel bilgilerinden deep link ve universal link URL'leri oluşturur
  */
 
-interface ParselData {
+import { buildParcelShareMessageUrlSync } from './parcelShareLink';
+
+export interface ParselData {
   properties?: Record<string, any>;
   geometry?: {
     coordinates?: number[][][] | number[][] | number[];
@@ -175,17 +177,18 @@ export function generateUniversalLink(parcelData: ParselData): string | null {
       domain = apiUrl.replace(/\/$/, '');
     }
   } catch (_) {}
+  params.append('mobile_view', '1');
   return `${domain}/query?${params.toString()}`;
 }
 
 /**
- * Paylaşım için en uygun URL'i döndürür (önce universal link, sonra deep link)
+ * Paylaşım linki — portal detay (tercih) veya /query yedek.
+ * Async snapshot çözümü için `resolveParcelShareMessageUrl` kullanın.
  */
 export function generateShareLink(parcelData: ParselData): string | null {
+  const portal = buildParcelShareMessageUrlSync(parcelData);
+  if (portal) return portal;
   const universalLink = generateUniversalLink(parcelData);
-  if (universalLink) {
-    return universalLink;
-  }
-  
+  if (universalLink) return universalLink;
   return generateDeepLink(parcelData);
 }

@@ -5,6 +5,7 @@
 
 import RNFS from 'react-native-fs';
 import { getParcelStaticMapFeatureProps } from '../constants/parcelMapStyle';
+import type { ParcelPolygonDesignConfig } from '../constants/parcelPolygonDesign';
 
 let MAPBOX_TOKEN = '';
 try {
@@ -48,43 +49,55 @@ function simplifyGeometry(geom: any, tolerance: number): any {
   return geom;
 }
 
-/** PNG base64 (data: prefix olmadan) */
-export async function fetchStaticMapBase64(geom: any): Promise<string> {
+function buildStaticMapFetchUrl(
+  geom: any,
+  parcelDesign?: ParcelPolygonDesignConfig | null,
+  size = '800x600@2x',
+): string {
   if (!MAPBOX_TOKEN || !geom) return '';
-  try {
-    let url = '';
-    if (geom.type === 'Point' && Array.isArray(geom.coordinates)) {
-      const [lon, lat] = geom.coordinates;
-      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return '';
-      url = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${lon},${lat},16,0/800x600@2x?access_token=${MAPBOX_TOKEN}`;
-    } else {
-      const featureProps = getParcelStaticMapFeatureProps(true);
-      const feature = { type: 'Feature', properties: featureProps, geometry: geom };
-      let encoded = encodeURIComponent(JSON.stringify(feature));
-      if (encoded.length > 6000) {
-        let resolved = false;
-        for (const tol of [0.0003, 0.0006, 0.001, 0.002]) {
-          const sg = simplifyGeometry(geom, tol);
-          const se = encodeURIComponent(
-            JSON.stringify({ type: 'Feature', properties: featureProps, geometry: sg }),
-          );
-          if (se.length <= 6000) {
-            url = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${se})/auto/800x600@2x?access_token=${MAPBOX_TOKEN}&padding=60`;
-            resolved = true;
-            break;
-          }
-        }
-        if (!resolved) {
-          const flat =
-            geom.type === 'Polygon' ? geom.coordinates[0] : geom.coordinates?.[0]?.[0];
-          const center = calcCenterFromCoords(flat);
-          if (!center) return '';
-          url = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${center[0]},${center[1]},16,0/800x600@2x?access_token=${MAPBOX_TOKEN}`;
-        }
-      } else {
-        url = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${encoded})/auto/800x600@2x?access_token=${MAPBOX_TOKEN}&padding=60`;
+  if (geom.type === 'Point' && Array.isArray(geom.coordinates)) {
+    const [lon, lat] = geom.coordinates;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return '';
+    return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${lon},${lat},16,0/${size}?access_token=${MAPBOX_TOKEN}`;
+  }
+  const featureProps = getParcelStaticMapFeatureProps(true, parcelDesign);
+  const feature = { type: 'Feature', properties: featureProps, geometry: geom };
+  let encoded = encodeURIComponent(JSON.stringify(feature));
+  if (encoded.length > 6000) {
+    for (const tol of [0.0003, 0.0006, 0.001, 0.002]) {
+      const sg = simplifyGeometry(geom, tol);
+      const se = encodeURIComponent(
+        JSON.stringify({ type: 'Feature', properties: featureProps, geometry: sg }),
+      );
+      if (se.length <= 6000) {
+        return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${se})/auto/${size}?access_token=${MAPBOX_TOKEN}&padding=60`;
       }
     }
+    const flat = geom.type === 'Polygon' ? geom.coordinates[0] : geom.coordinates?.[0]?.[0];
+    const center = calcCenterFromCoords(flat);
+    if (!center) return '';
+    return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${center[0]},${center[1]},16,0/${size}?access_token=${MAPBOX_TOKEN}`;
+  }
+  return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${encoded})/auto/${size}?access_token=${MAPBOX_TOKEN}&padding=60`;
+}
+
+/** Mapbox Static API URL (indirme / önizleme). */
+export function buildStaticMapImageUrl(
+  geom: any,
+  parcelDesign?: ParcelPolygonDesignConfig | null,
+  size = '800x600@2x',
+): string {
+  return buildStaticMapFetchUrl(geom, parcelDesign, size);
+}
+
+/** PNG base64 (data: prefix olmadan) */
+export async function fetchStaticMapBase64(
+  geom: any,
+  parcelDesign?: ParcelPolygonDesignConfig | null,
+): Promise<string> {
+  if (!MAPBOX_TOKEN || !geom) return '';
+  try {
+    const url = buildStaticMapFetchUrl(geom, parcelDesign);
     if (!url) return '';
     const tempPath = `${RNFS.CachesDirectoryPath}/static_map_${Date.now()}.png`;
     const result = await RNFS.downloadFile({ fromUrl: url, toFile: tempPath }).promise;

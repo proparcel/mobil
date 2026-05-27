@@ -9,17 +9,29 @@ echo ProParcel Google Play AAB Build
 echo ========================================
 echo.
 
-REM 1) Istege bagli: Backend'den guncel model listesi (models_manifest.json)
-echo [1/3] Model manifest guncelleniyor (istege bagli)...
-call npm run gen:model-packs-manifest 2>nul
+REM 1) Mapbox download token tek kaynaktan android/gradle.properties'e yazilir
+echo [1/5] Mapbox token senkronize ediliyor...
+node .\scripts\sync-android-mapbox-token.js --strict
 if errorlevel 1 (
-    echo Uyari: gen:model-packs-manifest atlandi veya hata verdi. Mevcut manifest kullanilacak.
+    echo HATA: Mapbox download token eksik. Detay: doc\MAPBOX_TOKEN_ARCHITECTURE.md
+    pause
+    exit /b 1
 )
 echo.
 
-REM 2) Zorunlu: Asset pack'lere .glb dosyalarini yaz (veya backend'den indir)
-echo [2/3] Asset pack'ler dolduruluyor (gen:android-asset-packs)...
-call npm run gen:android-asset-packs
+REM 2) Backend'den guncel model listesi
+echo [2/5] Model manifest guncelleniyor...
+call npm run gen:model-packs-manifest
+if errorlevel 1 (
+    echo HATA: gen:model-packs-manifest basarisiz.
+    pause
+    exit /b 1
+)
+echo.
+
+REM 3) Eski pack'leri sil, sunucudan .glb indir
+echo [3/5] Asset pack'ler yenileniyor (refresh:android-asset-packs)...
+call npm run refresh:android-asset-packs
 if errorlevel 1 (
     echo.
     echo HATA: gen:android-asset-packs basarisiz. AAB'de model pack'leri bos olur.
@@ -29,8 +41,8 @@ if errorlevel 1 (
 )
 echo.
 
-REM 3) AAB derle
-echo [3/3] AAB derleniyor (bundleRelease)...
+REM 4) AAB derle
+echo [4/5] AAB derleniyor (bundleRelease)...
 cd android
 call gradlew.bat bundleRelease
 set GRADLE_EXIT=%errorlevel%
@@ -46,14 +58,9 @@ REM Cikti
 set AAB_PATH=android\app\build\outputs\bundle\release\app-release.aab
 if exist "%AAB_PATH%" (
     if not exist "release_builds" mkdir release_builds
-    set TIMESTAMP=%date:~-4%%date:~3,2%%date:~0,2%-%time:~0,2%%time:~3,2%%time:~6,2%
-    set TIMESTAMP=%TIMESTAMP: =0%
-    copy /Y "%AAB_PATH%" "release_builds\ProParcel-1.0.0-%TIMESTAMP%.aab" >nul
-    echo.
-    echo ========================================
-    echo AAB Basariyla Olusturuldu!
-    echo ========================================
-    echo AAB: %CD%\release_builds\ProParcel-1.0.0-%TIMESTAMP%.aab
+    for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set TIMESTAMP=%%i
+    copy /Y "%AAB_PATH%" "release_builds\ProParcel-com-proparcel-mobile-with-models-%TIMESTAMP%.aab" >nul
+    echo AAB: %CD%\release_builds\ProParcel-com-proparcel-mobile-with-models-%TIMESTAMP%.aab
     echo Ham: %CD%\%AAB_PATH%
     echo.
 ) else (

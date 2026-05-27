@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { SvgUri } from "react-native-svg";
 import { useRouter } from "../../src/hooks/useNavigation";
+import { useProfileAwareBack } from "../../src/utils/profileReturnNavigation";
 import { useAuth } from "../contexts/AuthContext";
 import { useBadgeCelebration } from "../contexts/BadgeCelebrationContext";
 import { authService } from "../../services/authService";
@@ -202,6 +203,7 @@ export function CategoryBlock({
 
 export default function BadgesScreen() {
   const router = useRouter();
+  const handleBack = useProfileAwareBack(() => router.back());
   const insets = useSafeAreaInsets();
   const { isAuthenticated } = useAuth();
   const { checkPending } = useBadgeCelebration();
@@ -239,7 +241,7 @@ export default function BadgesScreen() {
     return (
       <SafeAreaView style={badgesScreenStyles.container} edges={["top"]}>
         <View style={badgesScreenStyles.header}>
-          <TouchableOpacity style={badgesScreenStyles.headerBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={badgesScreenStyles.headerBtn} onPress={handleBack}>
             <Ionicons name="arrow-back" size={18} color="#f8fafc" />
           </TouchableOpacity>
           <Text style={badgesScreenStyles.headerTitle}>Rozetler</Text>
@@ -256,7 +258,7 @@ export default function BadgesScreen() {
     return (
       <SafeAreaView style={badgesScreenStyles.container} edges={["top"]}>
         <View style={badgesScreenStyles.header}>
-          <TouchableOpacity style={badgesScreenStyles.headerBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={badgesScreenStyles.headerBtn} onPress={handleBack}>
             <Ionicons name="arrow-back" size={18} color="#f8fafc" />
           </TouchableOpacity>
           <Text style={badgesScreenStyles.headerTitle}>Rozetler</Text>
@@ -275,7 +277,7 @@ export default function BadgesScreen() {
   return (
     <SafeAreaView style={badgesScreenStyles.container} edges={["top"]}>
       <View style={badgesScreenStyles.header}>
-        <TouchableOpacity style={badgesScreenStyles.headerBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={badgesScreenStyles.headerBtn} onPress={handleBack}>
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
         </TouchableOpacity>
         <Text style={badgesScreenStyles.headerTitle}>Rozetler</Text>

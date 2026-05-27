@@ -179,6 +179,51 @@ export interface CreditHistory {
   total_count: number;
 }
 
+/** Web `ProfileViteContextView` — `sections=usage` */
+export interface ProfileUsageSummary {
+  wallet_balance: number;
+  earned_balance: number;
+  purchased_balance: number;
+  usage_last_30_days: number;
+  total_used_lifetime: number;
+  total_purchased_lifetime: number;
+  usage_summary_30d: {
+    pro_query?: number;
+    ilan?: number;
+    design_3d?: number;
+  };
+  usage_summary_all?: {
+    pro_query?: number;
+    ilan?: number;
+    design_3d?: number;
+  };
+}
+
+export interface ProfileUsageLedgerItem {
+  id: string;
+  action_type: string;
+  action_type_label: string;
+  credits_used: number;
+  created_at: string | null;
+  description?: string;
+  reference_id?: string;
+  is_positive?: boolean;
+  balance_before?: number;
+  balance_after?: number;
+}
+
+export interface ProfileUsagePurchaseItem {
+  id: string;
+  package_name: string;
+  purchase_date: string | null;
+  status: string;
+  status_label: string;
+  credits_added: number;
+  amount_paid: number;
+  payment_method?: string;
+  credits_remaining?: number;
+}
+
 export interface CreditCheck {
   has_enough: boolean;
   required_credit: number;
@@ -320,25 +365,102 @@ class CreditService {
   }
 
   /**
-   * Kredi istatistiklerini getir
+   * Kredi istatistiklerini getir (ham JSON; profil ekranı `getProfileUsageContext` kullanır).
    */
   async getStats(): Promise<ApiResponse<CreditStats>> {
-    return authFetch<CreditStats>(CREDIT_ENDPOINTS.STATS, {
+    const raw = await authFetch<CreditStats>(CREDIT_ENDPOINTS.STATS, {
       method: "GET",
     });
+    if (raw.success && raw.data) return raw;
+    const flat = raw as unknown as CreditStats;
+    if (flat && typeof flat.balance === "number") {
+      return { success: true, message: "", data: flat };
+    }
+    return { success: false, message: (raw as ApiResponse<CreditStats>).message || "İstatistik alınamadı." };
   }
 
   /**
-   * Kredi geçmişini getir
+   * Eski kredi geçmişi endpoint'i (`usages`/`purchases`); profil `getProfileUsageLedger` kullanır.
    */
   async getHistory(limit: number = 50): Promise<ApiResponse<CreditHistory>> {
-    const limitParam = Math.min(limit, 100); // Maksimum 100
-    return authFetch<CreditHistory>(
+    const limitParam = Math.min(limit, 100);
+    const raw = await authFetch<{ usages?: unknown[]; purchases?: unknown[] }>(
       `${CREDIT_ENDPOINTS.HISTORY}?limit=${limitParam}`,
-      {
-        method: "GET",
-      }
+      { method: "GET" },
     );
+    if (raw.success && raw.data && Array.isArray((raw.data as CreditHistory).history)) {
+      return raw as ApiResponse<CreditHistory>;
+    }
+    return { success: true, message: "", data: { history: [], total_count: 0 } };
+  }
+
+  /**
+   * Profil — Kullanımlarım özeti (web ile aynı Mongo kaynağı).
+   * GET /api/profile/context/?sections=usage
+   */
+  async getProfileUsageContext(): Promise<ApiResponse<ProfileUsageSummary>> {
+    const raw = await authFetch<{ usage_summary?: ProfileUsageSummary }>(
+      "/api/profile/context/?sections=usage",
+      { method: "GET" },
+    );
+    if (!raw.success) {
+      return { success: false, message: raw.message || "Kullanım özeti alınamadı." };
+    }
+    const summary = raw.data?.usage_summary;
+    if (!summary) {
+      return { success: false, message: "Kullanım özeti bulunamadı." };
+    }
+    return { success: true, message: "", data: summary };
+  }
+
+  /**
+   * Profil — sayfalı coin hareketleri veya satın almalar.
+   * GET /api/profile/usage/ledger/
+   */
+  async getProfileUsageLedger(params: {
+    page?: number;
+    pageSize?: number;
+    period?: "30d" | "all";
+    kind?: "usages" | "purchases";
+  } = {}): Promise<
+    ApiResponse<
+      | { items: ProfileUsageLedgerItem[]; total: number; kind: "usages" }
+      | { items: ProfileUsagePurchaseItem[]; total: number; kind: "purchases" }
+    >
+  > {
+    const page = Math.max(1, params.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, params.pageSize ?? 25));
+    const kind = params.kind === "purchases" ? "purchases" : "usages";
+    const q = new URLSearchParams({
+      kind,
+      page: String(page),
+      page_size: String(pageSize),
+    });
+    if (kind === "usages") {
+      q.set("period", params.period === "30d" ? "30d" : "all");
+    }
+    const raw = await authFetch<{
+      items?: ProfileUsageLedgerItem[] | ProfileUsagePurchaseItem[];
+      total?: number;
+    }>(`/api/profile/usage/ledger/?${q.toString()}`, { method: "GET" });
+    if (!raw.success) {
+      return { success: false, message: raw.message || "Hareket geçmişi alınamadı." };
+    }
+    const block = raw.data;
+    const items = Array.isArray(block?.items) ? block.items : [];
+    const total = Number(block?.total ?? 0);
+    if (kind === "purchases") {
+      return {
+        success: true,
+        message: "",
+        data: { kind: "purchases", items: items as ProfileUsagePurchaseItem[], total },
+      };
+    }
+    return {
+      success: true,
+      message: "",
+      data: { kind: "usages", items: items as ProfileUsageLedgerItem[], total },
+    };
   }
 
   /**

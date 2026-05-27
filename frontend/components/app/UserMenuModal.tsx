@@ -154,7 +154,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
             router.push("landing", { skipIntro: true });
             break;
           case "emlak-vitrini":
-            router.push("emlak-vitrini");
+            router.replace("emlak-vitrini-liste");
             break;
           case "son-30-gun-pro":
             router.push("son-30-gun");
@@ -190,7 +190,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
             router.push({ pathname: "expert-requests", params: { mode: "incoming" } });
             break;
           case "kullanici":
-            router.push("profile");
+            router.push(isAuthenticated ? "profile" : "login");
             break;
           case "admin-panel":
             router.push("admin");

@@ -8,13 +8,16 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LandingBottomNav, type LandingNavTab } from './LandingBottomNav';
 import { LandingHeroBackground } from './LandingHeroBackground';
 import { LandingHomePanel } from './LandingHomePanel';
+import { LandingLegalFooter } from './LandingLegalFooter';
 import type { LandingCapabilityId } from './landingCapabilities';
 import type { GiftRewardItem } from '../../services/creditService';
 import { TepeCreditEarnPanel } from './TepeCreditEarnPanel';
 import { TepeCreditUsagePanel } from './TepeCreditUsagePanel';
+import { LANDING_LEGAL_DOCK_HEIGHT } from './landingTheme';
 
 const PAGE_COUNT = 3;
 
@@ -48,6 +51,9 @@ export function LandingPager({
   const scrollRef = useRef<ScrollView>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const { width } = Dimensions.get('window');
+  const insets = useSafeAreaInsets();
+  const legalDockBottom = 78 + Math.max(insets.bottom, 12);
+  const dotsBottom = legalDockBottom + LANDING_LEGAL_DOCK_HEIGHT + 8;
 
   const goToPage = useCallback(
     (index: number) => {
@@ -138,7 +144,10 @@ export function LandingPager({
 
       {reveal ? (
         <>
-          <View style={styles.dots} pointerEvents="none">
+          <View style={[styles.legalDock, { bottom: legalDockBottom }]} pointerEvents="box-none">
+            <LandingLegalFooter variant="dock" tone="dark" />
+          </View>
+          <View style={[styles.dots, { bottom: dotsBottom }]} pointerEvents="none">
             {[0, 1, 2].map((i) => (
               <View key={i} style={[styles.dot, pageIndex === i && styles.dotActive]} />
             ))}
@@ -157,9 +166,14 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
   },
+  legalDock: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 2,
+  },
   dots: {
     position: 'absolute',
-    bottom: 108,
     left: 0,
     right: 0,
     flexDirection: 'row',

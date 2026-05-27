@@ -14,6 +14,10 @@ export type Parcel3dEntry = {
   parsel: string;
   mahalleTkgmValue?: number;
   proparcelValue?: number;
+  /** Sunucu lisans reference_id (mahalle_ada_parsel) */
+  referenceId?: string;
+  /** Satın alma anındaki JSON description (mahalleTkgm vb.) */
+  description?: string;
 };
 
 function parcelKey(mahalle?: string, ada?: string, parsel?: string): string {

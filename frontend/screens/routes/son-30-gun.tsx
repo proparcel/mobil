@@ -15,6 +15,7 @@ import {
   Pressable,
   TextInput,
   Alert,
+  BackHandler,
   DeviceEventEmitter,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +23,11 @@ import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AppBottomSheetModal from '../../components/app/AppBottomSheetModal';
 import { useRouter } from '../../src/hooks/useNavigation';
+import {
+  isProfileReturn,
+  navigateBackFromProfileChild,
+  type ProfileReturnRouteParams,
+} from '../../src/utils/profileReturnNavigation';
 import { useAuth } from '../contexts/AuthContext';
 import {
   getPortalLocations,
@@ -48,6 +54,7 @@ import { getPublicVitrinListings } from '../../services/vitrinSearchService';
 import type { VitrinListingItem, VitrinListingSearchParams } from '../../src/types/vitrin';
 import { isLandCategoryFiltersForListing, mapPortalQueryTypeToListingCategory } from '../../src/utils/portalListingCategory';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { authService } from '../../services/authService';
 
 // ── Constants ──
 
@@ -151,6 +158,23 @@ async function setStoredPortalRecentCityId(cityId: string): Promise<void> {
   } catch {
     // localStorage erişilemiyorsa sessizce devam (web ile aynı)
   }
+}
+
+/** Profil adresindeki il (Son 30 gün / vitrin varsayılan il yedek) */
+async function getProfilePreferredCityId(): Promise<string> {
+  try {
+    const response = await authService.getProfile();
+    if (!response.success || !response.data) return '';
+    const data = response.data as {
+      profile?: { city_id?: number };
+      address?: { city_id?: number };
+    };
+    const cid = data.address?.city_id ?? data.profile?.city_id;
+    if (cid != null && Number.isFinite(Number(cid))) return String(cid);
+  } catch {
+    // profil yüklenemezse popular il
+  }
+  return '';
 }
 
 /** Web `pickDefaultCity` ile aynı: önce tercih edilen id, yoksa `count` en yüksek il */
@@ -1548,14 +1572,17 @@ export default function Son30GunScreen() {
     city_id?: string;
     cityName?: string;
     city_name?: string;
-  };
+  } & ProfileReturnRouteParams;
   const { isAuthenticated } = useAuth();
   const [menuVisible, setMenuVisible] = useState(false);
 
-  /** `emlak-vitrini` → vitrin ilanları; `son-30-gun` → Pro sorgu sonuçları */
-  const [listMode, setListMode] = useState<ListMode>(() =>
-    routeName === 'son-30-gun' ? 'proSorgular' : 'ilanlar',
-  );
+  /** Yalnızca vitrin liste route'u ilan modu; diğer tüm route'lar Pro (toggle yok). */
+  const isVitrinListingRoute = routeName === 'emlak-vitrini-liste';
+  const listMode: ListMode = isVitrinListingRoute ? 'ilanlar' : 'proSorgular';
+  const headerTitle =
+    listMode === 'proSorgular' ? 'Son 30 Gün Pro Sorgular' : 'Emlak Vitrini';
+  const filterSheetTitle =
+    listMode === 'proSorgular' ? 'Pro sorgu filtreleri' : 'İlan filtreleri';
 
   /** API `counts_for` — ilan vitrininde şehir sayıları Mongo; Pro sorguda audit snapshot */
   const locationsCountsFor = listMode === 'ilanlar' ? 'listings' : 'queries';
@@ -1575,6 +1602,8 @@ export default function Son30GunScreen() {
 
   /** Web `PortalRecentQueriesApp` — ilk açılışta il yoksa bir kez varsayılan il (stored / popular) */
   const didAutoSelectProDefaultCityRef = useRef(false);
+  /** Vitrin listesi — stored son il, yoksa profil adresi il, yoksa popular */
+  const didAutoSelectVitrinDefaultCityRef = useRef(false);
 
   const effectiveAppliedListingFilters = useMemo((): VitrinListingSearchParams => {
     const next: VitrinListingSearchParams = { ...(appliedListingFilters || {}) };
@@ -1758,11 +1787,17 @@ export default function Son30GunScreen() {
   const [listingInitialLoad, setListingInitialLoad] = useState(true);
   const [listingError, setListingError] = useState<string | null>(null);
 
+  /** İlan kökenli snapshot'lar vitrin listesinde; Son 30 gün yalnız saf Pro sorgu. */
+  const proQueryItemsOnly = useMemo(
+    () => items.filter((it) => !(it.source_listing_id || '').trim()),
+    [items],
+  );
+
   const displayQueryItems = useMemo(() => {
     const sb = (appliedFilters.sort_by || '').trim().toLowerCase();
-    if (!sb) return items;
+    if (!sb) return proQueryItemsOnly;
     const dir = appliedFilters.sort_dir === 'asc' ? 1 : -1;
-    return [...items].sort((a, b) => {
+    return [...proQueryItemsOnly].sort((a, b) => {
       switch (sb) {
         case 'date_desc':
           return compareNullableDateStrings(a.updated_at || a.created_at, b.updated_at || b.created_at, -1);
@@ -1782,7 +1817,7 @@ export default function Son30GunScreen() {
           return 0;
       }
     });
-  }, [items, appliedFilters.sort_by, appliedFilters.sort_dir]);
+  }, [proQueryItemsOnly, appliedFilters.sort_by, appliedFilters.sort_dir]);
 
   const displayListingItems = useMemo(() => {
     const sb = (effectiveAppliedListingFilters.sort_by || '').trim().toLowerCase();
@@ -1878,6 +1913,48 @@ export default function Son30GunScreen() {
     cities,
     citiesLoading,
     appliedFilters.city_id,
+    effectiveAppliedListingFilters.city_id,
+  ]);
+
+  useEffect(() => {
+    if (!isVitrinListingRoute) return;
+    if (didAutoSelectVitrinDefaultCityRef.current) return;
+    if (appliedListingFilters.city_id != null) {
+      didAutoSelectVitrinDefaultCityRef.current = true;
+      return;
+    }
+    if (citiesLoading || cities.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const routeCityId = effectiveAppliedListingFilters.city_id;
+      const stored = await getStoredPortalRecentCityId();
+      const profileCityId = await getProfilePreferredCityId();
+      const preferred =
+        routeCityId != null
+          ? String(routeCityId)
+          : stored || profileCityId;
+      if (cancelled) return;
+      if (didAutoSelectVitrinDefaultCityRef.current) return;
+      if (appliedListingFilters.city_id != null) return;
+      const { city } = pickDefaultCityForPortalList(cities, preferred);
+      if (!city) {
+        didAutoSelectVitrinDefaultCityRef.current = true;
+        return;
+      }
+      didAutoSelectVitrinDefaultCityRef.current = true;
+      const id = Number(city.id);
+      setAppliedListingFilters((cur) => ({ ...cur, city_id: id }));
+      setDraftCity(id);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isVitrinListingRoute,
+    cities,
+    citiesLoading,
+    appliedListingFilters.city_id,
     effectiveAppliedListingFilters.city_id,
   ]);
 
@@ -2131,6 +2208,7 @@ export default function Son30GunScreen() {
         mine: mineOnly,
         ...appliedFilters,
         city_id: effectiveCityId,
+        exclude_listing_source: '1',
         ...(opts?.nocache ? { nocache: true } : {}),
       };
       const sortByRaw = String(appliedFilters.sort_by || '').trim().toLowerCase();
@@ -2176,7 +2254,21 @@ export default function Son30GunScreen() {
 
   const loadListings = useCallback(
     async (pageNum: number = 1, append: boolean = false) => {
-      if (!isAuthenticated) return;
+      if (!isAuthenticated || !isVitrinListingRoute) return;
+
+      const cityId = effectiveAppliedListingFilters.city_id;
+      if (cityId == null) {
+        setListingItems([]);
+        setListingTotal(0);
+        setListingPage(1);
+        setListingTotalPages(1);
+        setListingError(null);
+        setLoading(false);
+        setListingLoadingMore(false);
+        setRefreshing(false);
+        setListingInitialLoad(false);
+        return;
+      }
 
       if (append) {
         setListingLoadingMore(true);
@@ -2243,22 +2335,33 @@ export default function Son30GunScreen() {
         setListingInitialLoad(false);
       }
     },
-    [isAuthenticated, effectiveAppliedListingFilters],
+    [isAuthenticated, isVitrinListingRoute, effectiveAppliedListingFilters],
   );
 
   useEffect(() => {
-    if (listMode !== 'proSorgular') return;
+    if (!isVitrinListingRoute) {
+      setListingItems([]);
+      setListingTotal(0);
+      setListingError(null);
+    }
+  }, [isVitrinListingRoute]);
+
+  useEffect(() => {
+    if (isVitrinListingRoute) return;
     loadList(1, false);
-  }, [listMode, loadList]);
+  }, [isVitrinListingRoute, loadList]);
 
   useFocusEffect(
     useCallback(() => {
-      if (listMode === 'proSorgular') {
-        loadList(1, false);
-      } else if (listMode === 'ilanlar') {
+      if (isVitrinListingRoute) {
         loadListings(1, false);
+        return;
       }
-    }, [listMode, loadList, loadListings]),
+      setListingItems([]);
+      setListingTotal(0);
+      setListingError(null);
+      loadList(1, false);
+    }, [isVitrinListingRoute, loadList, loadListings]),
   );
 
   const refreshListAfterProQuery = useCallback(
@@ -2294,9 +2397,9 @@ export default function Son30GunScreen() {
   }, [refreshListAfterProQuery]);
 
   useEffect(() => {
-    if (listMode !== 'ilanlar') return;
+    if (!isVitrinListingRoute) return;
     loadListings(1, false);
-  }, [listMode, loadListings]);
+  }, [isVitrinListingRoute, loadListings]);
 
   useEffect(() => {
     if (routeName !== 'emlak-vitrini-liste') return;
@@ -2311,7 +2414,6 @@ export default function Son30GunScreen() {
     if (routeCityId && Number.isFinite(Number(routeCityId))) {
       next.city_id = Number(routeCityId);
     }
-    setListMode('ilanlar');
     setAppliedFilters({});
     setAppliedListingFilters(next);
     setMineOnly(false);
@@ -2332,6 +2434,34 @@ export default function Son30GunScreen() {
     if (listMode === 'ilanlar') loadListings(1, false);
     else loadList(1, false);
   }, [listMode, loadListings, loadList]);
+
+  /** Vitrin `replace` ile açıldığında stack boş — geri ana haritaya */
+  const handleHeaderBack = useCallback(() => {
+    if (isVitrinListingRoute) {
+      router.replace('index');
+      return;
+    }
+    if (isProfileReturn(routeParams)) {
+      navigateBackFromProfileChild(router, routeParams);
+      return;
+    }
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('index');
+  }, [isVitrinListingRoute, router, routeParams]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isVitrinListingRoute) return undefined;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        router.replace('index');
+        return true;
+      });
+      return () => sub.remove();
+    }, [isVitrinListingRoute, router]),
+  );
 
   const handleLoadMore = useCallback(() => {
     if (listMode === 'ilanlar') {
@@ -2872,12 +3002,12 @@ export default function Son30GunScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBtn}
-          onPress={() => router.back()}
+          onPress={handleHeaderBack}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Emlak Vitrini</Text>
+        <Text style={styles.headerTitle}>{headerTitle}</Text>
         <TouchableOpacity
           style={styles.headerBtn}
           onPress={() => setMenuVisible(true)}
@@ -2951,14 +3081,16 @@ export default function Son30GunScreen() {
       {/* ── List (placeholder skeleton + üstte yükleme overlay) ── */}
       <View style={styles.listWrap}>
         <FlatList
-          data={(listMode === 'ilanlar' ? displayListingItems : displayQueryItems) as any}
-          renderItem={listMode === 'ilanlar' ? (renderListingItem as any) : (renderQueryItem as any)}
-          keyExtractor={listMode === 'ilanlar' ? (keyExtractorListing as any) : (keyExtractorQuery as any)}
+          key={routeName}
+          data={(isVitrinListingRoute ? displayListingItems : displayQueryItems) as any}
+          renderItem={isVitrinListingRoute ? (renderListingItem as any) : (renderQueryItem as any)}
+          keyExtractor={isVitrinListingRoute ? (keyExtractorListing as any) : (keyExtractorQuery as any)}
+          extraData={routeName}
           ListHeaderComponent={ListHeader}
           ListFooterComponent={ListFooter}
           ListEmptyComponent={ListEmpty}
           contentContainerStyle={
-            listMode === 'ilanlar'
+            isVitrinListingRoute
               ? [styles.listContent, styles.listContentVitrin]
               : styles.listContent
           }
@@ -2987,48 +3119,7 @@ export default function Son30GunScreen() {
         keyboardForm
       >
         <View style={styles.sheetHeader}>
-          <View style={styles.sheetSegmentRow}>
-            <TouchableOpacity
-              style={[
-                styles.sheetSegBtn,
-                listMode === 'ilanlar' && {
-                  backgroundColor: getModeAccent('ilanlar').segBg,
-                  borderColor: getModeAccent('ilanlar').segBorder,
-                },
-              ]}
-              onPress={() => setListMode('ilanlar')}
-              activeOpacity={0.75}
-            >
-              <Text
-                style={[
-                  styles.sheetSegBtnText,
-                  listMode === 'ilanlar' && { color: getModeAccent('ilanlar').text, fontWeight: '800' },
-                ]}
-              >
-                İlanlar
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.sheetSegBtn,
-                listMode === 'proSorgular' && {
-                  backgroundColor: getModeAccent('proSorgular').segBg,
-                  borderColor: getModeAccent('proSorgular').segBorder,
-                },
-              ]}
-              onPress={() => setListMode('proSorgular')}
-              activeOpacity={0.75}
-            >
-              <Text
-                style={[
-                  styles.sheetSegBtnText,
-                  listMode === 'proSorgular' && { color: getModeAccent('proSorgular').text, fontWeight: '800' },
-                ]}
-              >
-                ProSorgular
-              </Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.sheetTitle}>{filterSheetTitle}</Text>
           <TouchableOpacity onPress={handleClearFilters}>
             <Text style={styles.sheetClearText}>Temizle</Text>
           </TouchableOpacity>
@@ -3591,23 +3682,7 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.borderSoft,
     gap: 10,
   },
-  sheetSegmentRow: { flex: 1, flexDirection: 'row', gap: 8 },
-  sheetSegBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: COLORS.borderSoft,
-    alignItems: 'center',
-    backgroundColor: COLORS.pageBg,
-  },
-  sheetSegBtnActive: {
-    backgroundColor: COLORS.accentBlue + '12',
-    borderColor: COLORS.accentBlue + '55',
-  },
-  sheetSegBtnText: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
-  sheetSegBtnTextActive: { color: COLORS.accentBlue, fontWeight: '800' },
-  sheetTitle: { fontSize: 18, fontWeight: '700', color: COLORS.textPrimary },
+  sheetTitle: { flex: 1, fontSize: 18, fontWeight: '700', color: COLORS.textPrimary },
   sheetClearText: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
   sheetScroll: { paddingHorizontal: 20, paddingTop: 16 },
   sheetSectionTitle: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 10 },

@@ -58,7 +58,7 @@ export function resolveMahalleTkgmFromLocationsLabel(mahalleLabel: string): numb
     }
   }
 
-  return best && best.score >= 45 ? best.value : null;
+  return best && best.score >= 35 ? best.value : null;
 }
 
 type City = { Proparcel_text?: string; Towns?: { Proparcel_text?: string; Quarters?: Quarter[] }[] };

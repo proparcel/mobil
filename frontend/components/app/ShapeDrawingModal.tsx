@@ -30,12 +30,15 @@ import { useModelCatalog } from "./shapeDrawingModal/useModelCatalog";
 import { ShapeEditSheet } from "./shapeDrawingModal/ShapeEditSheet";
 import { MeasurementEditSheet } from "./shapeDrawingModal/MeasurementEditSheet";
 import { ManagementSheet } from "./shapeDrawingModal/ManagementSheet";
-import { ParcelInfoPanel } from "./shapeDrawingModal/ParcelInfoPanel";
 import { ModeInfoBar } from "./shapeDrawingModal/ModeInfoBar";
 import { FreehandDrawOverlay } from "./shapeDrawingModal/FreehandDrawOverlay";
 import { ScreenShapesOverlay } from "./shapeDrawingModal/ScreenShapesOverlay";
+import { TextBoxMapOverlay } from "./shapeDrawingModal/TextBoxMapOverlay";
 import { DrawingToolbox } from "./shapeDrawingModal/DrawingToolbox";
+import { DrawingFinishBar } from "./shapeDrawingModal/DrawingFinishBar";
 import { ModelLoadingStrip } from "./shapeDrawingModal/ModelLoadingStrip";
+import { patchTextBoxShape } from "@/src/maps/drawing/textBoxLayout";
+import { PurchaseModelModal } from "./shapeDrawingModal/PurchaseModelModal";
 import { MapNavControls } from "./shapeDrawingModal/MapNavControls";
 import { useModelSelectHandler } from "./shapeDrawingModal/useModelSelectHandler";
 import { useMapCameraControls } from "./shapeDrawingModal/useMapCameraControls";
@@ -65,6 +68,7 @@ import { useModelManager, CATEGORY_SCALE } from "@/src/maps/models/ModelManager"
 import {
   computeFootprintAreaM2,
   getDefaultScaleMultiplierForCatalogItem,
+  getTranslationForCatalogItem,
 } from "@/src/maps/models/modelFootprint";
 import { TextBoxEditModal } from './TextBoxEditModal';
 import AdaParselForm from '../AdaParselForm';
@@ -297,9 +301,13 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   const [shapes, setShapes] = useState<ShapeProperties[]>([]);
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
   const [shapeEditPanelVisible, setShapeEditPanelVisible] = useState(false);
-  const [shapeEditPanelMinimized, setShapeEditPanelMinimized] = useState(false);
+  const [shapeEditPanelMinimized, setShapeEditPanelMinimized] = useState(true);
+  const [textBoxLayoutTick, setTextBoxLayoutTick] = useState(0);
+  const bumpTextBoxLayout = useCallback(() => {
+    setTextBoxLayoutTick((t) => t + 1);
+  }, []);
   const [measurementEditPanelVisible, setMeasurementEditPanelVisible] = useState(false);
-  const [measurementEditPanelMinimized, setMeasurementEditPanelMinimized] = useState(false);
+  const [measurementEditPanelMinimized, setMeasurementEditPanelMinimized] = useState(true);
 
   // TextBox: çift dokunuşla metin düzenleme
   const [textBoxEditVisible, setTextBoxEditVisible] = useState(false);
@@ -543,6 +551,8 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   /** İndirme bittikten sonra: yeni yerleştirilen model haritada çizilene kadar (onMapIdle ile kapanır) */
   const [modelMapRenderLoading, setModelMapRenderLoading] = useState(false);
   const [modelCatalogRefreshKey, setModelCatalogRefreshKey] = useState(0);
+  const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
+  const [purchaseModel, setPurchaseModel] = useState<ModelCatalogFlatItem | null>(null);
   const {
     modelCatalogFlat,
     isModelCatalogLoading,
@@ -552,18 +562,19 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
 
   /**
    * Boyut limiti (HEAD Content-Length) için kaynak URL.
-   * Katalog `source` alanı Django /static altındaki orijinal GLB olabilir (MB düzeyinde);
-   * Mapbox ve model teslimatı canonical olarak https://pp-local/models/model_<dbId>.glb kullanır (Android PAD; iOS aynı URL).
-   * Aksi halde hiç yerleştirilmemiş olsa bile tek model seçimi "toplam 6000+ KB" hatası verirdi.
+   * Katalog `source` alanı Django /static altındaki orijinal GLB olabilir (MB düzeyinde).
    */
   const getModelSourceForSizeLimit = useCallback(
     (modelId: string): string | undefined => {
+      const catalogItem = modelCatalogFlat.find(
+        (m) => String(m.id) === modelId || m.modelId === modelId
+      );
+      if (catalogItem?.source) return catalogItem.source;
       const num = parseInt(modelId, 10);
-      // Android: PAD/interceptor; iOS: aynı canonical URL (yerel handler veya HEAD başarısızsa katalog fallback)
       if (Number.isFinite(num) && num > 0) {
         return `https://pp-local/models/model_${num}.glb`;
       }
-      return modelCatalogFlat.find((m) => String(m.id) === modelId || m.modelId === modelId)?.source;
+      return undefined;
     },
     [modelCatalogFlat]
   );
@@ -626,13 +637,21 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     return [base[0] * mult, base[1] * mult, base[2] * mult];
   }, [modelCatalogFlat]);
 
-  // Z offset yok; pivot merkezde olanlar sadece pipeline'da center(below) ile düzeltilir.
-  const getTranslationForModelId = useCallback((_modelId: string): [number, number, number] => {
-    return [0, 0, 0];
+  const getTranslationForModelId = useCallback(
+    (modelId: string): [number, number, number] => {
+      const item = modelCatalogFlat.find((m) => m.id != null && String(m.id) === modelId);
+      return getTranslationForCatalogItem(item);
+    },
+    [modelCatalogFlat]
+  );
+
+  const handleRequestModelPurchase = useCallback((m: ModelCatalogFlatItem) => {
+    if (m.id == null) return;
+    setPurchaseModel(m);
+    setPurchaseModalVisible(true);
   }, []);
 
-  // Haritada zaten olan instance'ların pack'lerini arka planda indir (on-demand pack'ler çizilmeden önce hazır olsun).
-  // Pack adı satır id'sine göre (pp_model_20); model_id'den sayı çıkarmak yerine katalogdaki satır id'sini kullan.
+  // Haritada zaten olan instance'ların modellerini arka planda indir (cache'e al).
   useEffect(() => {
     if (!visible || modelState.instances.length === 0) return;
     const uniqueRowIds = new Set<number>();
@@ -641,12 +660,12 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
       if (rowId !== undefined && Number.isFinite(rowId) && rowId > 0) uniqueRowIds.add(rowId);
     }
     if (__DEV__ && uniqueRowIds.size > 0) {
-      console.log(`[ShapeDrawingModal] Pre-fetch: haritadaki modeller için pack kontrolü (id'ler: ${[...uniqueRowIds].join(", ")})`);
+      console.log(`[ShapeDrawingModal] Pre-fetch: haritadaki modeller için indirme (id'ler: ${[...uniqueRowIds].join(", ")})`);
     }
     uniqueRowIds.forEach((rowId) => {
       const remoteUrl = getModelSourceByRowId(modelCatalogFlat, rowId);
       if (!remoteUrl) return;
-      ensureModelAvailable(rowId, { timeoutMs: 60_000, remoteUrl })
+      ensureModelAvailable(rowId, { timeoutMs: 300_000, remoteUrl })
         .then((r) => {
           if (__DEV__) {
             if (r.ok) console.log(`[ShapeDrawingModal] Pre-fetch model_${rowId}: VAR – çizilebilir`);
@@ -659,7 +678,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     });
   }, [visible, modelState.instances, modelCatalogFlat, getModelIdFromStringId]);
 
-  // Yerleştirme moduna alınan modeli tap'ten önce hazırla (Android PAD / iOS cache) (araba vb. pack henüz indirilmemişse ilk tıklamada çizilmiyordu).
+  // Yerleştirme moduna alınan modeli tap'ten önce hazırla (sunucudan cache'e indir).
   useEffect(() => {
     if (!visible || !modelState.placingModelId || modelCatalogFlat.length === 0) return;
     const rowId = getModelIdFromStringId(modelState.placingModelId);
@@ -667,7 +686,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     const remoteUrl = getModelSourceByRowId(modelCatalogFlat, rowId);
     if (!remoteUrl) return;
     if (__DEV__) console.log(`[ShapeDrawingModal] Yerleştirme: model_${rowId} için model hazırlığı`);
-    ensureModelAvailable(rowId, { timeoutMs: 60_000, remoteUrl })
+    ensureModelAvailable(rowId, { timeoutMs: 300_000, remoteUrl })
       .then((r) => {
         if (__DEV__) {
           if (r.ok) console.log(`[ShapeDrawingModal] Yerleştirme model_${rowId}: VAR – haritaya tıklanınca çizilebilir`);
@@ -1003,6 +1022,27 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     stopPitchChange,
   } = useMapCameraControls({ center, zoom, initialPitch: 0 });
 
+  useEffect(() => {
+    if (visible && mapMountReady) bumpTextBoxLayout();
+  }, [visible, mapMountReady, bumpTextBoxLayout]);
+
+  useEffect(() => {
+    if (shapes.some((s) => s.type === "textbox")) bumpTextBoxLayout();
+  }, [shapes, bumpTextBoxLayout]);
+
+  const handleMapCameraChanged = useCallback(
+    (e: any) => {
+      onCameraChanged(e);
+      bumpTextBoxLayout();
+    },
+    [onCameraChanged, bumpTextBoxLayout]
+  );
+
+  const handleMapIdleWithTextBoxLayout = useCallback(() => {
+    bumpTextBoxLayout();
+    handleMapIdleForModel();
+  }, [bumpTextBoxLayout, handleMapIdleForModel]);
+
   // Pitch 35+ olduğunda Terrain aç (Kontroller dışında pitch butonu ile de 3D'ye geçilebilir)
   useEffect(() => {
     if (pitchValue >= 35) setTerrainEnabled(true);
@@ -1078,7 +1118,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
       }
       setShapeEditPanelVisible(false);
       setMeasurementEditPanelVisible(false);
-      setMeasurementEditPanelMinimized(false);
+      setMeasurementEditPanelMinimized(true);
       setSelectedShapeId(null);
       setNavControlsVisible(false);
       setTerrainEnabled(false);
@@ -1265,7 +1305,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   const clearShapeSelection = useCallback(() => {
     setSelectedShapeId(null);
     setShapeEditPanelVisible(false);
-    setShapeEditPanelMinimized(false);
+    setShapeEditPanelMinimized(true);
     setResizeMode(null);
     setRotationMode(null);
     setMoveMode(null);
@@ -1279,41 +1319,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
 
   const freehandActive = shapeDrawingMode === "pen" || shapeDrawingMode === "freehand";
 
-  const selectedShapeForToolbox = useMemo(
-    () => (selectedShapeId ? shapes.find((s) => s.id === selectedShapeId) ?? null : null),
-    [shapes, selectedShapeId]
-  );
-
-  const handleToolboxOutlineColor = useCallback(
-    (c: string) => {
-      setDrawOutlineColor(c);
-      if (selectedShapeId) {
-        setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, outlineColor: c } : s)));
-      }
-    },
-    [selectedShapeId]
-  );
-
-  const handleToolboxFillColor = useCallback(
-    (c: string) => {
-      setDrawFillColor(c);
-      if (selectedShapeId) {
-        setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, fillColor: c } : s)));
-      }
-    },
-    [selectedShapeId]
-  );
-
-  const handleToolboxOutlineWidth = useCallback(
-    (w: number) => {
-      setDrawOutlineWidth(w);
-      if (selectedShapeId) {
-        setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, outlineWidth: w } : s)));
-      }
-    },
-    [selectedShapeId]
-  );
-
   const handleToolboxClose = useCallback(() => {
     if (selectedShapeId && !shapeDrawingMode && !measurementMode) {
       clearShapeSelection();
@@ -1321,12 +1326,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     }
     handleCloseDrawingToolbox();
   }, [selectedShapeId, shapeDrawingMode, measurementMode, clearShapeSelection, handleCloseDrawingToolbox]);
-
-  const handleDeleteSelectedFromToolbox = useCallback(() => {
-    if (!selectedShapeId) return;
-    setShapes((prev) => prev.filter((s) => s.id !== selectedShapeId));
-    clearShapeSelection();
-  }, [selectedShapeId, clearShapeSelection]);
 
   const handleFreehandCommitMap = useCallback(
     (coords: [number, number][]) => {
@@ -1339,9 +1338,9 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
         false
       );
       setShapes((prev) => [...prev, shape]);
-      setShapeDrawingMode(null);
+      setShapeDrawingPoints([]);
     },
-    [shapeDrawingMode, drawOutlineColor, drawOutlineWidth]
+    [shapeDrawingMode, drawOutlineColor, drawOutlineWidth, setShapeDrawingPoints]
   );
 
   const handleFreehandCommitScreen = useCallback(
@@ -1355,39 +1354,70 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
         true
       );
       setShapes((prev) => [...prev, shape]);
-      setShapeDrawingMode(null);
+      setShapeDrawingPoints([]);
     },
-    [shapeDrawingMode, drawOutlineColor, drawOutlineWidth]
+    [shapeDrawingMode, drawOutlineColor, drawOutlineWidth, setShapeDrawingPoints]
   );
+
+  const handleFinishActiveDrawing = useCallback(() => {
+    const mode = shapeDrawingMode;
+    if (mode === "polygon") {
+      if (shapeDrawingPoints.length >= 3) {
+        finalizePolygonOrLine("polygon");
+      } else {
+        setShapeDrawingPoints([]);
+      }
+    } else if (mode === "line") {
+      if (shapeDrawingPoints.length >= 2) {
+        finalizePolygonOrLine("line");
+      } else {
+        setShapeDrawingPoints([]);
+      }
+    } else {
+      setShapeDrawingPoints([]);
+    }
+    setShapeDrawingMode(null);
+  }, [shapeDrawingMode, shapeDrawingPoints.length, finalizePolygonOrLine]);
+
+  const shapeTapDedupeRef = useRef<{ id: string; at: number } | null>(null);
 
   const handleShapeTap = useCallback(
     (shapeId: string) => {
+      const now = Date.now();
+      if (
+        shapeTapDedupeRef.current?.id === shapeId &&
+        now - shapeTapDedupeRef.current.at < 400
+      ) {
+        return;
+      }
+      shapeTapDedupeRef.current = { id: shapeId, at: now };
+
       if (measurementMode) return;
       setSelectedBuildingId(null);
       setSelectedMeasurementGroupId(null);
+      modelActions.setSelectedModelId(null);
       if (resizeMode || rotationMode) {
         setResizeMode(null);
         setRotationMode(null);
         return;
       }
-      setSelectedShapeId((prev) => {
-        if (prev === shapeId) {
-          clearShapeSelection();
-          return null;
-        }
-        setResizeMode(null);
-        setRotationMode(null);
-        setMoveMode(null);
-        return shapeId;
-      });
+      if (selectedShapeId === shapeId) {
+        clearShapeSelection();
+        return;
+      }
+      const tapped = shapes.find((s) => s.id === shapeId);
+      setSelectedShapeId(shapeId);
+      setResizeMode(null);
+      setRotationMode(null);
+      setMoveMode(null);
+      setShapeEditPanelVisible(true);
+      setShapeEditPanelMinimized(tapped?.type !== "textbox");
       setMapToolsSheetOpen(false);
       setModelsDropdownOpen(false);
       setMainActionMenuOpen(false);
       setManagementPanelVisible(false);
-      setShapeEditPanelVisible(false);
-      setShapeEditPanelMinimized(false);
     },
-    [measurementMode, resizeMode, rotationMode, clearShapeSelection]
+    [measurementMode, resizeMode, rotationMode, clearShapeSelection, selectedShapeId, shapes, modelActions]
   );
 
   const selectedInstance = useMemo(
@@ -1427,7 +1457,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
       setSelectedShapeId(null);
       setSelectedBuildingId(null);
       setShapeEditPanelVisible(false);
-      setShapeEditPanelMinimized(false);
+      setShapeEditPanelMinimized(true);
       modelActions.setSelectedModelId(null);
       setMapToolsSheetOpen(false);
       setModelsDropdownOpen(false);
@@ -1462,10 +1492,10 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   useEffect(() => {
     if (selectedMeasurementGroupId) {
       setMeasurementEditPanelVisible(true);
-      setMeasurementEditPanelMinimized(false);
+      setMeasurementEditPanelMinimized(true);
     } else {
       setMeasurementEditPanelVisible(false);
-      setMeasurementEditPanelMinimized(false);
+      setMeasurementEditPanelMinimized(true);
     }
   }, [selectedMeasurementGroupId]);
 
@@ -1492,6 +1522,8 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     onCheckModelSizeLimit,
     selectedModelId: modelState.selectedModelId,
     updateModelInstance: modelActions.updateModelInstance,
+    shapes,
+    onShapePress: handleShapeTap,
   });
 
   // Kamera / Resim Kaydet: BottomSheet menü açar (Resim Çek | Resimler)
@@ -1510,7 +1542,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     setShapeEditPanelVisible(false);
     setMeasurementEditPanelVisible(false);
     setSelectedShapeId(null);
-    setShapeEditPanelMinimized(false);
+    setShapeEditPanelMinimized(true);
     setMapToolsSheetOpen(true);
     setModelsDropdownOpen(false);
     setCameraMenuOpen(false);
@@ -1522,7 +1554,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     setShapeEditPanelVisible(false);
     setMeasurementEditPanelVisible(false);
     setSelectedShapeId(null);
-    setShapeEditPanelMinimized(false);
+    setShapeEditPanelMinimized(true);
     setModelsDropdownOpen(true);
     setMapToolsSheetOpen(false);
     setCameraMenuOpen(false);
@@ -1547,7 +1579,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     setShapeEditPanelVisible(false);
     setMeasurementEditPanelVisible(false);
     setSelectedShapeId(null);
-    setShapeEditPanelMinimized(false);
+    setShapeEditPanelMinimized(true);
     setMapToolsSheetOpen(false);
     setModelsDropdownOpen(false);
     setCameraMenuOpen(false);
@@ -2200,6 +2232,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   }
 
   return (
+    <>
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       {/* NOTE: native Modal içinde BottomSheet için provider/gesture root gerekli */}
       <GestureHandlerRootView style={{ flex: 1 }}>
@@ -2230,7 +2263,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
                     setShapeEditPanelVisible(false);
                     setMeasurementEditPanelVisible(false);
                     setSelectedShapeId(null);
-                    setShapeEditPanelMinimized(false);
+                    setShapeEditPanelMinimized(true);
                     setManagementPanelVisible(!managementPanelVisible);
                   }}
                   style={styles.managementButton}
@@ -2283,7 +2316,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
                   setShapeEditPanelVisible(false);
                   setMeasurementEditPanelVisible(false);
                   setSelectedShapeId(null);
-                  setShapeEditPanelMinimized(false);
+                  setShapeEditPanelMinimized(true);
                   const next = !mainActionMenuOpen;
                   setMainActionMenuOpen(next);
                   if (next) {
@@ -2375,7 +2408,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
                     terrainEnabled={terrainEnabled && !captureMode}
                     mapRef={mapRef}
                     mapReadyRef={mapReadyRef}
-                    onMapIdle={handleMapIdleForModel}
+                    onMapIdle={handleMapIdleWithTextBoxLayout}
                     cameraRef={cameraRef}
                     center={center}
                     zoom={zoom}
@@ -2383,20 +2416,28 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
                     cameraCenter={cameraCenter}
                     cameraHeading={cameraHeading}
                     scrollEnabled={
-                      captureMode ? true : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
+                      captureMode
+                        ? false
+                        : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
                     }
                     zoomEnabled={
-                      captureMode ? true : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
+                      captureMode
+                        ? false
+                        : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
                     }
                     pitchEnabled={
-                      captureMode ? true : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
+                      captureMode
+                        ? false
+                        : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
                     }
                     rotateEnabled={
-                      captureMode ? true : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
+                      captureMode
+                        ? false
+                        : !(resizeMode || rotationMode || moveMode || shapeSheetMinimizedDrag || freehandActive)
                     }
                     onPress={handleMapPress}
                     onLongPress={handleMapLongPress}
-                    onCameraChanged={onCameraChanged}
+                    onCameraChanged={handleMapCameraChanged}
                     modelsProp={modelsPropUsed}
                     modelInstances={modelState.instances}
                     measurementFeatures={mergedMeasurementForMap}
@@ -2431,6 +2472,15 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
 
                   <ScreenShapesOverlay shapes={shapes} selectedShapeId={selectedShapeId} onShapePress={handleShapeTap} />
 
+                  <TextBoxMapOverlay
+                    shapes={shapes}
+                    mapRef={mapRef}
+                    layoutTick={textBoxLayoutTick}
+                    selectedShapeId={selectedShapeId}
+                    onShapePress={handleShapeTap}
+                    enabled={!captureMode && !freehandActive && !measurementMode}
+                  />
+
                   <FreehandDrawOverlay
                     active={freehandActive && !captureMode}
                     mode={shapeDrawingMode === "freehand" ? "freehand" : "pen"}
@@ -2442,21 +2492,21 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
                     strokeWidth={Math.max(2, drawOutlineWidth)}
                   />
 
+                  <DrawingFinishBar
+                    visible={Boolean(!captureMode && shapeDrawingMode)}
+                    bottomInset={insets.bottom}
+                    onFinish={handleFinishActiveDrawing}
+                  />
+
                   {!captureMode &&
-                    (shapeDrawingMode || measurementMode || selectedShapeId) &&
+                    !shapeDrawingMode &&
+                    Boolean(measurementMode) &&
                     !shapeEditPanelVisible &&
                     !measurementEditPanelVisible &&
                     !managementPanelVisible && (
                       <DrawingToolbox
                         visible
-                        shapeDrawingMode={shapeDrawingMode}
                         measurementMode={measurementMode}
-                        outlineColor={drawOutlineColor}
-                        onOutlineColorChange={handleToolboxOutlineColor}
-                        fillColor={drawFillColor}
-                        onFillColorChange={handleToolboxFillColor}
-                        outlineWidth={drawOutlineWidth}
-                        onOutlineWidthChange={handleToolboxOutlineWidth}
                         rulerColor={measureRulerColor}
                         onRulerColorChange={setMeasureRulerColor}
                         areaColor={measureAreaColor}
@@ -2466,15 +2516,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
                         }}
                         onClose={handleToolboxClose}
                         topInset={insets.top}
-                        selectedShape={selectedShapeForToolbox}
-                        onDeleteSelectedShape={selectedShapeForToolbox ? handleDeleteSelectedFromToolbox : undefined}
-                        openTextBoxEditor={openTextBoxEditor}
-                        onOpenAdvancedEdit={() => {
-                          if (selectedShapeId) {
-                            setShapeEditPanelVisible(true);
-                            setShapeEditPanelMinimized(false);
-                          }
-                        }}
                       />
                     )}
 
@@ -2772,18 +2813,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
           onPurchaseSuccess={on3dPurchaseSuccess}
         />
 
-        {/* Selected Parcel Info Panel */}
-        <ParcelInfoPanel
-          selectedParcel={selectedParcel}
-          visible={
-            Boolean(selectedParcel) &&
-            !shapeEditPanelVisible &&
-            !measurementEditPanelVisible &&
-            !managementPanelVisible
-          }
-          bottomInset={insets.bottom}
-          onClose={() => setSelectedParcel(null)}
-        />
+        {/* Parsel mahalle satırı editörde gösterilmez (kullanıcı isteği) */}
 
         {/* Shape Edit Panel (BottomSheet) */}
         <ShapeEditSheet
@@ -2828,9 +2858,11 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
           getMeasurementName={getMeasurementName}
           getParcelName={getParcelName}
           onEditShape={(shapeId) => {
+            const tapped = shapes.find((s) => s.id === shapeId);
             setSelectedMeasurementGroupId(null);
             setSelectedShapeId(shapeId);
-            setShapeEditPanelVisible(false);
+            setShapeEditPanelVisible(true);
+            setShapeEditPanelMinimized(tapped?.type !== "textbox");
             setManagementPanelVisible(false);
           }}
           onDeleteShape={(shapeId) => {
@@ -2957,6 +2989,7 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
           onModelCatalogRefresh={() => {
             setModelCatalogRefreshKey((prev) => prev + 1);
           }}
+          onRequestPurchase={handleRequestModelPurchase}
         />
 
         <BuildingUnifiedSheet
@@ -3026,7 +3059,11 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
                   setTextBoxEditVisible(false);
                   return;
                 }
-                setShapes(prev => prev.map(s => (s.id === id ? { ...s, text: String(nextText ?? '') } : s)));
+                setShapes((prev) =>
+                  prev.map((s) =>
+                    s.id === id ? patchTextBoxShape(s, { text: String(nextText ?? "") }) : s
+                  )
+                );
                 setTextBoxEditVisible(false);
                 setTextBoxEditShapeId(null);
               }}
@@ -3193,6 +3230,30 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
         </BottomSheetModalProvider>
       </GestureHandlerRootView>
     </Modal>
+
+    {purchaseModalVisible && purchaseModel?.id != null && (
+      <PurchaseModelModal
+        visible={purchaseModalVisible}
+        onClose={() => {
+          setPurchaseModalVisible(false);
+          setPurchaseModel(null);
+        }}
+        modelId={purchaseModel.id}
+        modelName={
+          purchaseModel.name?.trim()
+            ? purchaseModel.name
+            : formatModelDisplayName(purchaseModel.filename)
+        }
+        modelCategory={purchaseModel.groupId}
+        credits={purchaseModel.tepeCredits ?? 0}
+        onPurchaseSuccess={() => {
+          setPurchaseModalVisible(false);
+          setPurchaseModel(null);
+          setModelCatalogRefreshKey((prev) => prev + 1);
+        }}
+      />
+    )}
+    </>
   );
 };
 

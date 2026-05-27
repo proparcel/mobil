@@ -1,10 +1,11 @@
 import React, { useCallback, useMemo } from "react";
-import { Text, TouchableOpacity, View } from "react-native";
+import { Switch, Text, TouchableOpacity, View } from "react-native";
 import Slider from "@react-native-community/slider";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AppBottomSheetModal from "../AppBottomSheetModal";
 import { getShapeCenter, scaleShapeAround } from "@/src/maps/drawing/shapeResizeUtils";
+import { patchTextBoxShape } from "@/src/maps/drawing/textBoxLayout";
 import { styles } from "./styles";
 
 type Props = {
@@ -18,10 +19,13 @@ type Props = {
   setMinimized: (next: boolean) => void;
 
   onClose: () => void;
-  /** Şekli sil + seçimi kapat (üst bileşen state günceller) */
   onDeleteShape: () => void;
   openTextBoxEditor: (shapeId: string) => void;
 };
+
+const TEXT_COLORS = ["#ffffff", "#000000", "#f8fafc", "#f59e0b", "#10b981", "#3b82f6", "#ef4444"];
+const OUTLINE_COLORS = ["#2563eb", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
+const FILL_COLORS = ["#3b82f6", "#f87171", "#34d399", "#fbbf24", "#a78bfa", "#f472b6"];
 
 export const ShapeEditSheet: React.FC<Props> = ({
   visible,
@@ -40,6 +44,22 @@ export const ShapeEditSheet: React.FC<Props> = ({
     return shapes.find((s) => s.id === selectedShapeId) || null;
   }, [selectedShapeId, shapes]);
 
+  const isTextBox = selectedShape?.type === "textbox";
+
+  const updateSelected = useCallback(
+    (patch: Record<string, unknown>) => {
+      if (!selectedShapeId) return;
+      setShapes((prev) =>
+        prev.map((s) => {
+          if (s.id !== selectedShapeId) return s;
+          if (s.type === "textbox") return patchTextBoxShape(s, patch);
+          return { ...s, ...patch };
+        })
+      );
+    },
+    [selectedShapeId, setShapes]
+  );
+
   const applyShapeSizePercent = useCallback(
     (nextPercent: number) => {
       if (!selectedShapeId) return;
@@ -47,16 +67,21 @@ export const ShapeEditSheet: React.FC<Props> = ({
       setShapes((prev) => {
         const shape = prev.find((s) => s.id === selectedShapeId);
         if (!shape) return prev;
-        const prevPct = typeof (shape as any).shapeSizePercent === "number" ? (shape as any).shapeSizePercent : 100;
-        const ratio = clamped / prevPct;
-        if ((shape as any).type === "marker") {
+        if (shape.type === "marker") {
           return prev.map((s) => (s.id === selectedShapeId ? { ...s, shapeSizePercent: clamped } : s));
         }
-        const center = getShapeCenter(shape as any);
-        const rot = typeof (shape as any).rotation === "number" ? (shape as any).rotation : 0;
-        const scaled = scaleShapeAround(shape as any, center, ratio, ratio, rot);
+        if (shape.type === "textbox") {
+          return prev.map((s) =>
+            s.id === selectedShapeId ? patchTextBoxShape(s, { shapeSizePercent: clamped }) : s
+          );
+        }
+        const prevPct = typeof shape.shapeSizePercent === "number" ? shape.shapeSizePercent : 100;
+        const ratio = clamped / prevPct;
+        const center = getShapeCenter(shape);
+        const rot = typeof shape.rotation === "number" ? shape.rotation : 0;
+        const scaled = scaleShapeAround(shape, center, ratio, ratio, rot);
         return prev.map((s) =>
-          s.id === selectedShapeId ? ({ ...(scaled as any), shapeSizePercent: clamped } as any) : s
+          s.id === selectedShapeId ? { ...scaled, shapeSizePercent: clamped } : s
         );
       });
     },
@@ -65,6 +90,112 @@ export const ShapeEditSheet: React.FC<Props> = ({
 
   if (!visible || !selectedShapeId || !selectedShape) return null;
 
+  const renderTextBoxSection = () => (
+    <View style={styles.editSection}>
+      <Text style={styles.editSectionTitle}>Metin kutusu</Text>
+
+      <TouchableOpacity
+        style={[styles.sliderButton, styles.sliderButtonActive, { marginBottom: 12, alignSelf: "stretch" }]}
+        onPress={() => openTextBoxEditor(selectedShapeId!)}
+      >
+        <Text style={styles.sliderButtonText}>Metni düzenle</Text>
+      </TouchableOpacity>
+
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 12,
+        }}
+      >
+        <Text style={styles.colorLabel}>Kutu arka planı</Text>
+        <Switch
+          value={selectedShape.boxFillEnabled !== false}
+          onValueChange={(on) => updateSelected({ boxFillEnabled: on })}
+          trackColor={{ false: "#475569", true: "#3b82f6" }}
+          thumbColor="#fff"
+        />
+      </View>
+
+      <Text style={styles.editSectionTitle}>
+        Yazı boyutu: {selectedShape.textSize || 14}
+      </Text>
+      <View style={styles.sliderButtons}>
+        {[12, 14, 16, 18, 20, 24].map((sz) => (
+          <TouchableOpacity
+            key={sz}
+            style={[
+              styles.sliderButton,
+              (selectedShape.textSize || 14) === sz && styles.sliderButtonActive,
+            ]}
+            onPress={() => updateSelected({ textSize: sz })}
+          >
+            <Text style={styles.sliderButtonText}>{sz}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={[styles.editSectionTitle, { marginTop: 10 }]}>Yazı rengi</Text>
+      <View style={styles.sliderButtons}>
+        {TEXT_COLORS.map((c) => {
+          const active =
+            String(selectedShape.textColor || "#ffffff").toLowerCase() === c.toLowerCase();
+          return (
+            <TouchableOpacity
+              key={c}
+              style={[
+                styles.sliderButton,
+                {
+                  backgroundColor: c,
+                  borderWidth: active ? 3 : 1,
+                  borderColor: active ? "#93c5fd" : "#334155",
+                },
+              ]}
+              onPress={() => updateSelected({ textColor: c })}
+              accessibilityLabel={`Yazı rengi ${c}`}
+            />
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  const renderColorsSection = () => (
+    <View style={styles.editSection}>
+      <Text style={styles.editSectionTitle}>Renkler</Text>
+      <View style={styles.colorRow}>
+        <View style={styles.colorInputGroup}>
+          <Text style={styles.colorLabel}>{isTextBox ? "Kenarlık" : "Çizgi"}</Text>
+          <TouchableOpacity
+            style={[styles.colorButton, { backgroundColor: selectedShape.outlineColor || "#2563eb" }]}
+            onPress={() => {
+              const currentIndex = OUTLINE_COLORS.indexOf(selectedShape.outlineColor || "#2563eb");
+              const nextColor = OUTLINE_COLORS[(currentIndex + 1) % OUTLINE_COLORS.length];
+              updateSelected({ outlineColor: nextColor });
+            }}
+          />
+        </View>
+        {(selectedShape.geometry?.type === "Polygon" ||
+          selectedShape.type === "circle" ||
+          selectedShape.type === "ellipse" ||
+          isTextBox) && (
+          <View style={styles.colorInputGroup}>
+            <Text style={styles.colorLabel}>Dolgu</Text>
+            <TouchableOpacity
+              style={[styles.colorButton, { backgroundColor: selectedShape.fillColor || "#3b82f6" }]}
+              onPress={() => {
+                const currentIndex = FILL_COLORS.indexOf(selectedShape.fillColor || "#3b82f6");
+                const nextColor = FILL_COLORS[(currentIndex + 1) % FILL_COLORS.length];
+                updateSelected({ fillColor: nextColor });
+              }}
+            />
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
   return (
     <AppBottomSheetModal
       visible={visible}
@@ -72,12 +203,20 @@ export const ShapeEditSheet: React.FC<Props> = ({
       snapPoints={["12%", "60%", "92%"]}
       index={minimized ? 0 : 1}
       backdropPressBehavior="close"
-      backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
+      backgroundStyle={{
+        backgroundColor: "#1e293b",
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        borderTopWidth: 4,
+        borderTopColor: "#3b82f6",
+      }}
       handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
     >
       <View style={{ flex: 1, paddingBottom: insetsBottom }}>
         <View style={styles.editPanelHeader} pointerEvents="auto">
-          <Text style={styles.editPanelTitle}>Şekil Düzenle</Text>
+          <Text style={styles.editPanelTitle}>
+            {isTextBox ? "Metin düzenle" : "Şekil düzenle"}
+          </Text>
           <View style={styles.editPanelHeaderButtons}>
             <TouchableOpacity onPress={() => setMinimized(!minimized)} style={styles.editPanelMinimizeButton}>
               <Ionicons name={minimized ? "chevron-up" : "chevron-down"} size={18} color="#fff" />
@@ -91,56 +230,26 @@ export const ShapeEditSheet: React.FC<Props> = ({
         {!minimized && (
           <BottomSheetScrollView
             style={styles.editPanelContent}
-            contentContainerStyle={[styles.editPanelContentContainer, { paddingBottom: Math.max(insetsBottom, 0) + 100 }]}
+            contentContainerStyle={[
+              styles.editPanelContentContainer,
+              { paddingBottom: Math.max(insetsBottom, 0) + 100 },
+            ]}
             scrollEventThrottle={16}
           >
-            {/* Renk Düzenleme */}
-            <View style={styles.editSection}>
-              <Text style={styles.editSectionTitle}>Renkler</Text>
-              <View style={styles.colorRow}>
-                <View style={styles.colorInputGroup}>
-                  <Text style={styles.colorLabel}>Çizgi</Text>
-                  <TouchableOpacity
-                    style={[styles.colorButton, { backgroundColor: selectedShape.outlineColor || "#2563eb" }]}
-                    onPress={() => {
-                      const colors = ["#2563eb", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
-                      const currentIndex = colors.indexOf(selectedShape.outlineColor || "#2563eb");
-                      const nextColor = colors[(currentIndex + 1) % colors.length];
-                      setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, outlineColor: nextColor } : s)));
-                    }}
-                  />
-                </View>
-                {(selectedShape.geometry?.type === "Polygon" ||
-                  selectedShape.type === "circle" ||
-                  selectedShape.type === "ellipse" ||
-                  selectedShape.type === "textbox") && (
-                  <View style={styles.colorInputGroup}>
-                    <Text style={styles.colorLabel}>Dolgu</Text>
-                    <TouchableOpacity
-                      style={[styles.colorButton, { backgroundColor: selectedShape.fillColor || "#3b82f6" }]}
-                      onPress={() => {
-                        const colors = ["#3b82f6", "#f87171", "#34d399", "#fbbf24", "#a78bfa", "#f472b6"];
-                        const currentIndex = colors.indexOf(selectedShape.fillColor || "#3b82f6");
-                        const nextColor = colors[(currentIndex + 1) % colors.length];
-                        setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, fillColor: nextColor } : s)));
-                      }}
-                    />
-                  </View>
-                )}
-              </View>
-            </View>
+            {isTextBox && renderTextBoxSection()}
 
-            {/* Boyut (ölçek) */}
+            {renderColorsSection()}
+
             <View style={styles.editSection}>
               <Text style={styles.editSectionTitle}>
-                Boyut: %{typeof (selectedShape as any).shapeSizePercent === "number" ? (selectedShape as any).shapeSizePercent : 100}
+                Boyut: %{typeof selectedShape.shapeSizePercent === "number" ? selectedShape.shapeSizePercent : 100}
               </Text>
               <Slider
                 style={styles.sizeSlider}
                 minimumValue={50}
                 maximumValue={200}
                 step={1}
-                value={typeof (selectedShape as any).shapeSizePercent === "number" ? (selectedShape as any).shapeSizePercent : 100}
+                value={typeof selectedShape.shapeSizePercent === "number" ? selectedShape.shapeSizePercent : 100}
                 onValueChange={applyShapeSizePercent}
                 minimumTrackTintColor="#3b82f6"
                 maximumTrackTintColor="#475569"
@@ -152,27 +261,44 @@ export const ShapeEditSheet: React.FC<Props> = ({
               </View>
             </View>
 
-            {/* Kalınlık */}
+            {(selectedShape.geometry?.type === "Polygon" ||
+              selectedShape.type === "circle" ||
+              selectedShape.type === "ellipse" ||
+              isTextBox) && (
+              <View style={styles.editSection}>
+                <Text style={styles.editSectionTitle}>
+                  Dolgu opaklığı: {Math.round((selectedShape.fillOpacity ?? 0.5) * 100)}%
+                </Text>
+                <Slider
+                  style={styles.sizeSlider}
+                  minimumValue={0}
+                  maximumValue={1}
+                  step={0.05}
+                  value={selectedShape.fillOpacity ?? 0.5}
+                  onValueChange={(v) => updateSelected({ fillOpacity: v })}
+                  minimumTrackTintColor="#3b82f6"
+                  maximumTrackTintColor="#475569"
+                  thumbTintColor="#e2e8f0"
+                />
+              </View>
+            )}
+
             {(selectedShape.geometry?.type === "Polygon" ||
               selectedShape.geometry?.type === "LineString" ||
-              selectedShape.type === "textbox") && (
+              isTextBox) && (
               <View style={styles.editSection}>
-                <Text style={styles.editSectionTitle}>Kalınlık: {selectedShape.outlineWidth || 2}px</Text>
-                <View style={styles.sliderRow}>
-                  <Text style={styles.sliderLabel}>1</Text>
-                  <View style={styles.sliderContainer}>
-                    <View style={[styles.sliderTrack, { width: `${(((selectedShape.outlineWidth || 2) - 1) / 9) * 100}%` }]} />
-                  </View>
-                  <Text style={styles.sliderLabel}>10</Text>
-                </View>
+                <Text style={styles.editSectionTitle}>
+                  Kalınlık: {selectedShape.outlineWidth || 2}px
+                </Text>
                 <View style={styles.sliderButtons}>
                   {[1, 2, 3, 4, 5].map((w) => (
                     <TouchableOpacity
                       key={w}
-                      style={[styles.sliderButton, (selectedShape.outlineWidth || 2) === w && styles.sliderButtonActive]}
-                      onPress={() => {
-                        setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, outlineWidth: w } : s)));
-                      }}
+                      style={[
+                        styles.sliderButton,
+                        (selectedShape.outlineWidth || 2) === w && styles.sliderButtonActive,
+                      ]}
+                      onPress={() => updateSelected({ outlineWidth: w })}
                     >
                       <Text style={styles.sliderButtonText}>{w}</Text>
                     </TouchableOpacity>
@@ -181,65 +307,9 @@ export const ShapeEditSheet: React.FC<Props> = ({
               </View>
             )}
 
-            {/* TextBox gelişmiş ayarlar */}
-            {selectedShape.type === "textbox" && (
-              <View style={styles.editSection}>
-                <Text style={styles.editSectionTitle}>Metin Kutusu</Text>
-
-                <View style={styles.sliderButtons}>
-                  <TouchableOpacity
-                    style={[styles.sliderButton, styles.sliderButtonActive]}
-                    onPress={() => {
-                      if (selectedShapeId) openTextBoxEditor(selectedShapeId);
-                    }}
-                  >
-                    <Text style={styles.sliderButtonText}>Metni Düzenle</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={[styles.editSectionTitle, { marginTop: 10 }]}>
-                  Yazı Boyutu: {(selectedShape as any).textSize || 14}
-                </Text>
-                <View style={styles.sliderButtons}>
-                  {[12, 14, 16, 18, 20, 24].map((sz) => (
-                    <TouchableOpacity
-                      key={sz}
-                      style={[styles.sliderButton, ((selectedShape as any).textSize || 14) === sz && styles.sliderButtonActive]}
-                      onPress={() => {
-                        setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, textSize: sz } : s)));
-                      }}
-                    >
-                      <Text style={styles.sliderButtonText}>{sz}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={[styles.editSectionTitle, { marginTop: 10 }]}>Yazı Rengi</Text>
-                <View style={styles.sliderButtons}>
-                  {["#ffffff", "#000000", "#f8fafc", "#f59e0b", "#10b981", "#3b82f6"].map((c) => (
-                    <TouchableOpacity
-                      key={c}
-                      style={[styles.sliderButton, { backgroundColor: c, borderWidth: 1, borderColor: "#334155" }]}
-                      onPress={() => {
-                        setShapes((prev) => prev.map((s) => (s.id === selectedShapeId ? { ...s, textColor: c } : s)));
-                      }}
-                    >
-                      <Text style={styles.sliderButtonText}></Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {/* Sil Butonu */}
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => {
-                onDeleteShape();
-              }}
-            >
+            <TouchableOpacity style={styles.deleteButton} onPress={onDeleteShape}>
               <Ionicons name="trash" size={18} color="#fff" />
-              <Text style={styles.deleteButtonText}>Şekli Sil</Text>
+              <Text style={styles.deleteButtonText}>Şekli sil</Text>
             </TouchableOpacity>
           </BottomSheetScrollView>
         )}
@@ -247,4 +317,3 @@ export const ShapeEditSheet: React.FC<Props> = ({
     </AppBottomSheetModal>
   );
 };
-

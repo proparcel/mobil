@@ -13,9 +13,9 @@ import { LandingGiftCard } from './LandingGiftCard';
 import { LandingPartnerBanner } from './LandingPartnerBanner';
 import { LandingNewPlatformBadge } from './LandingNewPlatformBadge';
 import { LandingTopBar } from './LandingTopBar';
-import { landingColors } from './landingTheme';
+import { landingColors, LANDING_BOTTOM_CHROME } from './landingTheme';
 
-const BOTTOM_NAV_SPACE = 100;
+const BOTTOM_NAV_SPACE = LANDING_BOTTOM_CHROME;
 
 type Props = {
   reveal: boolean;

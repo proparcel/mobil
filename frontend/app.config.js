@@ -1,8 +1,12 @@
-// Mapbox: EAS secret RNMAPBOX_MAPS_DOWNLOAD_TOKEN (sk.ey...) prebuild'de plugin'e geçirilir
+// frontend/.env -> app.config.js (Metro + EAS prebuild)
+require("./scripts/load-env-file").loadEnvFile();
+const { readMapboxTokens } = require("./scripts/mapbox-token-config");
+
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "production";
 }
-const MAPBOX_DOWNLOAD_TOKEN = process.env.RNMAPBOX_MAPS_DOWNLOAD_TOKEN || "";
+
+const MAPBOX_TOKENS = readMapboxTokens();
 const iosStandalone = process.env.IOS_STANDALONE === "1";
 
 // Android yerel gelistirme: RN CLI (index.js). Expo Dev Client menusu acilmasin.
@@ -19,11 +23,17 @@ const DEV_CLIENT_PACKAGES = [
 module.exports = {
   name: "ProParcel",
   displayName: "ProParcel",
-  version: "1.0.0",
+  version: "1.0.8",
   expo: {
     name: "ProParcel",
     slug: "frontend",
     scheme: "proparcel",
+    icon: "./assets/images/icon.png",
+    splash: {
+      image: "./assets/images/splash-icon.png",
+      resizeMode: "contain",
+      backgroundColor: "#1a1f3a",
+    },
     newArchEnabled: true,
     autolinking: {
       android: {
@@ -38,14 +48,22 @@ module.exports = {
     jsEngine: "hermes",
     ios: {
       bundleIdentifier: "com.proparcel.app",
+      buildNumber: "6",
+      icon: "./assets/images/icon.png",
       supportsTablet: true,
+      ...(process.env.IOS_ASSOCIATED_DOMAINS === "1"
+        ? {
+            associatedDomains: ["applinks:proparcel.com", "applinks:www.proparcel.com"],
+          }
+        : {}),
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
         // HTTP API bağlantısı için (production + local dev)
         NSAppTransportSecurity: {
           NSAllowsArbitraryLoads: true,
         },
-        NSLocationWhenInUseUsageDescription: "Harita görüntüleme ve parsel sorgulama için konum kullanılır.",
+        NSLocationWhenInUseUsageDescription:
+          "ProParcel, haritada konumunuzu göstermek, Konumum ve size yakın harita görünümü için konumunuza erişir.",
         NSCameraUsageDescription: "Fotoğraf çekme için kamera kullanılır.",
         NSPhotoLibraryUsageDescription: "Resim seçme için fotoğraf kütüphanesi kullanılır.",
         NSPhotoLibraryAddUsageDescription:
@@ -56,8 +74,12 @@ module.exports = {
       },
     },
     android: {
-      package: "com.proparcel.app",
-      permissions: ["android.permission.READ_CONTACTS"],
+      package: "com.proparcel.mobile",
+      permissions: [
+        "android.permission.READ_CONTACTS",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+      ],
       icon: "./assets/images/icon.png",
       adaptiveIcon: {
         foregroundImage: "./assets/images/adaptive-icon.png",
@@ -71,13 +93,26 @@ module.exports = {
       apiUrl: process.env.EXPO_PUBLIC_API_URL || "https://www.proparcel.com",
       authApiUrl: process.env.EXPO_PUBLIC_AUTH_API_URL || "https://www.proparcel.com",
       modelsUrl: process.env.EXPO_PUBLIC_MODELS_URL || "https://www.proparcel.com",
-      mapboxAccessToken: process.env.EXPO_PUBLIC_MAPBOX_TOKEN || "",
+      mapboxAccessToken: MAPBOX_TOKENS.publicToken || "",
       ngrokUrl: process.env.EXPO_PUBLIC_NGROK_URL || "",
       // React Navigation kullanıyoruz, Expo Router değil. Lazy bundling "require doesn't exist" hatasına yol açıyor.
       router: { asyncRoutes: false },
     },
     plugins: [
+      // App Store / IOS_STANDALONE: dev-client yok. Yalnizca development IPA icin plugin.
+      ...(process.env.EXPO_ANDROID_RN_CLI === "1" || iosStandalone
+        ? []
+        : [
+            [
+              "expo-dev-client",
+              {
+                // Dev IPA ana ekran ikonu = ProParcel (varsayilan Expo logosu degil)
+              },
+            ],
+          ]),
       "./plugins/withIosNoPushEntitlement.js",
+      "./plugins/withIosLocationPermissions.js",
+      "./plugins/withAppLinks.js",
       [
         "expo-build-properties",
         {
@@ -99,7 +134,7 @@ module.exports = {
         "@rnmapbox/maps",
         {
           RNMapboxMapsImpl: "mapbox",
-          RNMapboxMapsDownloadToken: MAPBOX_DOWNLOAD_TOKEN,
+          RNMapboxMapsDownloadToken: MAPBOX_TOKENS.downloadToken,
         },
       ],
     ],

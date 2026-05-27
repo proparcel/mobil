@@ -3,6 +3,18 @@
  * index.tsx buradaki helper'ları kullanır.
  */
 
+const TURKEY_MAP_CENTER = [35.0, 39.0];
+const TURKEY_MAP_ZOOM = 5.5;
+
+function isReasonableMapCenter(center) {
+  if (!Array.isArray(center) || center.length !== 2) return false;
+  const [lng, lat] = center;
+  if (typeof lng !== "number" || typeof lat !== "number") return false;
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return false;
+  if (Math.abs(lng) < 0.05 && Math.abs(lat) < 0.05) return false;
+  return true;
+}
+
 /**
  * Mapbox `onCameraChanged` event'inden camRef'i günceller.
  * Gate açıkken bile zoom/pitch/heading güncellenir; sadece center kesilir.
@@ -105,13 +117,23 @@ export function apply3DMode({
   // disable: 3D modundan çıkış
   setIs3DMode(false);
 
-  // remount öncesi güncel konum bilgisini koru
+  const preservedCenter = isReasonableMapCenter(current.center)
+    ? [...current.center]
+    : [...TURKEY_MAP_CENTER];
+  const preservedZoom =
+    typeof current.zoom === "number" && Number.isFinite(current.zoom)
+      ? current.zoom
+      : TURKEY_MAP_ZOOM;
+
+  // remount öncesi güncel konum bilgisini koru (geçersiz [0,0] → Türkiye)
   setMapDefaultSettings({
-    centerCoordinate: [...current.center], // Güncel koordinatı koru
-    zoomLevel: current.zoom,
+    centerCoordinate: preservedCenter,
+    zoomLevel: preservedZoom,
     heading: current.heading,
     pitch: 0,
   });
+  camRef.current.center = preservedCenter;
+  camRef.current.zoom = preservedZoom;
 
   // Pitch animasyonu bittikten sonra haritayı remount et
   if (programmaticTimerRef) {

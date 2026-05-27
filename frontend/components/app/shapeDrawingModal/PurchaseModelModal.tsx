@@ -63,8 +63,10 @@ export const PurchaseModelModal: React.FC<PurchaseModelModalProps> = ({
   const handlePurchase = async () => {
     if (balance === null || balance < credits) {
       Alert.alert(
-        "Yetersiz Kredi",
-        `Bu modeli satın almak için ${credits} Coin gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Coin.`
+        credits > 0 ? "Yetersiz Kredi" : "Bakiye yüklenemedi",
+        credits > 0
+          ? `Bu modeli satın almak için ${credits} Coin gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Coin.`
+          : "Kredi bakiyeniz alınamadı. İnternet bağlantınızı kontrol edip tekrar deneyin."
       );
       return;
     }
@@ -128,7 +130,9 @@ export const PurchaseModelModal: React.FC<PurchaseModelModalProps> = ({
             <View style={styles.creditsInfo}>
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsLabel}>Gerekli Kredi:</Text>
-                <Text style={styles.creditsValue}>{credits} Coin</Text>
+                <Text style={styles.creditsValue}>
+                  {credits > 0 ? `${credits} Coin` : "Ücretsiz"}
+                </Text>
               </View>
               
               <View style={styles.creditsRow}>

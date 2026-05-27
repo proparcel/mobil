@@ -100,7 +100,37 @@ export interface UserProfile {
   // Bekleyen onaylar (kurumsal için)
   pending_membership_requests?: CompanyMembershipRequest[];
   // Alt kullanıcılar (kurumsal yetkili için)
-  sub_users?: UserProfile[];
+  sub_users?: ProfileSubUser[];
+}
+
+/** Kurumsal firma alt kullanıcısı — GET /api/profile/ */
+export interface ProfileSubUser {
+  id?: number;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  user?: { id: number; email: string };
+}
+
+/** GET /api/profile/company/credit-allocations/ */
+export interface CompanyCreditAllocationItem {
+  consultant_user_id: number;
+  consultant_profile_id?: number;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  monthly_limit: number;
+  current_period?: string;
+  period_allocated?: number;
+  period_returned?: number;
+  period_net_allocated?: number;
+  consultant_balance?: number;
+  updated_at?: string | null;
+}
+
+export interface CompanyCreditAllocationsData {
+  items: CompanyCreditAllocationItem[];
+  company_balance: number;
 }
 
 export interface ProviderCoverageDistrict {
@@ -155,14 +185,27 @@ export interface RegisterRequest {
   referral_code?: string; // opsiyonel (deferred deep link / manuel)
   // Danışman için zorunlu: bağlanmak istediği firmanın vergi no'su
   company_vergi_no?: string;
+  emlak_yetki_belge_no?: string;
   consultant_type?: 'emlak' | 'spk' | 'lihkab';
   consultant_license_no?: string;
   company_name?: string; // kurumsal için zorunlu
   corporate_type?: 'emlak' | 'spk' | 'lihkab'; // Emlak Firması, SPK Lisanslı Değerleme Firması veya Lihkab Büro
   company_license_no?: string; // kurumsal için zorunlu; emlak: 7 haneli TTBS yetki belge no
   city_id?: number; // opsiyonel; kurumsal emlak TTBS sorgusunda il_id
+  district_id?: number;
+  quarter_id?: number;
+  quarter_value?: number;
+  city_name?: string;
+  district_name?: string;
+  quarter_name?: string;
+  street_and_number?: string;
+  postal_code?: string;
   office_no?: string; // LIHKAB için zorunlu (Büro No)
   spk_tc_no?: string; // SPK seçiliyse zorunlu (TC Kimlik No)
+  education_level?: number;
+  university_id?: number;
+  department_id?: number;
+  custom_department?: string;
   vergi_no?: string; // kurumsal için zorunlu (10 rakam)
   vergi_dairesi?: string; // kurumsal için zorunlu
   step?: 'validate' | 'send_otp' | 'verify_otp'; // çok adımlı akış için

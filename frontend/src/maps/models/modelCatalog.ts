@@ -35,6 +35,65 @@ function getApiBaseCandidates(): string[] {
  * Web model galerisi ile aynı mantık: DB'den gelen göreli yolu mobilde yüklenebilir tam URL'ye çevirir.
  * "Benim modellerim" sekmesindeki kartlarla (ShapeDrawingDropdownSheets) uyumlu.
  */
+/** Backend `normalize_model_static_path` ile aynı: yalnızca indirme URL'si için. */
+export function pathForStaticUrl(path: string): string {
+  let p = String(path || "").replace(/\\/g, "/").trim();
+  for (const prefix of ["myapp/static/", "static/", "assets/"]) {
+    if (p.startsWith(prefix)) {
+      p = p.slice(prefix.length);
+      break;
+    }
+  }
+  return p;
+}
+
+/** @deprecated pathForStaticUrl kullanın */
+export function normalizeModelBackendPath(backendPath: string): string {
+  return pathForStaticUrl(backendPath);
+}
+
+function fixStaticAssetsUrl(url: string): string {
+  const u = String(url || "").trim();
+  if (!u) return u;
+  return u.replace(/\/static\/assets\//gi, "/static/");
+}
+
+/** Katalog satırından veya ham path/file ile tam GLB HTTPS URL üretir. */
+export function buildModelGlbSourceUrl(params: {
+  path?: string;
+  groupId?: ModelType;
+  filename?: string;
+  modelsBase?: string;
+}): string | null {
+  const modelsBase = normalizeBaseUrl(params.modelsBase || getModelsBaseUrl());
+  const backendPath = String(params.path || "").trim();
+  const fileField = String(params.filename || "").trim();
+  if (backendPath) {
+    const normalizedPath = pathForStaticUrl(backendPath);
+    return encodeURI(`${modelsBase}/static/${normalizedPath}`);
+  }
+  if (fileField && params.groupId) {
+    return encodeURI(`${modelsBase}/static/models/${params.groupId}/${fileField}`);
+  }
+  return null;
+}
+
+/** Flat katalog öğesi için indirme URL'si (source boşsa path/filename'den üretir). */
+export function resolveModelGlbSourceUrl(item: {
+  source?: string;
+  path?: string;
+  groupId?: ModelType;
+  filename?: string;
+}): string | null {
+  const direct = String(item?.source || "").trim();
+  if (direct) return fixStaticAssetsUrl(direct);
+  return buildModelGlbSourceUrl({
+    path: (item as { path?: string }).path,
+    groupId: item.groupId,
+    filename: item.filename,
+  });
+}
+
 export function resolveModelStaticImageUri(rawPath: string | undefined | null): string | null {
   const raw = String(rawPath ?? "").trim();
   if (!raw) return null;
@@ -342,26 +401,17 @@ export async function fetchModelCatalogFlat(): Promise<ModelCatalogFlatItem[]> {
         // URL oluştur: Backend'den gelen path kullan (yeni format)
         // Eğer path yoksa fallback olarak eski formatı kullan
         let source: string;
-        if (backendPath) {
-          // Backend'den gelen path'i normalize et:
-          // - "myapp/static/models/..." -> "models/..."
-          // - "static/models/..." -> "models/..."
-          // - "models/..." -> "models/..." (değişmez)
-          let normalizedPath = backendPath.trim();
-          // myapp/static/ prefix'ini kaldır
-          if (normalizedPath.startsWith("myapp/static/")) {
-            normalizedPath = normalizedPath.substring("myapp/static/".length);
-          }
-          // static/ prefix'ini kaldır (eğer hala varsa)
-          if (normalizedPath.startsWith("static/")) {
-            normalizedPath = normalizedPath.substring("static/".length);
-          }
-          // URL formatı: baseUrl/static/models/house/modern_villa.glb
-          source = encodeURI(`${modelsBase}/static/${normalizedPath}`);
-        } else {
-          // Fallback: Eski format (file alanından kategori ile birleştir)
-          source = encodeURI(`${modelsBase}/static/models/${meta.id}/${filename}`);
+        const built = buildModelGlbSourceUrl({
+          path: backendPath || undefined,
+          groupId: meta.id,
+          filename,
+          modelsBase,
+        });
+        if (!built) {
+          skippedCount++;
+          continue;
         }
+        source = built;
         
         // Extract usage count and other metadata from API response.
         // IMPORTANT:

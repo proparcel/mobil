@@ -32,3 +32,7 @@ export const LANDING_INTRO_HOLD_AFTER_MS = 2200;
 export const LANDING_INTRO_CONTENT_EXIT_MS = 900;
 export const LANDING_INTRO_PAGE_REVEAL_MS = 1100;
 export const LANDING_INTRO_LINE_COUNT = 5;
+
+/** Alt nav + hukuki link şeridi için scroll boşluğu (iOS/Android aynı) */
+export const LANDING_LEGAL_DOCK_HEIGHT = 52;
+export const LANDING_BOTTOM_CHROME = 100 + LANDING_LEGAL_DOCK_HEIGHT;

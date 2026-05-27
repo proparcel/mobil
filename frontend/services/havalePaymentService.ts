@@ -2,6 +2,7 @@
  * Havale / EFT ödeme API — web BillingCheckoutPage ile aynı uçlar.
  */
 
+import { API_URL } from "../config/api";
 import { authFormFetch, authJsonFetch } from "./apiClient";
 
 export interface HavaleBankAccount {
@@ -41,24 +42,45 @@ export interface HavalePaymentRequest {
 
 type ApiEnvelope<T> = { success?: boolean; data?: T; error?: string };
 
-function unwrap<T>(res: { ok: boolean; data?: ApiEnvelope<T> | T; error?: string }): { value: T | null; error?: string } {
+/** Web `/media/...` yollarını mobil Image için mutlak URL yapar. */
+export function resolveHavaleMediaUrl(url?: string | null): string {
+  const raw = String(url ?? "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const base = API_URL.replace(/\/$/, "");
+  return raw.startsWith("/") ? `${base}${raw}` : `${base}/${raw}`;
+}
+
+function normalizeBankAccount(bank: HavaleBankAccount): HavaleBankAccount {
+  return {
+    ...bank,
+    logo_url: resolveHavaleMediaUrl(bank.logo_url),
+    qr_image_url: resolveHavaleMediaUrl(bank.qr_image_url),
+  };
+}
+
+function unwrap<T>(res: { ok: boolean; data?: ApiEnvelope<T> | T; error?: string }): {
+  data: T | null;
+  error?: string;
+} {
   if (!res.ok) {
-    return { value: null, error: res.error || "İstek başarısız." };
+    return { data: null, error: res.error || "İstek başarısız." };
   }
   const body = res.data as ApiEnvelope<T> | T | undefined;
   if (body && typeof body === "object" && "success" in (body as object)) {
     const env = body as ApiEnvelope<T>;
     if (env.success === false) {
-      return { value: null, error: env.error || "İstek başarısız." };
+      return { data: null, error: env.error || "İstek başarısız." };
     }
-    if ("data" in env) return { value: env.data ?? null };
+    if ("data" in env) return { data: env.data ?? null };
   }
-  return { value: (body as T) ?? null };
+  return { data: (body as T) ?? null };
 }
 
 export async function listBankAccounts(): Promise<HavaleBankAccount[]> {
   const res = await authJsonFetch<ApiEnvelope<HavaleBankAccount[]>>("/api/bank-accounts/");
-  return unwrap(res).value || [];
+  const { data } = unwrap<HavaleBankAccount[]>(res);
+  return (data || []).map(normalizeBankAccount);
 }
 
 export async function createPaymentRequest(
@@ -74,7 +96,7 @@ export async function createPaymentRequest(
 
 export async function getPaymentRequest(id: number): Promise<HavalePaymentRequest | null> {
   const res = await authJsonFetch<ApiEnvelope<HavalePaymentRequest>>(`/api/payment-requests/${id}/`);
-  return unwrap(res).value;
+  return unwrap(res).data;
 }
 
 export async function uploadReceipt(

@@ -7,8 +7,6 @@ import { type ModelCatalogFlatItem, resolveModelStaticImageUri } from "@/src/map
 import { UsageBadge } from "./UsageBadge";
 import { isModelUsable } from "@/src/services/modelUsageService";
 import { isFreeRole } from "@/src/maps/models/modelAvailability";
-import { PurchaseModelModal } from "./PurchaseModelModal";
-
 type ModelGalleryModalProps = {
   visible: boolean;
   onClose: () => void;
@@ -19,6 +17,7 @@ type ModelGalleryModalProps = {
   formatModelDisplayName: (modelId: string) => string;
   getRemainingUses?: (modelId: number) => number | null;
   onPurchaseSuccess?: () => void;
+  onRequestPurchase?: (m: ModelCatalogFlatItem) => void;
 };
 
 /** Galeri içeriği (tab veya modal içinde kullanılır). onSelectModel çağrılır; kapatma parent’a bırakılır. */
@@ -30,6 +29,8 @@ export type ModelGalleryContentProps = {
   formatModelDisplayName: (modelId: string) => string;
   getRemainingUses?: (modelId: number) => number | null;
   onPurchaseSuccess?: () => void;
+  /** Bottom sheet dışında (üst Modal) satın alma ekranı açmak için */
+  onRequestPurchase?: (m: ModelCatalogFlatItem) => void;
 };
 
 const categoryLabels: Record<string, { icon: string; label: string }> = {
@@ -47,10 +48,8 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
   formatModelDisplayName,
   getRemainingUses,
   onPurchaseSuccess,
+  onRequestPurchase,
 }) => {
-  const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
-  const [selectedModelForPurchase, setSelectedModelForPurchase] = useState<ModelCatalogFlatItem | null>(null);
-
   const modelsByCategory = useMemo(() => {
     const grouped: Record<string, ModelCatalogFlatItem[]> = {};
     modelCatalogFlat.forEach((model) => {
@@ -62,11 +61,18 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
     return grouped;
   }, [modelCatalogFlat]);
 
+  const openPurchase = (model: ModelCatalogFlatItem) => {
+    if (model.id == null) return;
+    if (onRequestPurchase) {
+      onRequestPurchase(model);
+      return;
+    }
+  };
+
   const handleModelPress = async (model: ModelCatalogFlatItem) => {
     if (!model.isAvailable) {
-      if (model.id && model.tepeCredits) {
-        setSelectedModelForPurchase(model);
-        setPurchaseModalVisible(true);
+      if (model.id != null && !isFreeRole(model.role)) {
+        openPurchase(model);
       }
       return;
     }
@@ -85,17 +91,6 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
     } catch (error) {
       console.error("[ModelGalleryContent] Model selection error:", error);
     }
-  };
-
-  const handlePurchaseSuccess = () => {
-    setPurchaseModalVisible(false);
-    setSelectedModelForPurchase(null);
-    onPurchaseSuccess?.();
-  };
-
-  const handlePurchaseClose = () => {
-    setPurchaseModalVisible(false);
-    setSelectedModelForPurchase(null);
   };
 
   return (
@@ -188,8 +183,12 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
                                 labelOverride={isFree ? "FREE" : undefined}
                               />
                             )}
-                            {!model.isAvailable && model.tepeCredits && (
-                              <Text style={styles.creditsText}>{model.tepeCredits} Kredi</Text>
+                            {!model.isAvailable && !isFree && (
+                              <Text style={styles.creditsText}>
+                                {(model.tepeCredits ?? 0) > 0
+                                  ? `${model.tepeCredits} Kredi`
+                                  : "Satın al"}
+                              </Text>
                             )}
                           </View>
                         </View>
@@ -202,18 +201,6 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
           })
         )}
       </BottomSheetScrollView>
-
-      {selectedModelForPurchase && selectedModelForPurchase.id && selectedModelForPurchase.tepeCredits && (
-        <PurchaseModelModal
-          visible={purchaseModalVisible}
-          onClose={handlePurchaseClose}
-          modelId={selectedModelForPurchase.id}
-          modelName={(selectedModelForPurchase.name && selectedModelForPurchase.name.trim()) ? selectedModelForPurchase.name : formatModelDisplayName(selectedModelForPurchase.filename)}
-          modelCategory={selectedModelForPurchase.groupId}
-          credits={selectedModelForPurchase.tepeCredits}
-          onPurchaseSuccess={handlePurchaseSuccess}
-        />
-      )}
     </>
   );
 };
@@ -228,6 +215,7 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
   formatModelDisplayName,
   getRemainingUses,
   onPurchaseSuccess,
+  onRequestPurchase,
 }) => {
   const handleSelectAndClose = async (m: ModelCatalogFlatItem) => {
     try {
@@ -265,6 +253,7 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
             formatModelDisplayName={formatModelDisplayName}
             getRemainingUses={getRemainingUses}
             onPurchaseSuccess={onPurchaseSuccess}
+            onRequestPurchase={onRequestPurchase}
           />
         </View>
       </AppBottomSheetModal>

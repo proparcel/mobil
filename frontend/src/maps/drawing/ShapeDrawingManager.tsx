@@ -5,6 +5,7 @@
 
 import type { ShapeType, ShapeProperties, DrawShapeOptions } from './types';
 import { computeArrowHeadPolygon } from './shapeResizeUtils';
+import { layoutFieldsForTextBox } from './textBoxLayout';
 
 /**
  * GeoJSON Feature helper
@@ -296,7 +297,7 @@ export function createTextBoxShape(
 ): ShapeProperties {
   const shapeId = `shape-textbox-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
-  return {
+  const base: ShapeProperties = {
     id: shapeId,
     type: 'textbox',
     geometry: {
@@ -304,27 +305,26 @@ export function createTextBoxShape(
       coordinates: point,
     },
     text: text || options.text || '',
-    outlineColor: options.outlineColor || '#2563eb', // border
-    fillColor: options.fillColor || '#0f172a', // background
-    // Textbox box varsayılan boyutları (derece cinsinden, küçük bir kutu)
+    outlineColor: options.outlineColor || '#2563eb',
+    fillColor: options.fillColor || '#0f172a',
     boxWidth: 0.0012,
     boxHeight: 0.0007,
-    boxCornerRadius: 0.00008, // derece cinsinden (yaklaşık yuvarlak köşe)
+    boxCornerRadius: 0.00008,
     rotation: 0,
     fillOpacity: options.fillOpacity !== undefined ? options.fillOpacity : 0.85,
     outlineWidth: options.outlineWidth || 2,
-    // Text style
     textColor: '#ffffff',
     textSize: 14,
-    textAlign: 'center', // 'left' | 'center'
-    textFont: 'Open Sans Regular',
-    // Shadow (geo offset ile basit gölge)
+    textAlign: 'center',
+    boxFillEnabled: true,
+    boxCornerRadiusPx: 6,
     shadowEnabled: true,
     shadowColor: '#000000',
     shadowOpacity: 0.35,
     shadowOffsetX: 0.00005,
     shadowOffsetY: -0.00005,
   };
+  return { ...base, ...layoutFieldsForTextBox(base) };
 }
 
 /**

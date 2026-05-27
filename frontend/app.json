@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "buildNumber": "7"
     },
     "androidStatusBar": {
       "backgroundColor": "#000000"
@@ -20,7 +21,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.proparcel.app"
+      "package": "com.proparcel.mobile"
     },
     "web": {
       "bundler": "metro",

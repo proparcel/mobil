@@ -20,6 +20,7 @@ import {
   SCROLL_VIEW_KEYBOARD_PROPS,
   useScrollInputIntoView,
 } from '../src/keyboard';
+import type { LocationHierarchySelection } from '../src/utils/locationHierarchyMap';
 
 interface AdaParselFormProps {
   onClose: () => void;
@@ -44,6 +45,8 @@ interface AdaParselFormProps {
   inBottomSheet?: boolean;
   /** embedded + üst KeyboardAwareScrollScreen ref — ada/parsel scroll-into-view */
   scrollRef?: React.RefObject<ScrollView | null>;
+  /** İl / ilçe / mahalle seçildiğinde haritayı güncelle */
+  onHierarchySelect?: (selection: LocationHierarchySelection) => void;
 }
 
 export type AdaParselSubmitPayload = {
@@ -114,6 +117,7 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
   embedded = false,
   inBottomSheet = false,
   scrollRef,
+  onHierarchySelect,
 }) => {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight();
@@ -216,14 +220,30 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
 
   const selectItem = (item: any) => {
     if (pickerMode === 'city') {
-      setSelectedCity(item as City);
+      const city = item as City;
+      setSelectedCity(city);
       setSelectedTown(null);
       setSelectedQuarter(null);
+      onHierarchySelect?.({ level: 'city', cityId: city.Id });
     } else if (pickerMode === 'town') {
-      setSelectedTown(item as Town);
+      const town = item as Town;
+      setSelectedTown(town);
       setSelectedQuarter(null);
+      if (selectedCity) {
+        onHierarchySelect?.({ level: 'town', cityId: selectedCity.Id, townId: town.Id });
+      }
     } else if (pickerMode === 'quarter') {
-      setSelectedQuarter(item as Quarter);
+      const quarter = item as Quarter;
+      setSelectedQuarter(quarter);
+      if (selectedCity && selectedTown) {
+        const pv = Number((quarter as Quarter).Proparcel_value);
+        onHierarchySelect?.({
+          level: 'quarter',
+          cityId: selectedCity.Id,
+          townId: selectedTown.Id,
+          proparcelValue: Number.isFinite(pv) ? pv : undefined,
+        });
+      }
     }
     closePicker();
   };

@@ -4,9 +4,9 @@
  * React Navigation ile routing yapısı
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { NativeModules, Platform, View, ActivityIndicator } from "react-native";
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -17,6 +17,7 @@ import { BadgeCelebrationProvider } from './screens/contexts/BadgeCelebrationCon
 import { ScreenShieldProvider, useScreenShield } from './screens/contexts/ScreenShieldContext';
 import { ScreenShieldOverlay } from './components/app/screenShield/ScreenShieldOverlay';
 import { storageService } from "./services/storageService";
+import { useDeepLinkNavigation } from './src/hooks/useDeepLinkNavigation';
 
 // Screens
 import IndexScreen from './screens/routes/index';
@@ -44,7 +45,6 @@ import OTPVerifyScreen from './screens/routes/(auth)/otp-verify';
 import ForgotPasswordScreen from './screens/routes/(auth)/forgot-password';
 import CompleteRegistrationScreen from './screens/routes/complete-registration';
 import AdminScreen from './screens/routes/admin';
-import TepeCoinPurchaseScreen from './screens/routes/tepe-coin-purchase';
 import PaymentWebViewScreen from './screens/routes/payment-webview';
 import Son30GunScreen from './screens/routes/son-30-gun';
 import EmlakVitriniScreen from './screens/routes/emlak-vitrini';
@@ -72,8 +72,18 @@ import AranacaklarStatsScreen from './screens/routes/aranacaklar-stats';
 
 const Stack = createNativeStackNavigator();
 
+/** Ödeme ekranı — expo-document-picker yalnızca ekran açılınca yüklenir. */
+function TepeCoinPurchaseScreen(props: Record<string, unknown>) {
+  const Screen = require('./screens/routes/tepe-coin-purchase').default;
+  return <Screen {...props} />;
+}
+
 function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'index' }) {
   const { overlayVisible } = useScreenShield();
+  const navigationRef = useNavigationContainerRef();
+  const [navReady, setNavReady] = useState(false);
+  const getNavigation = useCallback(() => navigationRef.current, [navigationRef]);
+  useDeepLinkNavigation(getNavigation, navReady);
 
   // Android deferred referral (Branch'siz): Google Play Install Referrer
   useEffect(() => {
@@ -132,7 +142,7 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
 
   return (
     <React.Fragment>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef} theme={DarkTheme} onReady={() => setNavReady(true)}>
         <Stack.Navigator
           initialRouteName={initialRouteName}
           screenOptions={{
@@ -206,6 +216,13 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
+        if (__DEV__) {
+          if (!cancelled) {
+            setInitialRoute('index');
+            setNavReady(true);
+          }
+          return;
+        }
         const skip = await storageService.getSkipLandingIntro();
         if (!cancelled) setInitialRoute(skip ? 'index' : 'landing');
       } catch {

@@ -29,9 +29,9 @@ export const parcelMapStyle = {
 
   strokeWidth: 2,
 
-  /** Seçili kenar — lacivert, kalın */
+  /** Seçili kenar — sistem kenar rengini korur, sadece kalınlaşır */
 
-  strokeHighlight: landingColors.bgMid,
+  strokeHighlight: landingColors.electricBlue,
 
   strokeWidthHighlight: 3.5,
 
@@ -67,7 +67,28 @@ export function getParcelMapLayerStyle(
 
 /** Mapbox Static API simplestyle */
 
-export function getParcelStaticMapFeatureProps(selected = true) {
+export function getParcelStaticMapFeatureProps(
+  selected = true,
+  custom?: ParcelPolygonDesignConfig | null
+) {
+
+  if (custom) {
+
+    return {
+
+      stroke: custom.strokeColor,
+
+      "stroke-width": selected ? custom.strokeWidth + 1 : custom.strokeWidth,
+
+      "stroke-opacity": 1,
+
+      fill: custom.fillColor,
+
+      "fill-opacity": Math.max(0, Math.min(1, custom.fillOpacity)),
+
+    };
+
+  }
 
   return {
 

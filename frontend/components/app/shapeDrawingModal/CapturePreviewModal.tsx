@@ -14,6 +14,7 @@ import {
   Dimensions,
   Alert,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import type { CaptureItem } from "@/src/utils/captureGallery";
 import { shareManyImages } from "@/src/utils/handlers/modelEditorShareHandler";
@@ -26,6 +27,7 @@ type Props = {
 };
 
 export const CapturePreviewModal: React.FC<Props> = ({ visible, item, onClose, onDelete }) => {
+  const insets = useSafeAreaInsets();
   if (!visible || !item) return null;
 
   const handleShare = async () => {
@@ -46,7 +48,7 @@ export const CapturePreviewModal: React.FC<Props> = ({ visible, item, onClose, o
               resizeMode="contain"
             />
           </View>
-          <View style={styles.actions}>
+          <View style={[styles.actions, { paddingBottom: Math.max(insets.bottom, 16) + 12 }]}>
             <TouchableOpacity style={styles.actionButton} onPress={handleShare}>
               <Ionicons name="share-outline" size={22} color="#fff" />
               <Text style={styles.actionText}>Paylaş</Text>

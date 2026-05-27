@@ -129,7 +129,7 @@ export default function UserMenuSheetList({
                 <View style={st.iconWrap}>
                   <Ionicons name="briefcase-outline" size={20} color={subIconColor} />
                 </View>
-                <Text style={st.itemText}>İşlerim</Text>
+                <Text style={st.itemText}>AI İşlerim</Text>
               </TouchableOpacity>
             </>
           )}

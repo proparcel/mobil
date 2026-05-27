@@ -11,6 +11,7 @@ import {
   fetchStaticMapBase64,
   staticMapBase64ToDataUrl,
 } from './staticMapCapture';
+import type { ParcelPolygonDesignConfig } from '../constants/parcelPolygonDesign';
 import {
   extractProQueryIdentifiers,
   resolveDfaSnapshotId,
@@ -33,6 +34,7 @@ export type CaptureProQueryMapParams = {
   normalizedGeometry: any | null;
   snapshotId?: number | null;
   identifiers?: ProQueryIdentifiers;
+  parcelDesign?: ParcelPolygonDesignConfig | null;
 };
 
 async function uriToDataUrl(uri: string): Promise<string> {
@@ -83,7 +85,7 @@ export async function captureAndUploadProQueryMapImage(
   }
 
   if (params.normalizedGeometry) {
-    const b64 = await fetchStaticMapBase64(params.normalizedGeometry);
+    const b64 = await fetchStaticMapBase64(params.normalizedGeometry, params.parcelDesign);
     if (b64) {
       const ok = await uploadMapImageDataUrl(
         staticMapBase64ToDataUrl(b64),

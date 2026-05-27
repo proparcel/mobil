@@ -632,20 +632,28 @@ export async function ensureCachedModelUri(params: {
       });
 
       const res: any = await Promise.race([downloadPromise, timeoutPromise]);
-      
-      // İndirme sonucunu kontrol et
+
       const statusCode = res?.statusCode;
-      if (statusCode !== 200) {
-        const errorMsg = statusCode 
-          ? `İndirme başarısız: HTTP ${statusCode} - ${url.substring(0, 60)}`
-          : `İndirme başarısız: statusCode yok - ${url.substring(0, 60)}`;
-        throw new Error(errorMsg);
-      }
-      
-      // Tmp dosyanın oluştuğunu kontrol et
       const tmpExists = await RNFS.exists(tmpPath);
-      if (!tmpExists) {
-        throw new Error(`İndirme tamamlandı ama tmp dosya oluşmadı: ${tmpPath}`);
+      let tmpSize = 0;
+      if (tmpExists) {
+        try {
+          const st = await RNFS.stat(tmpPath);
+          tmpSize = st && typeof st.size === "number" ? st.size : 0;
+        } catch {
+          tmpSize = 0;
+        }
+      }
+
+      // Android RNFS bazen statusCode döndürmez; dosya var ve boyutu >0 ise kabul et.
+      if (statusCode && statusCode >= 400) {
+        throw new Error(`İndirme başarısız: HTTP ${statusCode} - ${url.substring(0, 60)}`);
+      }
+      if (!tmpExists || tmpSize <= 0) {
+        const errorMsg = statusCode
+          ? `İndirme başarısız: HTTP ${statusCode}, dosya yok/boş - ${url.substring(0, 60)}`
+          : `İndirme başarısız: dosya oluşmadı - ${url.substring(0, 60)}`;
+        throw new Error(errorMsg);
       }
       
       uri = tmpUri;

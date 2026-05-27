@@ -334,7 +334,7 @@ CombinedScreenshotContainer.displayName = 'CombinedScreenshotContainer';
 const styles = StyleSheet.create({
   brandOverlay: {
     position: 'absolute',
-    top: 15,
+    top: 35,
     right: 15,
     backgroundColor: 'rgba(30, 41, 59, 0.7)',
     paddingHorizontal: 10,

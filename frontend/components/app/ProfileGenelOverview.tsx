@@ -24,6 +24,7 @@ import {
 import { getPortalUserAgentRatings } from "../../services/portalService";
 import { useRouter } from "../../src/hooks/useNavigation";
 import type { ProfileSectionId } from "./profileSectionTypes";
+import { withProfileReturn } from "../../src/utils/profileReturnNavigation";
 
 const SW = Dimensions.get("window").width;
 /**
@@ -124,6 +125,8 @@ export type GenelSubTab = "all" | "user" | "ratings";
 type Props = {
   userId: number;
   onOpenProfileSection: (id: ProfileSectionId) => void;
+  /** Profil hamburger menüsü — tüm bölümler (ProfileMenuSheet). */
+  onOpenProfileMenu?: () => void;
   /** Başka kullanıcının profili: ilan/kullanım kısayolları gizlenir (web ziyaretçi görünümü). */
   visitorMode?: boolean;
 };
@@ -131,6 +134,7 @@ type Props = {
 export default function ProfileGenelOverview({
   userId,
   onOpenProfileSection,
+  onOpenProfileMenu,
   visitorMode = false,
 }: Props) {
   const router = useRouter();
@@ -228,7 +232,7 @@ export default function ProfileGenelOverview({
   const openSystemDetail = (item: QuarterSocialPost) => {
     const nav = getQuarterSocialNativeDetailNav(item);
     if (nav) {
-      router.push("son-30-gun-detay", nav);
+      router.push("son-30-gun-detay", withProfileReturn(nav, "genel"));
       return;
     }
     const detailUrl =
@@ -344,7 +348,16 @@ export default function ProfileGenelOverview({
         <>
           <Text style={s.sectionTitle}>Hızlı erişim</Text>
           <View style={s.shortcuts}>
-            <TouchableOpacity style={s.shortcutBtn} onPress={() => router.push("badges")}>
+            {onOpenProfileMenu ? (
+              <TouchableOpacity style={s.shortcutBtn} onPress={onOpenProfileMenu} activeOpacity={0.85}>
+                <Ionicons name="menu-outline" size={20} color={COLORS.accent} />
+                <Text style={s.shortcutTxt}>Tümü</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              style={s.shortcutBtn}
+              onPress={() => router.push("badges", withProfileReturn({}, "genel"))}
+            >
               <Ionicons name="ribbon-outline" size={20} color={COLORS.accent} />
               <Text style={s.shortcutTxt}>Rozetler</Text>
             </TouchableOpacity>

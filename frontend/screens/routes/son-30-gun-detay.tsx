@@ -33,11 +33,18 @@ import PortalFruitInvestmentCard from '../../components/app/PortalFruitInvestmen
 import PortalSolarEnergyCard from '../../components/app/PortalSolarEnergyCard';
 import PortalWindEnergyCard from '../../components/app/PortalWindEnergyCard';
 import ListingDescriptionRich from '../../components/app/ListingDescriptionRich';
+import ListingHeroVideoSlide from '../../components/app/ListingHeroVideoSlide';
+import ListingFullscreenVideo from '../../components/app/ListingFullscreenVideo';
 import PortalSlopeTerrainCard from '../../components/app/PortalSlopeTerrainCard';
 import PortalParcelSplitDetailCard from '../../components/app/PortalParcelSplitDetailCard';
 import PortalDfaTableCard from '../../components/app/PortalDfaTableCard';
 import { formatListingAttributeValueTr, listingAttributeLabelTr } from '../../src/utils/listingAttributeLabels';
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
+import {
+  isProfileReturn,
+  navigateBackFromProfileChild,
+  type ProfileReturnRouteParams,
+} from '../../src/utils/profileReturnNavigation';
 import {
   PORTAL_RECENT_QUERIES_CHANGED,
   type PortalRecentQueriesChangedPayload,
@@ -78,9 +85,39 @@ import type {
 } from '../../src/types/portal';
 import { normalizeParcelShapeLabel } from '../../src/utils/normalizeParcelShapeLabel';
 import { API_URL, FALLBACK_API_URL } from '../../config/api';
-import { portalPageUrl } from '../../config/portalSite';
+import { portalDetailShareMessageUrl } from '../../config/portalSite';
+import {
+  buildPortalDetailLoginReturn,
+  isPortalAuthRequired,
+  isPortalRateLimited,
+} from '../../src/utils/portalDetailAuth';
+import { getParcelMapLayerStyle } from '../../src/constants/parcelMapStyle';
+import { buildStaticMapImageUrl } from '../../src/utils/staticMapCapture';
+import { buildPortalParcelMapLabelProperty } from '../../src/utils/parcelShareLabels';
+import { portalDetailToShareParcelData } from '../../src/utils/portalDetailToShareParcelData';
+import { shareParcelLinkOnly } from '../../src/utils/designedParcelShare';
+import { useDesignedParcelShare } from '../../src/hooks/useDesignedParcelShare';
+import DesignedParcelShareHost from '../../components/app/DesignedParcelShareHost';
 import RNFS from 'react-native-fs';
+import {
+  enrichMorphologyForDisplay,
+  resolvePortalAvgSlopeFromSectionPayload,
+} from '../../src/utils/slopeTerrainHelpers';
 import { createEdgeMeasurementFeatures, type EdgeMeasureData, type EdgeMeasurementFeature } from '../../src/utils/edgeMeasurementsManager';
+import {
+  ELECTRIC_LEGAL_INFO,
+  ELECTRIC_LINE_COLOR,
+  buildElectricLineFeatureCollection,
+  buildElectricLineSummary,
+  computeElectricLineBounds,
+  electricVoltageClassLabel,
+  formatElectricAreaDisplay,
+  formatElectricVoltageDisplay,
+  hasElectricLineCoords,
+  hasElectricLineData,
+  parseElectricVoltage,
+  readElectricIsExist,
+} from '../../src/utils/portalElectricLine';
 
 let Mapbox: any = null;
 let RasterDemSource: any = null;
@@ -674,19 +711,6 @@ function resolveImageUrl(url: string | null | undefined): string | null {
   return `${base}/${url.replace(/^\//, '')}`;
 }
 
-/** react-native-video: HLS/DASH için `type` gerekir; aksi halde oynatma başlamayabilir */
-function buildVideoSource(uri: string): { uri: string; type?: string } {
-  const u = uri.trim();
-  const path = u.split('?')[0].toLowerCase();
-  if (path.endsWith('.m3u8') || path.includes('.m3u8')) {
-    return { uri: u, type: 'm3u8' };
-  }
-  if (path.endsWith('.mpd')) {
-    return { uri: u, type: 'mpd' };
-  }
-  return { uri: u };
-}
-
 // ── Polygon simplification (same as report_mobil_viewver) ──
 
 function simplifyPolygonCoords(coords: number[][], tolerance: number): number[][] {
@@ -1079,15 +1103,9 @@ function getStaticMapUrl(coords: number[][] | null): string | null {
   if (!MAPBOX_TOKEN || !coords || coords.length < 3) return null;
   const geom = coordsToGeometry(coords);
   if (!geom) return null;
-  const featureProps = { stroke: '#ef4444', 'stroke-width': 2, 'stroke-opacity': 1, fill: '#22c55e', 'fill-opacity': 0.25 };
-  const feature = { type: 'Feature', properties: featureProps, geometry: geom };
-  const encoded = encodeURIComponent(JSON.stringify(feature));
-  if (encoded.length > 6000) {
-    const center = calcCenterFromCoords(coords);
-    if (!center) return null;
-    return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${center[0]},${center[1]},16,0/${SCREEN_WIDTH * 2}x500@2x?access_token=${MAPBOX_TOKEN}`;
-  }
-  return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${encoded})/auto/${SCREEN_WIDTH * 2}x500@2x?access_token=${MAPBOX_TOKEN}&padding=40`;
+  const size = `${Math.min(SCREEN_WIDTH * 2, 1600)}x500@2x`;
+  const url = buildStaticMapImageUrl(geom, null, size);
+  return url || null;
 }
 
 // ── Main Screen ──
@@ -1101,8 +1119,15 @@ export default function Son30GunDetayScreen() {
     ratingId?: string;
     listingId?: string;
     fromProQuery?: string;
-  }>();
-  const { user, isAuthenticated } = useAuth();
+  } & ProfileReturnRouteParams>();
+  const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
+  const {
+    shareDesignedParcel,
+    combinedContainerRef: shareCombinedRef,
+    capturedMapUri: shareCapturedMapUri,
+    activeCapture: shareActiveCapture,
+  } = useDesignedParcelShare();
+  const parcelMapLayerStyle = useMemo(() => getParcelMapLayerStyle(true), []);
   const expertSectionRef = useRef<View>(null);
   const scrollRef = useRef<ScrollView>(null);
   const bilgiSectionRef = useRef<View>(null);
@@ -1118,6 +1143,7 @@ export default function Son30GunDetayScreen() {
   const snapshotId = params.snapshotId ? parseInt(params.snapshotId, 10) : NaN;
   const targetCommentId = params.commentId ? parseInt(params.commentId, 10) : null;
   const [detailMenuVisible, setDetailMenuVisible] = useState(false);
+  const [shareMenuVisible, setShareMenuVisible] = useState(false);
   const [detailMenuLihkabOpen, setDetailMenuLihkabOpen] = useState(false);
   const [activeDetailTabId, setActiveDetailTabId] = useState<string>('overview');
   const [solarEnergyPayload, setSolarEnergyPayload] = useState<PortalSolarEnergyScoreResponse | null>(null);
@@ -1155,6 +1181,8 @@ export default function Son30GunDetayScreen() {
   const [error, setError] = useState<string | null>(null);
   const detailLoadedRef = useRef(false);
   const detailFetchSeqRef = useRef(0);
+  const detailFetchSnapshotRef = useRef<number | null>(null);
+  const redirectToLoginForDetailRef = useRef<() => void>(() => {});
   const [expertModalOpen, setExpertModalOpen] = useState(false);
   const [expertNote, setExpertNote] = useState('');
   const [expertPrice, setExpertPrice] = useState<string>('');
@@ -1166,27 +1194,24 @@ export default function Son30GunDetayScreen() {
   const [roadOverrideSelections, setRoadOverrideSelections] = useState<RoadOverrideSelectionMobile[]>([]);
   const [roadFocusedEdgeId, setRoadFocusedEdgeId] = useState<number | null>(null);
   const [roadRerunSubmitting, setRoadRerunSubmitting] = useState(false);
-  // Electric line map page
-  const [electricMapVisible, setElectricMapVisible] = useState(false);
+  // Electric override map (Hat Bildir — kullanıcı çizimi)
+  const [electricOverrideMapVisible, setElectricOverrideMapVisible] = useState(false);
   const [electricOverrideLines, setElectricOverrideLines] = useState<ElectricOverrideLineMobile[]>([]);
   const [electricDraftStart, setElectricDraftStart] = useState<[number, number] | null>(null);
   const [electricDraftCursor, setElectricDraftCursor] = useState<[number, number] | null>(null);
   const [electricSelectedVoltageKv, setElectricSelectedVoltageKv] = useState<64 | 154 | 380>(64);
+  const [electricSectionData, setElectricSectionData] = useState<Record<string, unknown> | null>(null);
+  const [electricSectionLoading, setElectricSectionLoading] = useState(false);
+  const [electricSectionErr, setElectricSectionErr] = useState<string | null>(null);
+  const electricSectionFetchedRef = useRef(false);
+  const heroCameraRef = useRef<any>(null);
   /** Üst bölüm: ilan görselleri önce; harita ayrı sekmede. */
   const [heroTopTab, setHeroTopTab] = useState<'images' | 'map'>('map');
   const heroTopDefaultAppliedRef = useRef(false);
   const [heroGalleryIndex, setHeroGalleryIndex] = useState(0);
   const heroGalleryListRef = useRef<FlatList<HeroListingMediaItem>>(null);
-  /** true = kullanıcı durdurdu; undefined = varsayılan oynat; false = açıkça oynat (ilk dokunuş / takılı kurtarma) */
-  const [heroVideoPausedByIndex, setHeroVideoPausedByIndex] = useState<Record<number, boolean>>({});
-  /** Dokunuşla Video yeniden mount (otomatik oynatma takılınca) */
-  const [heroVideoTapNonce, setHeroVideoTapNonce] = useState<Record<number, number>>({});
-  /** Galeri önizlemesinde ses kapalı başlar; kullanıcı hoparlör ile açar (otomatik ses politikası) */
+  /** Galeri önizlemesinde ses kapalı başlar; kullanıcı hoparlör ile açar */
   const [heroVideoMuted, setHeroVideoMuted] = useState(true);
-  const [heroVideoMediaStatus, setHeroVideoMediaStatus] = useState<
-    Record<number, 'loading' | 'ready' | 'error'>
-  >({});
-  const [heroVideoPosterDismissed, setHeroVideoPosterDismissed] = useState<Record<number, boolean>>({});
 
   // Map page with 2D/3D toggle
   const [mapPageVisible, setMapPageVisible] = useState(false);
@@ -1273,10 +1298,52 @@ export default function Son30GunDetayScreen() {
     }
   }, [detailTabDefs, activeDetailTabId]);
 
+  const redirectToLoginForDetail = useCallback(() => {
+    if (!Number.isFinite(snapshotId)) {
+      router.replace('login');
+      return;
+    }
+    router.replace(
+      'login',
+      buildPortalDetailLoginReturn({
+        snapshotId,
+        listingId: paramListingId,
+        commentId: params.commentId,
+        ratingId: params.ratingId,
+        fromProQuery: params.fromProQuery,
+      }),
+    );
+  }, [
+    router,
+    snapshotId,
+    paramListingId,
+    params.commentId,
+    params.ratingId,
+    params.fromProQuery,
+  ]);
+
+  redirectToLoginForDetailRef.current = redirectToLoginForDetail;
+
+  const loginRedirectPendingRef = useRef(false);
+
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isAuthenticated && Number.isFinite(snapshotId)) {
+      if (loginRedirectPendingRef.current) return;
+      loginRedirectPendingRef.current = true;
+      redirectToLoginForDetail();
+      return;
+    }
+    loginRedirectPendingRef.current = false;
+  }, [isAuthenticated, isAuthLoading, snapshotId, redirectToLoginForDetail]);
+
   // Portal detay — tam ekran loading yok; ilk açılışta kabuk, veri arka planda gelir
   const loadDetail = useCallback(async (opts?: { silent?: boolean }) => {
     if (!Number.isFinite(snapshotId)) {
       setError('Geçersiz sorgu ID');
+      return;
+    }
+    if (!isAuthenticated) {
       return;
     }
     const silent = opts?.silent ?? detailLoadedRef.current;
@@ -1292,18 +1359,45 @@ export default function Son30GunDetayScreen() {
       setData(res.data);
       setError(null);
       detailLoadedRef.current = true;
-    } else if (!detailLoadedRef.current) {
-      setError(res.error || 'Bir hata oluştu');
+      detailFetchSnapshotRef.current = snapshotId;
+    } else if (!detailLoadedRef.current || !silent) {
+      if (isPortalRateLimited(res.status, res.error)) {
+        setError(res.error || 'Çok fazla istek. Lütfen bir dakika bekleyin.');
+        return;
+      }
+      if (isPortalAuthRequired(res.status, res.error)) {
+        if (!isAuthenticated) {
+          redirectToLoginForDetailRef.current();
+        } else {
+          setError('Oturum doğrulanamadı. Lütfen tekrar giriş yapın.');
+        }
+        return;
+      }
+      if (!detailLoadedRef.current) {
+        setError(res.error || 'Bir hata oluştu');
+      }
     }
-  }, [snapshotId]);
+  }, [snapshotId, isAuthenticated]);
 
   useEffect(() => {
-    detailLoadedRef.current = false;
-    detailFetchSeqRef.current = 0;
-    setData(null);
-    setError(null);
-    loadDetail({ silent: false });
-  }, [snapshotId, loadDetail]);
+    if (isAuthLoading || !isAuthenticated) return;
+    if (!Number.isFinite(snapshotId)) return;
+
+    const snapshotChanged = detailFetchSnapshotRef.current !== snapshotId;
+    if (!snapshotChanged && detailLoadedRef.current) {
+      return;
+    }
+
+    if (snapshotChanged) {
+      detailLoadedRef.current = false;
+      detailFetchSeqRef.current = 0;
+      detailFetchSnapshotRef.current = snapshotId;
+      setData(null);
+      setError(null);
+    }
+
+    void loadDetail({ silent: false });
+  }, [snapshotId, isAuthenticated, isAuthLoading, loadDetail]);
 
   /** Pro sorgudan sonra: tek sessiz yenileme (thumbnail / DFA gecikmesi) */
   useEffect(() => {
@@ -1333,11 +1427,14 @@ export default function Son30GunDetayScreen() {
     setRoadReportModalVisible(false);
     setRoadOverrideSelections([]);
     setRoadFocusedEdgeId(null);
-    setElectricMapVisible(false);
+    setElectricOverrideMapVisible(false);
     setElectricOverrideLines([]);
     setElectricDraftStart(null);
     setElectricDraftCursor(null);
     setElectricSelectedVoltageKv(64);
+    setElectricSectionData(null);
+    setElectricSectionErr(null);
+    electricSectionFetchedRef.current = false;
     setSolarEnergyPayload(null);
     setSolarEnergyErr(null);
     solarEnergyFetchedRef.current = false;
@@ -1347,11 +1444,7 @@ export default function Son30GunDetayScreen() {
     setSplitAnalysis(null);
     setSplitErr(null);
     splitFetchedRef.current = false;
-    setHeroVideoPausedByIndex({});
-    setHeroVideoTapNonce({});
     setHeroVideoMuted(true);
-    setHeroVideoMediaStatus({});
-    setHeroVideoPosterDismissed({});
   }, [snapshotId]);
 
   useEffect(() => {
@@ -1455,6 +1548,39 @@ export default function Son30GunDetayScreen() {
   }, [activeDetailTabId, data?.snapshot_id, snapshotId]);
 
   useEffect(() => {
+    if (activeDetailTabId !== 'electric') return;
+    const sid = Number(data?.snapshot_id ?? snapshotId);
+    if (!Number.isFinite(sid) || sid <= 0) return;
+    if (electricSectionFetchedRef.current) return;
+    electricSectionFetchedRef.current = true;
+    let cancelled = false;
+    setElectricSectionLoading(true);
+    setElectricSectionErr(null);
+    getPortalDetailSection(sid, 'electric')
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok && res.data) {
+          setElectricSectionData(res.data);
+        } else {
+          setElectricSectionErr(res.error || 'Yüksek gerilim verisi alınamadı');
+          electricSectionFetchedRef.current = false;
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setElectricSectionErr(e instanceof Error ? e.message : 'Hata');
+          electricSectionFetchedRef.current = false;
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setElectricSectionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDetailTabId, data?.snapshot_id, snapshotId]);
+
+  useEffect(() => {
     if (!data || heroTopDefaultAppliedRef.current) return;
     const urls = Array.isArray(data.listing_media)
       ? data.listing_media.filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
@@ -1479,7 +1605,11 @@ export default function Son30GunDetayScreen() {
       }) as PortalQueryDetail,
     [snapshotId],
   );
-  const scores = usePortalDetailScoresData(Number.isFinite(snapshotId) ? snapshotId : 0, data ?? detailStub);
+  const scores = usePortalDetailScoresData(
+    Number.isFinite(snapshotId) ? snapshotId : 0,
+    data ?? detailStub,
+    Boolean(data),
+  );
 
   // Load profile info for PDF
   useEffect(() => {
@@ -1571,6 +1701,31 @@ export default function Son30GunDetayScreen() {
     () => resolveImageUrl(profileInfo.companyLogoUrl || null),
     [profileInfo.companyLogoUrl],
   );
+  const shouldDetailBackOpenHome = useMemo(() => {
+    if (!isAuthenticated) return true;
+    const memberType = String(user?.member_type || '').toLowerCase();
+    const role = String(user?.role || '').toLowerCase();
+    const isBusinessUser =
+      memberType === 'consultant' ||
+      memberType === 'corporate' ||
+      memberType === 'expert' ||
+      role === 'admin' ||
+      role === 'consultant' ||
+      role === 'broker';
+    return !isBusinessUser;
+  }, [isAuthenticated, user]);
+
+  const handleHeaderBack = useCallback(() => {
+    if (isProfileReturn(params)) {
+      navigateBackFromProfileChild(router, params);
+      return;
+    }
+    if (shouldDetailBackOpenHome) {
+      router.replace('index');
+      return;
+    }
+    router.back();
+  }, [router, params, shouldDetailBackOpenHome]);
 
   // ── Handlers ──
 
@@ -1580,6 +1735,15 @@ export default function Son30GunDetayScreen() {
       snapshotId: String(data.snapshot_id),
     });
   }, [data, router]);
+
+  const shareLinkUrl = useMemo(() => {
+    const sid = data?.snapshot_id ?? (Number.isFinite(snapshotId) ? snapshotId : null);
+    return portalDetailShareMessageUrl({
+      listingId: effectiveListingId || paramListingId,
+      snapshotId: sid,
+      preferListing: Boolean(paramListingId),
+    });
+  }, [data?.snapshot_id, snapshotId, effectiveListingId, paramListingId]);
 
   const handleSharePdf = useCallback(() => {
     if (!data) return;
@@ -1592,29 +1756,42 @@ export default function Son30GunDetayScreen() {
     });
   }, [data, router]);
 
+  const handleShareLink = useCallback(async () => {
+    if (!shareLinkUrl) {
+      Alert.alert('Paylaş', 'Paylaşılacak link bulunamadı.');
+      return;
+    }
+    if (data?.parcel_coords_lonlat) {
+      const geom = coordsToGeometry(data.parcel_coords_lonlat);
+      if (geom) {
+        const sharedWithImage = await shareDesignedParcel({
+          parcelData: portalDetailToShareParcelData(data),
+          shareLink: shareLinkUrl,
+          staticMapGeometry: geom,
+          isProMode: true,
+        });
+        if (sharedWithImage) return;
+      }
+    }
+    await shareParcelLinkOnly(shareLinkUrl);
+  }, [data, shareLinkUrl, shareDesignedParcel]);
+
   const handleShareMenu = useCallback(() => {
     if (!data) return;
-    const listingUrl = effectiveListingId ? portalPageUrl(`/portal/ilan/${effectiveListingId}/`) : '';
-    const actions: { text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }[] = [];
-    if (listingUrl) {
-      actions.push({
-        text: 'İlan linkini paylaş',
-        onPress: () => {
-          Share.share({ message: listingUrl, title: 'ProParcel' }).catch(() => {});
-        },
-      });
-    }
-    actions.push({
-      text: 'PDF paylaş',
-      onPress: () => handleSharePdf(),
-    });
-    actions.push({ text: 'İptal', style: 'cancel' });
-    Alert.alert(
-      'Paylaş',
-      listingUrl ? 'Ne paylaşmak istersiniz?' : 'PDF raporunu paylaşın.',
-      actions,
-    );
-  }, [data, effectiveListingId, handleSharePdf]);
+    setShareMenuVisible(true);
+  }, [data]);
+
+  const closeShareMenu = useCallback(() => setShareMenuVisible(false), []);
+
+  const onShareLinkPress = useCallback(() => {
+    closeShareMenu();
+    setTimeout(() => handleShareLink(), 280);
+  }, [closeShareMenu, handleShareLink]);
+
+  const onSharePdfPress = useCallback(() => {
+    closeShareMenu();
+    setTimeout(() => handleSharePdf(), 280);
+  }, [closeShareMenu, handleSharePdf]);
 
   const handleOpenSocialMediaTemplate = useCallback(() => {
     if (!isAuthenticated) {
@@ -1642,7 +1819,20 @@ export default function Son30GunDetayScreen() {
           'Favorilere eklemek için giriş yapın.',
           [
             { text: 'İptal', style: 'cancel' },
-            { text: 'Giriş yap', onPress: () => router.push('login') },
+            {
+              text: 'Giriş yap',
+              onPress: () =>
+                router.replace(
+                  'login',
+                  buildPortalDetailLoginReturn({
+                    snapshotId: sid,
+                    listingId: paramListingId,
+                    commentId: params.commentId,
+                    ratingId: params.ratingId,
+                    fromProQuery: params.fromProQuery,
+                  }),
+                ),
+            },
           ],
         );
         return;
@@ -1761,7 +1951,7 @@ export default function Son30GunDetayScreen() {
         return;
       }
       setRoadReportModalVisible(false);
-      setElectricMapVisible(false);
+      setElectricOverrideMapVisible(false);
       setRoadOverrideSelections([]);
       setRoadFocusedEdgeId(null);
       setElectricOverrideLines([]);
@@ -2392,11 +2582,81 @@ export default function Son30GunDetayScreen() {
     return {
       type: 'Feature' as const,
       properties: {
-        label: `${data.ada || '0'}/${data.parsel || '0'}\n${formatArea(data.arazi_m2 ?? data.area_m2)}\n${data.unit_price ? Math.round(data.unit_price).toLocaleString('tr-TR') + ' ₺/m²' : ''}`,
+        label: buildPortalParcelMapLabelProperty(data),
       },
       geometry: parcelGeom,
     };
   }, [data, parcelGeom]);
+
+  const electricValuesResolved = useMemo(() => {
+    const fromSection = electricSectionData?.electric_values;
+    return (fromSection ?? data?.electric_values ?? {}) as Record<string, unknown>;
+  }, [electricSectionData, data?.electric_values]);
+
+  const electricLineFeatureResolved = useMemo(
+    () => electricSectionData?.electric_line_feature ?? data?.electric_line_feature ?? null,
+    [electricSectionData, data?.electric_line_feature],
+  );
+
+  const heroElectricLineGeoJSON = useMemo(() => {
+    if (activeDetailTabId !== 'electric') return null;
+    return buildElectricLineFeatureCollection(electricLineFeatureResolved, electricValuesResolved);
+  }, [activeDetailTabId, electricLineFeatureResolved, electricValuesResolved]);
+
+  const electricHasLineCoords = useMemo(
+    () => hasElectricLineCoords(electricLineFeatureResolved, electricValuesResolved),
+    [electricLineFeatureResolved, electricValuesResolved],
+  );
+
+  const electricHasLine = useMemo(
+    () => hasElectricLineData({
+      electricLineFeature: electricLineFeatureResolved,
+      electricValues: electricValuesResolved,
+      lineOverlay: heroElectricLineGeoJSON ? [{ id: 'electric-line' }] : [],
+    }),
+    [electricLineFeatureResolved, electricValuesResolved, heroElectricLineGeoJSON],
+  );
+
+  const electricLineSummaryText = useMemo(
+    () => buildElectricLineSummary({
+      electricValues: electricValuesResolved,
+      electricLineFeature: electricLineFeatureResolved,
+      hasElectricLine: electricHasLine,
+    }),
+    [electricValuesResolved, electricLineFeatureResolved, electricHasLine],
+  );
+
+  useEffect(() => {
+    if (activeDetailTabId !== 'electric') return;
+    if (electricHasLineCoords) setHeroTopTab('map');
+  }, [activeDetailTabId, electricHasLineCoords]);
+
+  useEffect(() => {
+    if (activeDetailTabId !== 'electric' || !electricHasLineCoords) return;
+    const bounds = computeElectricLineBounds(
+      electricLineFeatureResolved,
+      electricValuesResolved,
+      data?.parcel_coords_lonlat ?? null,
+    );
+    if (!bounds) return;
+    const timer = setTimeout(() => {
+      try {
+        if (typeof heroCameraRef.current?.fitBounds === 'function') {
+          heroCameraRef.current.fitBounds(bounds[0], bounds[1], 60, 400);
+        }
+      } catch {
+        // fallback: default camera
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [
+    activeDetailTabId,
+    electricHasLineCoords,
+    electricLineFeatureResolved,
+    electricValuesResolved,
+    data?.parcel_coords_lonlat,
+    heroElectricLineGeoJSON,
+  ]);
 
   // ── Emsal (comparable) parcels from expert responses ──
   const expertResponsesForEmsal = data?.expert?.responses || [];
@@ -2482,6 +2742,22 @@ export default function Son30GunDetayScreen() {
     return [...videoItems, ...imageItems];
   }, [data]);
 
+  useEffect(() => {
+    for (const media of heroListingMediaItems) {
+      if (media.kind === 'video' && media.posterUrl) {
+        Image.prefetch(media.posterUrl).catch(() => {});
+      }
+    }
+  }, [heroListingMediaItems]);
+
+  const videoFullscreenPoster = useMemo(() => {
+    if (!videoFullscreenUri) return null;
+    const match = heroListingMediaItems.find(
+      (m) => m.kind === 'video' && m.videoUrl === videoFullscreenUri,
+    );
+    return match?.kind === 'video' ? match.posterUrl : null;
+  }, [videoFullscreenUri, heroListingMediaItems]);
+
   const openHeroViewerAtIndex = useCallback(
     (heroIndex: number) => {
       const item = heroListingMediaItems[heroIndex];
@@ -2499,13 +2775,16 @@ export default function Son30GunDetayScreen() {
     [heroListingMediaItems],
   );
 
+  const awaitingAuthRedirect =
+    isAuthLoading || (!isAuthenticated && Number.isFinite(snapshotId));
+
   // ── İlk yükleme / hata: tam ekran “Yükleniyor” yok; yalnızca kabuk + satır içi gösterge ──
   if (!data) {
     return (
       <SafeAreaView style={s.safeArea} edges={['top']}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.headerBg} />
         <View style={s.header}>
-          <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
+          <TouchableOpacity onPress={handleHeaderBack} style={s.headerBtn}>
             <Ionicons name="arrow-back" size={18} color="#f8fafc" />
           </TouchableOpacity>
           <View style={s.headerCenter}>
@@ -2514,7 +2793,7 @@ export default function Son30GunDetayScreen() {
           <View style={s.headerRight} />
         </View>
         <View style={s.centerContainer}>
-          {error ? (
+          {error && !awaitingAuthRedirect ? (
             <>
               <Ionicons name="alert-circle-outline" size={48} color={COLORS.dangerRed} />
               <Text style={s.errorText}>{error}</Text>
@@ -2903,7 +3182,7 @@ export default function Son30GunDetayScreen() {
   }
 
   // ── Electric Line Map Full Page ──
-  if (electricMapVisible && data.parcel_coords_lonlat && data.parcel_coords_lonlat.length > 0) {
+  if (electricOverrideMapVisible && data.parcel_coords_lonlat && data.parcel_coords_lonlat.length > 0) {
     const coords = data.parcel_coords_lonlat;
     const ring = coords.map(c => [c[0], c[1]] as [number, number]);
     const closedRing = ring.length > 0 && (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1])
@@ -2953,7 +3232,7 @@ export default function Son30GunDetayScreen() {
       <SafeAreaView style={s.safeArea} edges={['top']}>
         <StatusBar barStyle="light-content" backgroundColor={COLORS.headerBg} />
         <View style={s.header}>
-          <TouchableOpacity onPress={() => setElectricMapVisible(false)} style={s.headerBtn}>
+          <TouchableOpacity onPress={() => setElectricOverrideMapVisible(false)} style={s.headerBtn}>
             <Ionicons name="arrow-back" size={18} color="#f8fafc" />
           </TouchableOpacity>
           <Text style={s.headerTitle}>Hat Bildir</Text>
@@ -3237,7 +3516,7 @@ export default function Son30GunDetayScreen() {
 
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
+        <TouchableOpacity onPress={handleHeaderBack} style={s.headerBtn}>
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
         </TouchableOpacity>
         <View style={s.headerCenter}>
@@ -3366,13 +3645,133 @@ export default function Son30GunDetayScreen() {
             </TouchableOpacity>
           </View>
         </View>
-        {heroListingMediaItems.length > 0 && heroTopTab === 'images' && (
-          <View style={[s.mapContainer, s.heroGalleryColumn]}>
+        <View
+          style={[
+            s.mapContainer,
+            heroListingMediaItems.length > 0 && heroTopTab === 'images' ? s.heroGalleryColumn : null,
+          ]}
+        >
+          {Mapbox && parcelGeom && parcelCenter && (
+            <View
+              style={[
+                StyleSheet.absoluteFillObject,
+                heroListingMediaItems.length > 0 && heroTopTab === 'images' ? s.heroMapLayerHidden : null,
+              ]}
+              pointerEvents={heroTopTab === 'map' ? 'auto' : 'none'}
+            >
+              <Mapbox.MapView
+                style={{ flex: 1 }}
+                styleURL="mapbox://styles/mapbox/satellite-streets-v12"
+                logoEnabled={false}
+                attributionEnabled={false}
+                scaleBarEnabled={false}
+              >
+                <Mapbox.Camera
+                  ref={heroCameraRef}
+                  defaultSettings={{ centerCoordinate: parcelCenter, zoomLevel: 17, animationDuration: 0 }}
+                />
+
+                {emsalGeoJSON && activeDetailTabId !== 'electric' && (
+                  <Mapbox.ShapeSource id="emsal-src" shape={emsalGeoJSON}>
+                    <Mapbox.FillLayer id="emsal-fill" style={{ fillColor: '#22c55e', fillOpacity: 0.25 }} />
+                    <Mapbox.LineLayer id="emsal-line" style={{ lineColor: '#15803d', lineWidth: 2.5, lineOpacity: 0.9 }} />
+                    <Mapbox.SymbolLayer
+                      id="emsal-label"
+                      style={{
+                        textField: ['get', 'label'],
+                        textSize: 10,
+                        textColor: '#15803d',
+                        textHaloColor: '#ffffff',
+                        textHaloWidth: 1.5,
+                        textAllowOverlap: true,
+                        textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                        textAnchor: 'center',
+                      }}
+                    />
+                  </Mapbox.ShapeSource>
+                )}
+
+                <Mapbox.ShapeSource id="parcel-src" shape={parcelGeoJSON}>
+                  <Mapbox.FillLayer
+                    id="parcel-fill"
+                    style={{
+                      fillColor: parcelMapLayerStyle.fillColor,
+                      fillOpacity: parcelMapLayerStyle.fillOpacity,
+                    }}
+                  />
+                  <Mapbox.LineLayer
+                    id="parcel-line"
+                    style={{
+                      lineColor: parcelMapLayerStyle.lineColor,
+                      lineWidth: parcelMapLayerStyle.lineWidth,
+                      lineOpacity: 1,
+                    }}
+                  />
+                  {activeDetailTabId !== 'electric' ? (
+                    <Mapbox.SymbolLayer
+                      id="parcel-label"
+                      style={{
+                        textField: ['get', 'label'],
+                        textSize: 12,
+                        textColor: '#ffffff',
+                        textHaloColor: '#000000',
+                        textHaloWidth: 2,
+                        textAllowOverlap: true,
+                        textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                        textAnchor: 'center',
+                      }}
+                    />
+                  ) : null}
+                </Mapbox.ShapeSource>
+
+                {heroElectricLineGeoJSON ? (
+                  <Mapbox.ShapeSource id="hero-electric-line-src" shape={heroElectricLineGeoJSON}>
+                    <Mapbox.LineLayer
+                      id="hero-electric-line-layer"
+                      style={{
+                        lineColor: ELECTRIC_LINE_COLOR,
+                        lineWidth: 4,
+                        lineOpacity: 0.9,
+                        lineDasharray: [2, 1],
+                      }}
+                    />
+                  </Mapbox.ShapeSource>
+                ) : null}
+              </Mapbox.MapView>
+
+              {(heroListingMediaItems.length === 0 || heroTopTab === 'map') && (
+                <>
+                  <View style={s.mapBadge}>
+                    <Text style={s.mapBadgeText}>
+                      {activeDetailTabId === 'electric' && heroElectricLineGeoJSON
+                        ? 'Elektrik Hat Haritası'
+                        : 'Sorgulanan Mülk'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={s.mapFullScreenBtn}
+                    onPress={() => setMapPageVisible(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="expand-outline" size={20} color="#fff" />
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          )}
+          {(!Mapbox || !parcelGeom) && mapUrl && (heroListingMediaItems.length === 0 || heroTopTab === 'map') && (
+            <View style={StyleSheet.absoluteFillObject}>
+              <Image source={{ uri: mapUrl }} style={s.mapImage} resizeMode="cover" />
+            </View>
+          )}
+          {heroListingMediaItems.length > 0 && heroTopTab === 'images' && (
+            <>
             <FlatList
               ref={heroGalleryListRef}
               data={heroListingMediaItems}
               horizontal
               pagingEnabled
+              windowSize={3}
               showsHorizontalScrollIndicator={false}
               nestedScrollEnabled
               removeClippedSubviews={false}
@@ -3401,126 +3800,18 @@ export default function Son30GunDetayScreen() {
               }}
               renderItem={({ item, index }) => {
                 if (item.kind === 'video') {
-                  const videoPaused =
-                    index !== heroGalleryIndex || heroVideoPausedByIndex[index] === true;
-                  const vStatus = heroVideoMediaStatus[index];
-                  const showHeroVideoLoading =
-                    index === heroGalleryIndex && vStatus === 'loading';
-                  const showHeroVideoError = vStatus === 'error';
-                  const posterUri =
-                    item.posterUrl && !heroVideoPosterDismissed[index]
-                      ? item.posterUrl
-                      : undefined;
                   return (
-                    <View style={s.heroGalleryPagerItem}>
-                      {VideoComponent ? (
-                        <VideoComponent
-                          key={`hero-v-${index}-${heroVideoTapNonce[index] ?? 0}-${item.videoUrl.slice(-32)}`}
-                          source={buildVideoSource(item.videoUrl)}
-                          style={StyleSheet.absoluteFillObject}
-                          resizeMode="cover"
-                          paused={videoPaused}
-                          muted={heroVideoMuted}
-                          volume={heroVideoMuted ? 0 : 1}
-                          repeat
-                          poster={posterUri}
-                          posterResizeMode="cover"
-                          hideShutterView={Platform.OS === 'android'}
-                          ignoreSilentSwitch={heroVideoMuted ? 'obey' : 'ignore'}
-                          mixWithOthers={heroVideoMuted ? 'inherit' : 'mix'}
-                          playInBackground={false}
-                          playWhenInactive={false}
-                          onLoadStart={() => {
-                            setHeroVideoMediaStatus((prev) => ({ ...prev, [index]: 'loading' }));
-                          }}
-                          onLoad={() => {
-                            setHeroVideoMediaStatus((prev) => ({ ...prev, [index]: 'ready' }));
-                            setHeroVideoPosterDismissed((prev) => ({ ...prev, [index]: true }));
-                          }}
-                          onError={(e: unknown) => {
-                            if (__DEV__) {
-                              console.warn('[son-30-gun-detay] hero video error', index, e);
-                            }
-                            setHeroVideoMediaStatus((prev) => ({ ...prev, [index]: 'error' }));
-                          }}
-                        />
-                      ) : item.posterUrl ? (
-                        <Image source={{ uri: item.posterUrl }} style={s.heroGalleryMainImg} resizeMode="cover" />
-                      ) : (
-                        <View style={[s.heroGalleryMainImg, s.heroVideoPosterFallback]}>
-                          <Ionicons name="videocam-outline" size={40} color="#64748b" />
-                        </View>
-                      )}
-                      {VideoComponent ? (
-                        <Pressable
-                          style={s.heroVideoTapOverlay}
-                          onPress={() => {
-                            if (index !== heroGalleryIndex) return;
-                            setHeroVideoPausedByIndex((prev) => {
-                              const p = prev[index];
-                              const next =
-                                p === true ? false : p === false ? true : false;
-                              const bumpNonce = p !== false;
-                              if (bumpNonce) {
-                                setHeroVideoTapNonce((n) => ({
-                                  ...n,
-                                  [index]: (n[index] ?? 0) + 1,
-                                }));
-                                setHeroVideoPosterDismissed((d) => ({ ...d, [index]: false }));
-                                setHeroVideoMediaStatus((st) => ({ ...st, [index]: 'loading' }));
-                              }
-                              return { ...prev, [index]: next };
-                            });
-                          }}
-                          accessibilityRole="button"
-                          accessibilityLabel={
-                            videoPaused ? 'Videoyu oynat' : 'Videoyu duraklat'
-                          }
-                        />
-                      ) : null}
-                      {VideoComponent && index === heroGalleryIndex && heroVideoPausedByIndex[index] === true ? (
-                        <View style={s.heroVideoPlayHint} pointerEvents="none">
-                          <Ionicons name="play-circle" size={56} color="rgba(255,255,255,0.92)" />
-                        </View>
-                      ) : null}
-                      {VideoComponent && showHeroVideoLoading ? (
-                        <View style={s.heroVideoLoadingOverlay} pointerEvents="none">
-                          <ActivityIndicator size="large" color="#fff" />
-                          <Text style={s.heroVideoLoadingText}>Video yükleniyor…</Text>
-                        </View>
-                      ) : null}
-                      {VideoComponent && showHeroVideoError ? (
-                        <View style={s.heroVideoErrorOverlay} pointerEvents="none">
-                          <Ionicons name="alert-circle-outline" size={40} color="#fecaca" />
-                          <Text style={s.heroVideoErrorText}>Video oynatılamadı</Text>
-                          <Text style={s.heroVideoErrorHint} numberOfLines={2}>
-                            Ağ veya biçim sorunu olabilir. Tam ekranı veya yeniden denemeyi deneyin.
-                          </Text>
-                        </View>
-                      ) : null}
-                      {VideoComponent ? (
-                        <TouchableOpacity
-                          style={s.heroVideoMuteBtn}
-                          onPress={() => setHeroVideoMuted((m) => !m)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityLabel={heroVideoMuted ? 'Sesi aç' : 'Sesi kapat'}
-                        >
-                          <Ionicons
-                            name={heroVideoMuted ? 'volume-mute' : 'volume-high'}
-                            size={22}
-                            color="#fff"
-                          />
-                        </TouchableOpacity>
-                      ) : null}
-                      <TouchableOpacity
-                        style={s.heroVideoFullscreenBtn}
-                        onPress={() => setVideoFullscreenUri(item.videoUrl)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="Tam ekran video"
-                      >
-                        <Ionicons name="expand-outline" size={22} color="#fff" />
-                      </TouchableOpacity>
-                    </View>
+                    <ListingHeroVideoSlide
+                      videoUrl={item.videoUrl}
+                      posterUrl={item.posterUrl}
+                      isActive={index === heroGalleryIndex}
+                      muted={heroVideoMuted}
+                      onToggleMute={() => setHeroVideoMuted((m) => !m)}
+                      onFullscreen={() => setVideoFullscreenUri(item.videoUrl)}
+                      VideoComponent={VideoComponent}
+                      slideWidth={SCREEN_WIDTH}
+                      slideHeight={HERO_GALLERY_MAIN_HEIGHT}
+                    />
                   );
                 }
                 return (
@@ -3568,86 +3859,9 @@ export default function Son30GunDetayScreen() {
                 })}
               </ScrollView>
             ) : null}
-          </View>
-        )}
-        {(heroListingMediaItems.length === 0 || heroTopTab === 'map') && (
-          <>
-            {Mapbox && parcelGeom && parcelCenter && (
-              <View style={s.mapContainer}>
-                <Mapbox.MapView
-                  style={{ flex: 1 }}
-                  styleURL="mapbox://styles/mapbox/satellite-streets-v12"
-                  logoEnabled={false}
-                  attributionEnabled={false}
-                  scaleBarEnabled={false}
-                >
-                  <Mapbox.Camera
-                    defaultSettings={{ centerCoordinate: parcelCenter, zoomLevel: 17, animationDuration: 0 }}
-                  />
-
-                  {/* Emsal (comparable) parcels – green */}
-                  {emsalGeoJSON && (
-                    <Mapbox.ShapeSource id="emsal-src" shape={emsalGeoJSON}>
-                      <Mapbox.FillLayer id="emsal-fill" style={{ fillColor: '#22c55e', fillOpacity: 0.25 }} />
-                      <Mapbox.LineLayer id="emsal-line" style={{ lineColor: '#15803d', lineWidth: 2.5, lineOpacity: 0.9 }} />
-                      <Mapbox.SymbolLayer
-                        id="emsal-label"
-                        style={{
-                          textField: ['get', 'label'],
-                          textSize: 10,
-                          textColor: '#15803d',
-                          textHaloColor: '#ffffff',
-                          textHaloWidth: 1.5,
-                          textAllowOverlap: true,
-                          textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                          textAnchor: 'center',
-                        }}
-                      />
-                    </Mapbox.ShapeSource>
-                  )}
-
-                  {/* Queried parcel – red */}
-                  <Mapbox.ShapeSource id="parcel-src" shape={parcelGeoJSON}>
-                    <Mapbox.FillLayer id="parcel-fill" style={{ fillColor: '#ef4444', fillOpacity: 0.3 }} />
-                    <Mapbox.LineLayer id="parcel-line" style={{ lineColor: '#dc2626', lineWidth: 3, lineOpacity: 1 }} />
-                    <Mapbox.SymbolLayer
-                      id="parcel-label"
-                      style={{
-                        textField: ['get', 'label'],
-                        textSize: 12,
-                        textColor: '#ffffff',
-                        textHaloColor: '#000000',
-                        textHaloWidth: 2,
-                        textAllowOverlap: true,
-                        textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
-                        textAnchor: 'center',
-                      }}
-                    />
-                  </Mapbox.ShapeSource>
-                </Mapbox.MapView>
-
-                {/* "Sorgulanan Mülk" badge – top right */}
-                <View style={s.mapBadge}>
-                  <Text style={s.mapBadgeText}>Sorgulanan Mülk</Text>
-                </View>
-
-                {/* Full-screen map button – bottom right */}
-                <TouchableOpacity
-                  style={s.mapFullScreenBtn}
-                  onPress={() => setMapPageVisible(true)}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="expand-outline" size={20} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            )}
-            {(!Mapbox || !parcelGeom) && mapUrl && (
-              <View style={s.mapContainer}>
-                <Image source={{ uri: mapUrl }} style={s.mapImage} resizeMode="cover" />
-              </View>
-            )}
-          </>
-        )}
+            </>
+          )}
+        </View>
 
         {Number.isFinite(snapshotId) && (
           <>
@@ -3777,7 +3991,7 @@ export default function Son30GunDetayScreen() {
                     onBeforeMahalleInputFocus={ensureOverviewTabForDfaInput}
                     hasElectricOverrideNote={hasElectricOverrideNote}
                     onOpenRoadModal={() => setRoadReportModalVisible(true)}
-                    onOpenElectricModal={() => setElectricMapVisible(true)}
+                    onOpenElectricModal={() => setElectricOverrideMapVisible(true)}
                   />
                 </View>
               </>
@@ -3788,9 +4002,21 @@ export default function Son30GunDetayScreen() {
             )}
 
             {activeDetailTabId === 'slope' && (() => {
-              const slopeElev = (data.slope_elevation_json || {}) as Record<string, any>;
-              const morphology = (slopeElev.elevation_morphology || {}) as Record<string, any>;
+              const slopeSectionPayload = scores.slopeSection as Record<string, unknown> | null;
+              const slopeElev = (
+                slopeSectionPayload?.slope_elevation_json
+                ?? data.slope_elevation_json
+                ?? {}
+              ) as Record<string, any>;
+              const morphology = enrichMorphologyForDisplay(
+                slopeElev.elevation_morphology as Record<string, unknown> | undefined,
+                (slopeElev.parcel_slope_values || slopeElev.slope_values || {}) as Record<string, unknown>,
+              ) as Record<string, any>;
               const sv = (slopeElev.parcel_slope_values || slopeElev.slope_values || {}) as Record<string, any>;
+              const avgSlope = resolvePortalAvgSlopeFromSectionPayload(
+                slopeSectionPayload,
+                (data.slope_elevation_json || null) as Record<string, unknown> | null,
+              );
               const fmtPctBand = (v: any): string => {
                 if (v == null || v === '') return '—';
                 const n = Number(v);
@@ -3814,12 +4040,6 @@ export default function Son30GunDetayScreen() {
                 if (!Array.isArray(range) || range.length < 2) return '—';
                 return `${formatMetersSlope(range[0])} - ${formatMetersSlope(range[1])}`;
               };
-              const avgSlopeRaw =
-                morphology.avg_slope != null ? Number(morphology.avg_slope)
-                  : sv.slope_avg_poly != null ? Number(sv.slope_avg_poly)
-                    : sv.avg_slope != null ? Number(sv.avg_slope)
-                      : NaN;
-              const avgSlope = Number.isFinite(avgSlopeRaw) ? avgSlopeRaw : null;
 
               const morphRows = [
                 { label: 'Arazi Sınıfı', value: String(morphology.type_label || '—') },
@@ -3836,7 +4056,7 @@ export default function Son30GunDetayScreen() {
                 { label: '20-30 Eğim Alanı', value: formatPercentSlope(sv.parcel_slope_percent_20_30) },
                 { label: '30+ Eğim Alanı', value: formatPercentSlope(sv.parcel_slope_percent_over_30) },
                 { label: 'Eşik Üstü Alan', value: formatPercentSlope(sv.fraction_above_threshold) },
-                { label: 'Ortalama Eğim', value: formatPercentSlope(sv.slope_avg_poly) },
+                { label: 'Ortalama Eğim', value: avgSlope != null ? formatPercentSlope(avgSlope) : formatPercentSlope(sv.slope_avg_poly) },
               ];
               const elevRows = [
                 { label: 'Ortalama Rakım', value: formatMetersSlope(morphology.avg_elevation) },
@@ -3867,7 +4087,14 @@ export default function Son30GunDetayScreen() {
               return (
                 <View ref={slopeSectionRef}>
                   <View style={[s.card, s.slopeTerrainTopCard]}>
-                    <PortalSlopeTerrainCard slope={avgSlope} />
+                    {scores.loading && !slopeSectionPayload ? (
+                      <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                        <ActivityIndicator size="small" color={COLORS.accentBlue} />
+                        <Text style={s.detailEmptyTabText}>Eğim verisi yükleniyor…</Text>
+                      </View>
+                    ) : (
+                      <PortalSlopeTerrainCard slope={avgSlope} />
+                    )}
                   </View>
                   {renderSlopeBlock('Morfoloji Özeti', morphRows)}
                   <View style={s.card}>
@@ -3922,10 +4149,38 @@ export default function Son30GunDetayScreen() {
             )}
 
             {activeDetailTabId === 'electric' && (() => {
-              const ev = (data.electric_values || {}) as Record<string, any>;
-              const electricIsExist = ev.electric_isExist === true || ev.electric_isExist === 1;
+              if (electricSectionLoading) {
+                return (
+                  <View ref={electricSectionRef} style={s.card}>
+                    <ActivityIndicator size="small" color={COLORS.accentBlue} />
+                    <Text style={s.detailEmptyTabText}>Yüksek Gerilim yükleniyor…</Text>
+                  </View>
+                );
+              }
 
-              if (!electricIsExist) {
+              if (electricSectionErr) {
+                return (
+                  <View ref={electricSectionRef} style={s.card}>
+                    <Text style={s.detailEmptyTabText}>{electricSectionErr}</Text>
+                  </View>
+                );
+              }
+
+              const ev = electricValuesResolved;
+              const lf = electricLineFeatureResolved as Record<string, any> | null;
+              const lfProps = lf?.properties && typeof lf.properties === 'object' ? lf.properties : null;
+              const voltageKV = parseElectricVoltage(ev.KW)
+                || parseElectricVoltage(ev.voltage)
+                || (lfProps ? parseElectricVoltage(lfProps.voltage) : null);
+              const voltageDisplay = formatElectricVoltageDisplay(voltageKV);
+              const areaDisplay = formatElectricAreaDisplay(
+                ev.electric_area_str ?? ev.electric_area ?? lfProps?.area_m2,
+              );
+              const voltageClass = electricVoltageClassLabel(voltageKV);
+              const electricIsExistValue = readElectricIsExist(ev);
+              const electricAreaFormatted = formatElectricAreaDisplay(ev.electric_area);
+
+              if (!electricHasLine) {
                 return (
                   <View ref={electricSectionRef} style={s.card}>
                     <View style={s.cardTitleRow}>
@@ -3936,45 +4191,40 @@ export default function Son30GunDetayScreen() {
                       <Ionicons name="checkmark-circle" size={20} color={COLORS.accentGreen} />
                       <Text style={sec.noLineText}>Arazi Üzerinden Geçen Yüksek Gerilim Hattı Yok</Text>
                     </View>
+                    <View style={sec.electricSummaryBox}>
+                      <Text style={sec.electricSummaryText}>{electricLineSummaryText}</Text>
+                    </View>
                   </View>
                 );
               }
 
-              const parseVoltage = (v: any): number | null => { if (v == null) return null; const n = Number(v); return isFinite(n) && n > 0 ? n : null; };
-              const parseArea = (v: any): number | null => { if (v == null) return null; const n = Number(v); return isFinite(n) ? n : null; };
-
-              const lf = data.electric_line_feature as Record<string, any> | null;
-              const voltageKV = parseVoltage(ev.KW) || parseVoltage(ev.voltage) || (lf?.properties ? parseVoltage(lf.properties.voltage) : null);
-              const areaM2 = parseArea(ev.electric_area);
-              const voltageDisplay = voltageKV != null ? `${new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(voltageKV)} kV` : '—';
-              const areaDisplay = areaM2 != null ? `${new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(areaM2)} m²` : '—';
-              let voltageClass = 'Bilinmiyor';
-              if (voltageKV != null) {
-                if (voltageKV >= 380) voltageClass = 'Çok Yüksek Gerilim (380 kV+)';
-                else if (voltageKV >= 154) voltageClass = 'Yüksek Gerilim (154-380 kV)';
-                else if (voltageKV >= 34.5) voltageClass = 'Orta Gerilim (34.5-154 kV)';
-                else if (voltageKV >= 1) voltageClass = 'Alçak Gerilim (1-34.5 kV)';
-                else voltageClass = 'Düşük Gerilim (<1 kV)';
-              }
-
-              const hasLineCoords = !!(
-                (lf?.geometry?.coordinates && lf.geometry.coordinates.length >= 2) ||
-                (Array.isArray(ev.electric_line) && ev.electric_line.length >= 2)
-              );
-
               return (
-                <TouchableOpacity
-                  ref={electricSectionRef as any}
-                  style={s.card}
-                  activeOpacity={hasLineCoords ? 0.7 : 1}
-                  onPress={hasLineCoords ? () => setElectricMapVisible(true) : undefined}
-                >
+                <View ref={electricSectionRef} style={s.card}>
                   <View style={s.cardTitleRow}>
                     <Ionicons name="flash" size={16} color={COLORS.warningOrange} />
-                    <Text style={s.cardTitle}>Yüksek Gerilim Hattı</Text>
-                    {hasLineCoords ? <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} style={{ marginLeft: 'auto' }} /> : null}
+                    <Text style={s.cardTitle}>Yüksek Gerilim</Text>
+                  </View>
+                  <View style={sec.hvStatusGrid}>
+                    <View style={sec.hvStatusItem}>
+                      <Text style={sec.hvGridLabel}>Hat Durumu</Text>
+                      <Text style={sec.hvGridValue}>
+                        {heroElectricLineGeoJSON || electricIsExistValue ? 'Tespit Edildi' : 'Yok'}
+                      </Text>
+                    </View>
+                    <View style={sec.hvStatusItem}>
+                      <Text style={sec.hvGridLabel}>Veri Kaynağı</Text>
+                      <Text style={sec.hvGridValue}>{Object.keys(ev).length ? 'Hazır' : '—'}</Text>
+                    </View>
                   </View>
                   <View style={sec.hvGrid}>
+                    <View style={sec.hvGridItem}>
+                      <Text style={sec.hvGridLabel}>Yüksek Gerilim Hattının Kapsadığı Alan</Text>
+                      <Text style={sec.hvGridValue}>{electricAreaFormatted}</Text>
+                    </View>
+                    <View style={sec.hvGridItem}>
+                      <Text style={sec.hvGridLabel}>Yüksek Gerilim Hattı Var mı?</Text>
+                      <Text style={sec.hvGridValue}>{electricIsExistValue ? 'Evet' : 'Hayır'}</Text>
+                    </View>
                     <View style={sec.hvGridItem}>
                       <Text style={sec.hvGridLabel}>Voltaj</Text>
                       <Text style={sec.hvGridValue}>{voltageDisplay}</Text>
@@ -3987,15 +4237,31 @@ export default function Son30GunDetayScreen() {
                       <Text style={sec.hvGridLabel}>Voltaj Sınıfı</Text>
                       <Text style={sec.hvGridValue}>{voltageClass}</Text>
                     </View>
-                    <View style={sec.hvGridItem}>
-                      <Text style={sec.hvGridLabel}>Hat</Text>
-                      <Text style={[sec.hvGridValue, { color: COLORS.dangerRed }]}>Parsel üzerinden geçiyor</Text>
-                    </View>
                   </View>
-                  {hasLineCoords ? (
-                    <Text style={sec.hvHint}>Haritada görmek için dokunun</Text>
+                  <View style={sec.electricSummaryBox}>
+                    <Text style={sec.electricSummaryTitle}>Hat Özeti</Text>
+                    <Text style={sec.electricSummaryText}>{electricLineSummaryText}</Text>
+                  </View>
+                  {electricHasLine ? (
+                    <View style={sec.electricLegalBox}>
+                      <Text style={sec.electricLegalTitle}>Hak Kaybı ve Dava Süreçleri</Text>
+                      {ELECTRIC_LEGAL_INFO.map((item) => (
+                        <Text key={item} style={sec.electricLegalText}>{item}</Text>
+                      ))}
+                    </View>
                   ) : null}
-                </TouchableOpacity>
+                  {electricHasLineCoords ? (
+                    <TouchableOpacity
+                      style={sec.linkBtn}
+                      onPress={() => setHeroTopTab('map')}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="map-outline" size={18} color={COLORS.accentBlue} />
+                      <Text style={sec.linkBtnText}>Haritada hattı göster</Text>
+                      <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} style={{ marginLeft: 'auto' }} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               );
             })()}
 
@@ -4415,6 +4681,35 @@ export default function Son30GunDetayScreen() {
         </BottomSheetScrollView>
       </AppBottomSheetModal>
 
+      {/* ── Paylaş seçenekleri ── */}
+      <AppBottomSheetModal
+        visible={shareMenuVisible}
+        onClose={closeShareMenu}
+        snapPoints={['36%']}
+        variant="dark"
+        backdropOpacity={0.35}
+        backdropPressBehavior="close"
+      >
+        <View style={sm.wrap}>
+          <Text style={sm.title}>Paylaş</Text>
+          <Text style={sm.subtitle}>Ne paylaşmak istersiniz?</Text>
+
+          <TouchableOpacity style={sm.actionRow} onPress={onShareLinkPress} activeOpacity={0.75}>
+            <Ionicons name="link-outline" size={20} color={COLORS.accentBlue} />
+            <Text style={sm.actionText}>Link'i Paylaş</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={sm.actionRow} onPress={onSharePdfPress} activeOpacity={0.75}>
+            <Ionicons name="document-text-outline" size={20} color={COLORS.accentBlue} />
+            <Text style={sm.actionText}>PDF Paylaş</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={sm.cancelRow} onPress={closeShareMenu} activeOpacity={0.75}>
+            <Text style={sm.cancelText}>İptal</Text>
+          </TouchableOpacity>
+        </View>
+      </AppBottomSheetModal>
+
       {/* ── Sorgu detay işlemleri (uzman talebi, paylaşım, LİHKAB) ── */}
       <AppBottomSheetModal
         visible={detailMenuVisible}
@@ -4498,7 +4793,7 @@ export default function Son30GunDetayScreen() {
 
           <TouchableOpacity
             style={dm.item}
-            onPress={() => { setDetailMenuVisible(false); setTimeout(() => handleShareMenu(), 350); }}
+            onPress={() => { setDetailMenuVisible(false); setTimeout(() => setShareMenuVisible(true), 350); }}
           >
             <Ionicons name="share-outline" size={20} color={COLORS.accentBlue} />
             <Text style={dm.itemText}>Paylaş</Text>
@@ -4599,27 +4894,13 @@ export default function Son30GunDetayScreen() {
       >
         <View style={imgV.videoOverlay}>
           <StatusBar barStyle="light-content" backgroundColor="#000" />
-          <TouchableOpacity
-            style={[imgV.videoCloseBtn, { top: Math.max(16, insets.top + 8) }]}
-            onPress={() => setVideoFullscreenUri(null)}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
-            <Ionicons name="close" size={28} color="#fff" />
-          </TouchableOpacity>
           {videoFullscreenUri && VideoComponent ? (
-            <VideoComponent
-              source={buildVideoSource(videoFullscreenUri)}
-              style={imgV.videoFull}
-              controls
-              resizeMode="contain"
-              muted={false}
-              volume={1}
-              ignoreSilentSwitch="ignore"
-              playInBackground={false}
-              hideShutterView={Platform.OS === 'android'}
-              onError={(e: unknown) => {
-                if (__DEV__) console.warn('[son-30-gun-detay] fullscreen video error', e);
-              }}
+            <ListingFullscreenVideo
+              videoUri={videoFullscreenUri}
+              posterUri={videoFullscreenPoster}
+              VideoComponent={VideoComponent}
+              onClose={() => setVideoFullscreenUri(null)}
+              closeTop={Math.max(16, insets.top + 8)}
             />
           ) : videoFullscreenUri ? (
             <View style={imgV.videoFallback}>
@@ -4628,6 +4909,15 @@ export default function Son30GunDetayScreen() {
           ) : null}
         </View>
       </Modal>
+
+      <DesignedParcelShareHost
+        visible={!!shareActiveCapture}
+        capturedMapUri={shareCapturedMapUri}
+        parcelData={shareActiveCapture?.parcelData}
+        isProMode={shareActiveCapture?.isProMode ?? true}
+        priceOverride={shareActiveCapture?.priceOverride}
+        containerRef={shareCombinedRef}
+      />
 
     </SafeAreaView>
   );
@@ -4641,17 +4931,6 @@ const imgV = StyleSheet.create({
   page: { width: screenW, flex: 1, alignItems: 'center', justifyContent: 'center' },
   image: { width: screenW, height: '100%' },
   videoOverlay: { flex: 1, backgroundColor: '#000' },
-  videoCloseBtn: {
-    position: 'absolute',
-    right: 16,
-    zIndex: 10,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   videoFull: { flex: 1, width: '100%' },
   videoFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   videoFallbackText: { color: '#94a3b8', fontSize: 15, textAlign: 'center' },
@@ -5028,6 +5307,9 @@ const s = StyleSheet.create({
     flexDirection: 'column' as const,
     paddingBottom: 0,
   },
+  heroMapLayerHidden: {
+    opacity: 0,
+  },
   heroGalleryPager: {
     width: '100%' as const,
     height: HERO_GALLERY_MAIN_HEIGHT,
@@ -5071,68 +5353,6 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
-  },
-  heroVideoPosterFallback: {
-    backgroundColor: '#0f172a',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroVideoTapOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1,
-  },
-  heroVideoPlayHint: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(15,23,42,0.25)',
-  },
-  heroVideoLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(15,23,42,0.35)',
-    gap: 10,
-  },
-  heroVideoLoadingText: { color: '#f8fafc', fontSize: 13, fontWeight: '600' },
-  heroVideoErrorOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    backgroundColor: 'rgba(15,23,42,0.55)',
-    gap: 8,
-  },
-  heroVideoErrorText: { color: '#fecaca', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  heroVideoErrorHint: { color: '#e2e8f0', fontSize: 11, textAlign: 'center', lineHeight: 16 },
-  heroVideoMuteBtn: {
-    position: 'absolute',
-    bottom: 10,
-    left: 10,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 3,
-    elevation: 5,
-  },
-  heroVideoFullscreenBtn: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 3,
-    elevation: 5,
   },
   heroGalleryThumbSelected: {
     borderColor: COLORS.accentBlue,
@@ -5392,6 +5612,54 @@ const dm = StyleSheet.create({
   lihkabSubText: { fontSize: 13, flex: 1, color: '#cbd5e1' },
 });
 
+const sm = StyleSheet.create({
+  wrap: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 28,
+  },
+  title: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#f1f5f9',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(51, 65, 85, 0.9)',
+  },
+  actionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#e2e8f0',
+  },
+  cancelRow: {
+    paddingVertical: 18,
+    marginTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(51, 65, 85, 0.9)',
+    alignItems: 'center',
+  },
+  cancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#94a3b8',
+  },
+});
+
 // ── New Section Styles ──
 const sec = StyleSheet.create({
   highlightRow: {
@@ -5496,6 +5764,34 @@ const sec = StyleSheet.create({
   hvGridLabel: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 2 },
   hvGridValue: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
   hvHint: { fontSize: 12, color: COLORS.accentBlue, marginTop: 8, fontWeight: '500' },
+  hvStatusGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8,
+  },
+  hvStatusItem: {
+    flex: 1, minWidth: (SCREEN_WIDTH - 32 - 16 - 8) / 2,
+    paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: COLORS.borderSoft, backgroundColor: '#f8fafc',
+  },
+  electricSummaryBox: {
+    marginTop: 12, padding: 12, borderRadius: 8,
+    backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa',
+  },
+  electricSummaryTitle: {
+    fontSize: 13, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 6,
+  },
+  electricSummaryText: {
+    fontSize: 13, color: COLORS.textPrimary, lineHeight: 20,
+  },
+  electricLegalBox: {
+    marginTop: 12, padding: 12, borderRadius: 8,
+    backgroundColor: '#f8fafc', borderWidth: 1, borderColor: COLORS.borderSoft,
+  },
+  electricLegalTitle: {
+    fontSize: 13, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 8,
+  },
+  electricLegalText: {
+    fontSize: 12, color: COLORS.textSecondary, lineHeight: 18, marginBottom: 8,
+  },
 });
 
 // Map 3D controls styles

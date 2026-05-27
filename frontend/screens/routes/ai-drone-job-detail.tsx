@@ -9,6 +9,7 @@ import {
   Image,
   Linking,
   StyleSheet,
+  StatusBar,
   Text,
   TouchableOpacity,
   View,
@@ -163,6 +164,7 @@ export default function AiDroneJobDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
+      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel="Geri">
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -340,16 +342,28 @@ export default function AiDroneJobDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.headerBg },
+  safe: { flex: 1, backgroundColor: "#1e293b" },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingBottom: 10,
-    backgroundColor: COLORS.headerBg,
+    justifyContent: "space-between",
+    backgroundColor: "#1e293b",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 3,
+    borderBottomColor: "#3b82f6",
   },
-  headerBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700", color: "#f8fafc" },
+  headerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  headerTitle: { flex: 1, textAlign: "center", fontSize: 20, fontWeight: "bold", color: "#fff" },
   scroll: { flex: 1, backgroundColor: COLORS.pageBg },
   scrollContent: { padding: 16 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: COLORS.pageBg },

@@ -8,6 +8,7 @@ import {
   ScrollView,
   Share,
   StyleSheet,
+  StatusBar,
   Text,
   TextInput,
   TouchableOpacity,
@@ -589,9 +590,10 @@ export default function AiVideoStudioScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
+      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel="Geri">
-          <Ionicons name="arrow-back" size={18} color={COLORS.text} />
+          <Ionicons name="arrow-back" size={18} color="#f8fafc" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>AI Video Oluşturucu</Text>
         <View style={styles.headerBtn} />
@@ -618,7 +620,7 @@ export default function AiVideoStudioScreen() {
         </View>
       ) : (
         <KeyboardAwareScrollScreen
-          headerHeight={56}
+          headerHeight={63}
           backgroundColor={COLORS.pageBg}
           style={styles.content}
           contentContainerStyle={[styles.contentInner, { paddingBottom: 28 + insets.bottom }]}
@@ -631,18 +633,28 @@ export default function AiVideoStudioScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.pageBg },
+  safe: { flex: 1, backgroundColor: "#1e293b" },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingBottom: 10,
-    backgroundColor: COLORS.cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    justifyContent: "space-between",
+    backgroundColor: "#1e293b",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 3,
+    borderBottomColor: "#3b82f6",
   },
-  headerBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700", color: COLORS.text },
+  headerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  headerTitle: { flex: 1, textAlign: "center", fontSize: 20, fontWeight: "bold", color: "#fff" },
   tabBar: {
     flexDirection: "row",
     backgroundColor: COLORS.cardBg,

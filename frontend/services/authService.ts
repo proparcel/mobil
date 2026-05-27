@@ -75,6 +75,7 @@ export function notifySessionExpired(): void {
 const AUTH_ENDPOINTS = {
   REGISTER: "/api/auth/register/",
   CHECK_COMPANY_VKN: "/api/auth/company/exists/",
+  COMPANY_LIST: "/api/auth/company/list/",
   LOGIN: "/api/auth/login/",
   LOGOUT: "/api/auth/logout/",
   TOKEN_REFRESH: "/api/auth/token/refresh/",
@@ -112,6 +113,7 @@ async function authFetch<T>(
   const authOptionalEndpoints = new Set<string>([
     AUTH_ENDPOINTS.REGISTER,
     AUTH_ENDPOINTS.CHECK_COMPANY_VKN,
+    AUTH_ENDPOINTS.COMPANY_LIST,
     AUTH_ENDPOINTS.LOGIN,
     AUTH_ENDPOINTS.LOGOUT,
     AUTH_ENDPOINTS.TOKEN_REFRESH,
@@ -123,7 +125,9 @@ async function authFetch<T>(
     AUTH_ENDPOINTS.GOOGLE,
     AUTH_ENDPOINTS.APPLE,
   ]);
-  const requiresAuth = !authOptionalEndpoints.has(endpoint);
+  const requiresAuth = !Array.from(authOptionalEndpoints).some(
+    (optionalEndpoint) => endpoint === optionalEndpoint || endpoint.startsWith(`${optionalEndpoint}?`)
+  );
  
   const normalizeToken = (t: string | null): string | null => {
     if (!t) return null;
@@ -377,6 +381,39 @@ class AuthService {
     return authFetch(`${AUTH_ENDPOINTS.CHECK_COMPANY_VKN}?vergi_no=${q}`, {
       method: "GET",
     });
+  }
+
+  /**
+   * Danışman kayıt ekranı: firma adı veya vergi no ile arama.
+   */
+  async listCompanies(
+    query: string,
+    limit = 20
+  ): Promise<ApiResponse<Array<{ id?: number; company_name?: string; name?: string; title?: string; vergi_no: string; vergi_dairesi?: string; corporate_type?: "emlak" | "spk" | "lihkab" | null }>>> {
+    const q = encodeURIComponent((query || "").trim());
+    const safeLimit = Math.max(1, Math.min(50, Number.isFinite(limit) ? limit : 20));
+    const response = await authFetch<any>(
+      `${AUTH_ENDPOINTS.COMPANY_LIST}?q=${q}&limit=${safeLimit}`,
+      { method: "GET" }
+    );
+
+    if (!response.success) {
+      return response;
+    }
+
+    const raw = response.data;
+    const companies = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.results)
+        ? raw.results
+        : Array.isArray(raw?.companies)
+          ? raw.companies
+          : [];
+
+    return {
+      ...response,
+      data: companies,
+    };
   }
 
   /**

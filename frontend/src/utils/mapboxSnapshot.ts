@@ -18,19 +18,27 @@ export interface MapReadyState {
  */
 export const waitForMapIdle = async (
   mapReadyRef: React.MutableRefObject<MapReadyState>,
-  timeoutMs = 4000
+  timeoutMs = 4000,
+  options?: { resetIfAlreadyIdle?: boolean },
 ): Promise<boolean> => {
+  const r = mapReadyRef.current;
+  const alreadyIdle = r.didFinishLoadingMap && r.didFinishLoadingStyle && r.isIdle;
+  if (alreadyIdle && options?.resetIfAlreadyIdle === false) {
+    return true;
+  }
+
   const start = Date.now();
-  mapReadyRef.current.isIdle = false; // Share öncesi reset önemli
+  if (options?.resetIfAlreadyIdle !== false) {
+    mapReadyRef.current.isIdle = false;
+  }
   while (Date.now() - start < timeoutMs) {
-    const r = mapReadyRef.current;
-    if (r.didFinishLoadingMap && r.didFinishLoadingStyle && r.isIdle) {
-      console.log('[mapboxSnapshot.ts:22] ✅ Map is idle');
+    const state = mapReadyRef.current;
+    if (state.didFinishLoadingMap && state.didFinishLoadingStyle && state.isIdle) {
       return true;
     }
-    await new Promise(res => setTimeout(res, 50));
+    await new Promise((res) => setTimeout(res, 40));
   }
-  console.warn('[mapboxSnapshot.ts:27] ⚠️ Map idle timeout');
+  if (__DEV__) console.warn('[mapboxSnapshot] Map idle timeout');
   return false;
 };
 
@@ -65,9 +73,8 @@ export const tryMapboxSnap = async (
     });
     
     // Önce frame bekleyelim
-    await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
-    await new Promise(resolve => setTimeout(resolve, 150)); // Kısa "settle" payı
-    
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+
     // Bazı Mapbox sürümlerinde takeSnap sadece boolean alır (writeToDisk)
     // Önce object formatını dene, başarısız olursa boolean formatını dene
     let res: any;

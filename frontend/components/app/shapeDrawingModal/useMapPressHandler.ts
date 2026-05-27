@@ -1,5 +1,7 @@
 import { useCallback } from "react";
 import { Alert } from "react-native";
+import type { ShapeProperties } from "@/src/maps/drawing/types";
+import { trySelectShapeAtLngLat, screenPointFromMapPressEvent } from "@/src/maps/drawing/shapePickAtLngLat";
 
 type Args = {
   shapeDrawingMode: any;
@@ -41,6 +43,10 @@ type Args = {
     instances: Array<{ modelId: string }>,
     newModelId: string
   ) => Promise<{ allowed: boolean; message?: string }>;
+
+  /** Çizim şekillerine dokunma (metin kutusu MarkerView üstünde harita onPress ile) */
+  shapes?: ShapeProperties[];
+  onShapePress?: (shapeId: string) => void;
 };
 
 export function normalizeLngLat(coord: [number, number]): [number, number] | null {
@@ -150,6 +156,8 @@ export function useMapPressHandler({
   onCheckModelSizeLimit,
   selectedModelId,
   updateModelInstance,
+  shapes,
+  onShapePress,
 }: Args) {
   return useCallback(
     async (e: any) => {
@@ -185,6 +193,15 @@ export function useMapPressHandler({
       if (shapeDrawingMode) {
         handleShapeDrawingPress(e);
         return;
+      }
+
+      if (onShapePress && shapes?.length) {
+        const screenPoint = screenPointFromMapPressEvent(e);
+        const hitId = await trySelectShapeAtLngLat(mapRef, c, shapes, screenPoint);
+        if (hitId) {
+          onShapePress(hitId);
+          return;
+        }
       }
 
       if (placingModelId) {
@@ -285,6 +302,8 @@ export function useMapPressHandler({
       onBeforeAddModel,
       selectedModelId,
       updateModelInstance,
+      shapes,
+      onShapePress,
     ]
   );
 }

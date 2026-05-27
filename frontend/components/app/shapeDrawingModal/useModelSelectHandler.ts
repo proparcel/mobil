@@ -1,9 +1,10 @@
 import { useCallback } from "react";
-import { Alert, Platform } from "react-native";
+import { Alert } from "react-native";
 import type { ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
 import { isModelUsable } from "@/src/services/modelUsageService";
 import { ensureModelAvailable } from "@/src/services/modelDelivery";
 import { isFreeRole } from "@/src/maps/models/modelAvailability";
+import { resolveModelGlbSourceUrl } from "@/src/maps/models/modelCatalog";
 
 type Args = {
   placingModelId: string | null;
@@ -54,7 +55,7 @@ export function useModelSelectHandler(args: Args) {
         if (m.isAvailable === false) {
           Alert.alert(
             "Model Kilitli",
-            `"${label}" modeli şu an kilitli. Satın almak için Model Galerisi'nden modeli seçip satın alma ekranını açın.`
+            `"${label}" kilitli. Model listesinde kilit simgesine dokunun veya Galeri sekmesinden satın alın.`
           );
           return;
         }
@@ -81,19 +82,18 @@ export function useModelSelectHandler(args: Args) {
           throw new Error("Model indirimi için DB id yok");
         }
 
-        const remoteUrl = m.source?.trim() || "";
+        const remoteUrl = resolveModelGlbSourceUrl(m) || "";
         if (!remoteUrl) {
-          throw new Error("Model dosya adresi (source) yok");
+          throw new Error("Model dosya adresi (source) bulunamadı");
         }
 
         setIsModelLoading(true);
         setModelLoadingProgress(null);
-        const loadingPrefix =
-          Platform.OS === "ios" ? "Sunucudan indiriliyor" : "Play'dan indiriliyor";
+        const loadingPrefix = "Sunucudan indiriliyor";
         setModelLoadingText(`${loadingPrefix}: ${label}`);
 
         const result = await ensureModelAvailable(m.id, {
-          timeoutMs: 120_000,
+          timeoutMs: 300_000,
           remoteUrl,
           onProgress: (s) => {
             if (typeof s?.percent === "number" && Number.isFinite(s.percent)) {
@@ -117,12 +117,13 @@ export function useModelSelectHandler(args: Args) {
         }
 
         if (!result.ok) {
-          const status = result?.lastState?.statusName ? `Durum: ${result.lastState.statusName}` : "Durum bilinmiyor";
-          const errHint =
-            Platform.OS === "ios"
-              ? "Model indirilemedi veya doğrulanamadı"
-              : "Asset pack indirilemedi veya hazır değil";
-          throw new Error(`${errHint}. ${status}`);
+          const status = result?.lastState?.statusName
+            ? `Durum: ${result.lastState.statusName}`
+            : "Durum bilinmiyor";
+          const detail = result?.lastState?.errorMessage
+            ? `\n${result.lastState.errorMessage}`
+            : "";
+          throw new Error(`Model indirilemedi veya doğrulanamadı. ${status}${detail}`);
         }
 
         setPlacingModelId(m.modelId);

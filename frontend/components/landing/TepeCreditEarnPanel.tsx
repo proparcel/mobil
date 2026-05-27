@@ -16,10 +16,11 @@ import { TepeCreditEarnListSection } from './TepeCreditEarnListSection';
 import { LandingNewPlatformBadge } from './LandingNewPlatformBadge';
 import { TepeCreditTopBar } from './TepeCreditTopBar';
 import { tepeCreditColors } from './tepeCreditTheme';
+import { LANDING_BOTTOM_CHROME } from './landingTheme';
 
 const { height: SCREEN_H } = Dimensions.get('window');
 const HERO_MIN_H = Math.round(SCREEN_H * 0.28);
-const BOTTOM_NAV_SPACE = 100;
+const BOTTOM_NAV_SPACE = LANDING_BOTTOM_CHROME;
 
 type Props = {
   reveal: boolean;

@@ -31,6 +31,14 @@ export async function markNotificationRead(id: number): Promise<{ ok: true } | {
   return { ok: true };
 }
 
+export async function deleteNotification(id: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await authJsonFetch<{ success: boolean }>(`/api/notifications/${id}/delete/`, {
+    method: "DELETE",
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true };
+}
+
 export async function markAllNotificationsRead(): Promise<
   { ok: true; updated: number } | { ok: false; error: string }
 > {

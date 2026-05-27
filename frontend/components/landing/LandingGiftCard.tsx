@@ -18,7 +18,8 @@ export function LandingGiftCard({ onSignUp }: Props) {
           </View>
           <View>
             <Text style={styles.giftEyebrow}>Yeni Üyelere Özel</Text>
-            <Text style={styles.giftAmount}>100 Kredi</Text>
+            <Text style={styles.giftAmount}>10 Kredi</Text>
+            <Text style={styles.giftProSorgu}>(10 ProSorgu)</Text>
           </View>
         </View>
         <View style={styles.freePill}>
@@ -87,6 +88,13 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '800',
     color: landingColors.text,
+  },
+  giftProSorgu: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: landingColors.textSoft,
+    marginTop: 2,
+    letterSpacing: 0.3,
   },
   freePill: {
     paddingHorizontal: 16,

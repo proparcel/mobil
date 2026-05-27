@@ -8,6 +8,7 @@ import {
   Alert,
   FlatList,
   StyleSheet,
+  StatusBar,
   Text,
   TextInput,
   TouchableOpacity,
@@ -119,6 +120,7 @@ export default function AiDroneEditorChatScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
+      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -187,17 +189,29 @@ export default function AiDroneEditorChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.headerBg },
+  safe: { flex: 1, backgroundColor: "#1e293b" },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingBottom: 10,
-    backgroundColor: COLORS.headerBg,
+    justifyContent: "space-between",
+    backgroundColor: "#1e293b",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 3,
+    borderBottomColor: "#3b82f6",
   },
-  headerBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  headerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
   headerCenter: { flex: 1, alignItems: "center" },
-  headerTitle: { fontSize: 16, fontWeight: "700", color: "#f8fafc" },
+  headerTitle: { fontSize: 18, fontWeight: "bold", color: "#fff" },
   headerSub: { fontSize: 12, color: "#94a3b8", marginTop: 2 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: COLORS.pageBg },
   listContent: { padding: 12, flexGrow: 1, backgroundColor: COLORS.pageBg },

@@ -13,7 +13,17 @@ const path = require("path");
 const projectRoot = path.resolve(__dirname, "..");
 const outFile = path.join(projectRoot, "assets", "packs", "models_manifest.json");
 
-const DEFAULT_API_BASE = "http://78.189.238.18:8000";
+const DEFAULT_API_BASE = "https://www.proparcel.com";
+
+function resolveApiBase() {
+  require("./load-env-file").loadEnvFile();
+  return (
+    normalizeBaseUrl(process.env.PP_API_BASE) ||
+    normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL) ||
+    normalizeBaseUrl(process.env.EXPO_PUBLIC_MODELS_URL) ||
+    DEFAULT_API_BASE
+  );
+}
 
 function normalizeBaseUrl(u) {
   return String(u || "").trim().replace(/\/$/, "");
@@ -35,6 +45,9 @@ function normalizeStaticPath(p) {
   s = s.replace(/^myapp\/static\//i, "");
   // Defensive: avoid duplicating "static/static/..."
   s = s.replace(/^static\//i, "");
+  // mobil_path often: assets/models/car/foo.glb -> models/car/foo.glb
+  s = s.replace(/^assets\/models\//i, "models/");
+  s = s.replace(/^assets\//i, "");
   return s;
 }
 
@@ -76,7 +89,7 @@ function computeAndroidDelivery(role) {
 }
 
 async function main() {
-  const apiBase = normalizeBaseUrl(process.env.PP_API_BASE || process.env.API_URL || DEFAULT_API_BASE);
+  const apiBase = resolveApiBase();
   const token = process.env.PP_BEARER_TOKEN || "";
   const url = `${apiBase}/api/3d-models-list/?platform=mobil`;
 

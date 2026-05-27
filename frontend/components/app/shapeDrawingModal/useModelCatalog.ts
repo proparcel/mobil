@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Platform } from "react-native";
 import { fetchModelCatalogFlat, type ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
 
 type Result = {
@@ -94,22 +93,17 @@ export function useModelCatalog(visible: boolean, refreshKey?: number): Result {
     };
   }, [visible, refreshKey]);
 
-  // Android: pp-local + PAD interceptor. iOS: sunucu source (HTTPS); ShapeDrawingModal önceliği source.
+  // iOS ve Android: katalog HTTPS source; seçimde ensureModelAvailable cache'e indirir.
   const modelsProp = useMemo(() => {
     const map: Record<string, string | number> = {};
     for (const item of modelCatalogFlat || []) {
       const id = typeof item?.id === "number" ? item.id : null;
       if (!id) continue;
-      if (Platform.OS === "ios") {
-        if (item.source) map[String(id)] = item.source;
-      } else {
-        map[String(id)] = `https://pp-local/models/model_${id}.glb`;
-      }
+      if (item.source) map[String(id)] = item.source;
     }
     if (__DEV__ && Object.keys(map).length > 0) {
       const ids = Object.keys(map).sort((a, b) => Number(a) - Number(b));
-      const strategy = Platform.OS === "ios" ? "HTTPS source" : "pp-local pack";
-      console.log(`[3DEDIT] modelsProp (${strategy}): ${ids.length} model (id'ler: ${ids.join(", ")})`);
+      console.log(`[3DEDIT] modelsProp (HTTPS source): ${ids.length} model (id'ler: ${ids.join(", ")})`);
     }
     return map;
   }, [modelCatalogFlat]);

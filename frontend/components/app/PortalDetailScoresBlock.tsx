@@ -32,7 +32,11 @@ export type PortalDetailScoresData = {
 };
 
 /** Tek yük: investment + slope [+ meyve]. Detay sekmelerinde içerik paylaşımı için. */
-export function usePortalDetailScoresData(snapshotId: number, detail: PortalQueryDetail): PortalDetailScoresData {
+export function usePortalDetailScoresData(
+  snapshotId: number,
+  detail: PortalQueryDetail,
+  enabled = true,
+): PortalDetailScoresData {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [invPayload, setInvPayload] = useState<PortalInvestmentScorePayload | null>(null);
@@ -44,6 +48,10 @@ export function usePortalDetailScoresData(snapshotId: number, detail: PortalQuer
   const structureQuery = isStructurePortalQueryType(detail.query_type);
 
   const load = useCallback(async () => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     if (!Number.isFinite(snapshotId) || snapshotId <= 0) {
       setLoading(false);
       setInvPayload(null);
@@ -88,7 +96,7 @@ export function usePortalDetailScoresData(snapshotId: number, detail: PortalQuer
     } finally {
       setLoading(false);
     }
-  }, [snapshotId, structureQuery]);
+  }, [snapshotId, structureQuery, enabled]);
 
   useEffect(() => {
     load();

@@ -18,6 +18,7 @@ import {
   TextInput,
   UIManager,
   DeviceEventEmitter,
+  AppState,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -73,15 +74,6 @@ import {
   type PortalRecentQueriesChangedPayload,
 } from '../../src/constants/portalEvents';
 import { fetchTkgmByCoordsWithFallback } from '../../src/utils/tkgmApi';
-// Conditional Location import
-let Location: any = null;
-try {
-  Location = require('react-native-geolocation-service');
-} catch (e) {
-  console.warn('react-native-geolocation-service native module not available.', e);
-  // Location modülü yoksa uygulama çalışmaya devam edebilmeli
-}
-
 // Conditional Video import (kutlama.mp4 background)
 let Video: any = null;
 try {
@@ -117,6 +109,8 @@ import ShapeDrawingModal from '../../components/app/ShapeDrawingModal';
 import { DrawingToolbox } from '../../components/app/shapeDrawingModal/DrawingToolbox';
 import { FreehandDrawOverlay } from '../../components/app/shapeDrawingModal/FreehandDrawOverlay';
 import { ScreenShapesOverlay } from '../../components/app/shapeDrawingModal/ScreenShapesOverlay';
+import { TextBoxMapOverlay } from '../../components/app/shapeDrawingModal/TextBoxMapOverlay';
+import { patchTextBoxShape } from '../../src/maps/drawing/textBoxLayout';
 import { ModeInfoBar } from '../../components/app/shapeDrawingModal/ModeInfoBar';
 import { ShapesLayer } from '../../src/maps/drawing/ShapesLayer';
 import { createPenFreehandShape } from '../../src/maps/drawing/ShapeDrawingManager';
@@ -127,6 +121,25 @@ import { ErrorBoundary } from '../../components/app/ErrorBoundary';
 import { ParcelModalContent } from '../../components/ParcelModalContent';
 import { ProParcelResponse, TkgmViewResponse, ParcelResponse, GeoJSONGeometry } from '../../src/types/parcelResponse';
 import { apply3DMode, updateCamRefFromCameraChanged } from '../../src/utils/threeDMode';
+import {
+  TURKEY_MAP_CENTER,
+  TURKEY_MAP_ZOOM,
+  USER_BOOTSTRAP_ZOOM,
+  USER_MENU_LOCATION_ZOOM,
+  requestAppLocationPermission,
+  hasAppLocationPermission,
+  getCurrentCoordinates,
+  showLocationPermissionAlert,
+  waitForUiSettled,
+} from '../../src/utils/mapLocation';
+import {
+  ADMIN_BOUNDARY_STYLES,
+  loadLocationBoundaryForSelection,
+  type AdminBoundaryLevel,
+  type LocationHierarchySelection,
+} from '../../src/utils/locationHierarchyMap';
+import type { SimpleQueryDeepLinkPayload } from '../../src/utils/deepLinkRouter';
+import type { GeoJsonGeometry } from '../../services/locationBoundaryApi';
 import { extractNitelikText, generatePropertyTypeTitle } from '../../src/utils/propertyTypeUtils';
 import { createShareHandler } from '../../src/utils/handlers/shareHandler';
 import { useScreenshotListener } from '../../src/utils/useScreenshotListener';
@@ -135,7 +148,7 @@ import { getFirstStreetViewPoint } from '../../src/utils/streetViewHelper';
 import { useAuth } from '../contexts/AuthContext';
 import { storageService, REDIRECT_TARGET_MODEL_EDITOR } from '../../services/storageService';
 import { mergeParcel3dEntryFields, type Parcel3dEntry } from '../../src/utils/parcel3dPurchasedStorage';
-import { resolveMahalleTkgmFromLocationsLabel } from '../../src/utils/resolveMahalleTkgmFromLocations';
+import { resolveTkgmFor3dDesignOpen } from '../../src/utils/parcel3dOpenResolve';
 
 /**
  * Günlük sorgu limiti aşıldığında fırlatılan özel hata sınıfı.
@@ -265,7 +278,12 @@ export default function Index() {
 
   const [is3DMode, setIs3DMode] = useState(false);
   const [mapViewKey, setMapViewKey] = useState(0);
-  const [mapDefaultSettings, setMapDefaultSettings] = useState({ centerCoordinate: [34.0, 39.0] as [number, number], zoomLevel: 4, pitch: 0, heading: 0 });
+  const [mapDefaultSettings, setMapDefaultSettings] = useState({
+    centerCoordinate: TURKEY_MAP_CENTER,
+    zoomLevel: TURKEY_MAP_ZOOM,
+    pitch: 0,
+    heading: 0,
+  });
   // Kredi bakiyesi state
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [isLoadingCredit, setIsLoadingCredit] = useState(false);
@@ -286,60 +304,6 @@ export default function Index() {
   const route = useRoute();
   const navigation = useNavigation();
 
-  const handleIncomingQueryUrl = useCallback((url: string) => {
-    if (!url) return;
-    const isProParcelDeep = url.startsWith('proparcel://query?');
-    const isProParcelWeb = url.includes('://proparcel.com/query?') || url.includes('://www.proparcel.com/query?');
-    if (!isProParcelDeep && !isProParcelWeb) return;
-
-    const qs = url.split('?')[1] || '';
-    if (!qs) return;
-    try {
-      const params = new URLSearchParams(qs);
-      const ada = params.get('ada');
-      const parsel = params.get('parsel');
-      const mtv = params.get('mahalleTkgmValue');
-      const lat = params.get('lat');
-      const lon = params.get('lon');
-
-      let payload: any | null = null;
-      if (ada && parsel && mtv) {
-        const n = Number(mtv);
-        if (!isNaN(n)) {
-          payload = { mahalleTkgmValue: n, mahalle: '', ada, parsel };
-        }
-      } else if (lat && lon) {
-        const nlat = Number(lat);
-        const nlon = Number(lon);
-        if (!isNaN(nlat) && !isNaN(nlon)) {
-          payload = { lat: nlat, lon: nlon };
-        }
-      }
-
-      if (!payload) return;
-      pendingDeepLinkPayloadRef.current = payload;
-      // Basit moda çek
-      if (isProMode) setIsProMode(false);
-    } catch (_) {}
-  }, [isProMode]);
-
-  // App installed iken tarayıcıdan proparcel:// açılırsa buraya düşer
-  useEffect(() => {
-    let sub: any = null;
-    Linking.getInitialURL().then((url) => {
-      if (url) handleIncomingQueryUrl(url);
-    });
-    // RN 0.81+: addEventListener returns subscription
-    // @ts-ignore
-    sub = Linking.addEventListener('url', (e: any) => {
-      const url = e?.url;
-      if (url) handleIncomingQueryUrl(url);
-    });
-    return () => {
-      try { sub?.remove?.(); } catch (_) {}
-    };
-  }, [handleIncomingQueryUrl]);
-  
   // Navigation params üzerinden gelen pro query'yi işle (expert-requests -> "Görüntüle" butonu)
   useEffect(() => {
     const params = route.params as { proQueryMahalle?: number; proQueryAda?: string; proQueryParsel?: string } | undefined;
@@ -360,28 +324,16 @@ export default function Index() {
     }
   }, [route.params, isProMode, navigation]);
 
-  // Install Referrer'dan gelen deferred deep link'i ilk index açılışında uygula
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const dl = await storageService.getDeferredOpenDeepLink();
-        if (cancelled) return;
-        if (dl) {
-          await storageService.clearDeferredOpenDeepLink();
-          handleIncomingQueryUrl(dl);
-        }
-      } catch (_) {}
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [handleIncomingQueryUrl]);
-
   // Profil state (avatar için)
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   
   const [parcelData, setParcelData] = useState<ParcelData | null>(null);
+  /** Parsel sorgu sheet: il / ilçe / mahalle idari sınırı */
+  const [adminBoundary, setAdminBoundary] = useState<{
+    level: AdminBoundaryLevel;
+    geometry: GeoJsonGeometry;
+  } | null>(null);
+  const hierarchyMapReqRef = useRef(0);
   const [isLoadingParcel, setIsLoadingParcel] = useState(false);
   const [parcelModalVisible, setParcelModalVisible] = useState(false);
   const [myQueriesVisible, setMyQueriesVisible] = useState(false);
@@ -536,6 +488,10 @@ export default function Index() {
   const [homeTextBoxEditVisible, setHomeTextBoxEditVisible] = useState(false);
   const [homeTextBoxEditShapeId, setHomeTextBoxEditShapeId] = useState<string | null>(null);
   const [homeTextBoxEditInitialText, setHomeTextBoxEditInitialText] = useState('');
+  const [homeTextBoxLayoutTick, setHomeTextBoxLayoutTick] = useState(0);
+  const bumpHomeTextBoxLayout = useCallback(() => {
+    setHomeTextBoxLayoutTick((t) => t + 1);
+  }, []);
   const [showEdgeMeasurements, setShowEdgeMeasurements] = useState(false);
   const [locationMenuVisible, setLocationMenuVisible] = useState(false);
   const [show3DSlider, setShow3DSlider] = useState(false);
@@ -576,8 +532,16 @@ export default function Index() {
   /** Pro sorgu capture anında güncel parsel (state commit gecikmesine karşı) */
   const proQueryCaptureParcelRef = useRef<ParcelData | null>(null);
   const modalContentRef = useRef<any>(null);
-  const camRef = useRef({ center: [34.0, 39.0] as [number, number], zoom: 4, pitch: 0, heading: 0 });
+  const camRef = useRef({
+    center: TURKEY_MAP_CENTER,
+    zoom: TURKEY_MAP_ZOOM,
+    pitch: 0,
+    heading: 0,
+  });
   const mapReadyRef = useRef({ didFinishLoadingMap: false, didFinishLoadingStyle: false, isIdle: false });
+  const mapTurkeyAppliedRef = useRef(false);
+  const locationBootstrapRef = useRef(false);
+  const permissionLaunchRequestedRef = useRef(false);
   /** Pro sorgu bitince harita görüntüsü yükle + son 30 gün detayına git (rapor ekranına değil). */
   const finishProQueryNavigation = useCallback(
     async (
@@ -638,6 +602,7 @@ export default function Index() {
           normalizedGeometry,
           snapshotId,
           identifiers,
+          parcelDesign: homeParcelPolygonDesign,
         });
         setScreenshotPriceOverride(null);
       }
@@ -658,7 +623,7 @@ export default function Index() {
       clearPendingPropertyTypeState();
       setInfoModeActive(false);
     },
-    [router, isAuthenticated, clearPendingPropertyTypeState],
+    [router, isAuthenticated, homeParcelPolygonDesign, clearPendingPropertyTypeState],
   );
   const isSharingRef = useRef(false);
   const menuItemClickedRef = useRef(false);
@@ -750,6 +715,10 @@ export default function Index() {
     () => homeMapSketchShapes.find((s) => s.id === homeMapSelectedShapeId) ?? null,
     [homeMapSketchShapes, homeMapSelectedShapeId]
   );
+
+  useEffect(() => {
+    if (homeMapSketchShapes.some((s) => s.type === "textbox")) bumpHomeTextBoxLayout();
+  }, [homeMapSketchShapes, bumpHomeTextBoxLayout]);
 
   const handleHomeDrawingToolboxClose = useCallback(() => {
     if (homeMapSelectedShapeId) {
@@ -1038,7 +1007,7 @@ export default function Index() {
     if (itemId === 'landing-intro') {
       router.push('landing', { skipIntro: true });
     } else if (itemId === 'emlak-vitrini') {
-      router.push('emlak-vitrini');
+      router.replace('emlak-vitrini-liste');
     } else if (itemId === 'son-30-gun-pro') {
       router.push('son-30-gun');
     } else if (itemId === 'promahalle') {
@@ -1062,7 +1031,7 @@ export default function Index() {
     } else if (itemId === 'uzman-gorusu-gelen') {
       router.push({ pathname: 'expert-requests', params: { mode: 'incoming' } });
     } else if (itemId === 'kullanici') {
-      router.push('profile');
+      router.push(isAuthenticated ? 'profile' : 'login');
     } else if (itemId === 'admin-panel') {
       router.push('admin');
     } else if (itemId === 'emsal-satis-bildir') {
@@ -1146,7 +1115,9 @@ export default function Index() {
     }
   }, [router, logout, openIlanVer, isAuthenticated]);
 
-  const handleCloseForm = useCallback(() => setActiveScreen(null), []);
+  const handleCloseForm = useCallback(() => {
+    setActiveScreen(null);
+  }, []);
 
   // Aktif parseli belirle:
   // - Pro mod: parcelData
@@ -1414,11 +1385,18 @@ export default function Index() {
 
   const handleShare = useCallback(
     createShareHandler({
-      parcelData: activeParcelData, mapRef, combinedContainerRef, mapReadyRef, isSharingRef,
-      setIsProcessingShare, setCapturedMapUri, setCapturedModalUri, setShareModalVisible,
-      getCoinAwardContext: () => shareCoinContextRef.current,
+      parcelData: activeParcelData,
+      mapRef,
+      combinedContainerRef,
+      mapReadyRef,
+      isSharingRef,
+      setIsProcessingShare,
+      setCapturedMapUri,
+      setCapturedModalUri,
+      setShareModalVisible,
+      parcelDesign: homeParcelPolygonDesign,
     }),
-    [activeParcelData]
+    [activeParcelData, homeParcelPolygonDesign]
   );
 
   const handleCameraPress = useCallback(() => {
@@ -1598,19 +1576,9 @@ export default function Index() {
         return;
       }
 
-      let mahalleTkgmValue: number | null =
-        entry.mahalleTkgmValue != null && Number.isFinite(Number(entry.mahalleTkgmValue))
-          ? Number(entry.mahalleTkgmValue)
-          : null;
-      let proparcelValue: number | null =
-        entry.proparcelValue != null && Number.isFinite(Number(entry.proparcelValue))
-          ? Number(entry.proparcelValue)
-          : null;
-
-      if (mahalleTkgmValue == null && proparcelValue == null) {
-        const fromLabel = resolveMahalleTkgmFromLocationsLabel(entry.mahalle);
-        if (fromLabel != null) mahalleTkgmValue = fromLabel;
-      }
+      const resolved = resolveTkgmFor3dDesignOpen(entry);
+      let mahalleTkgmValue = resolved.mahalleTkgmValue;
+      let proparcelValue = resolved.proparcelValue;
 
       if (mahalleTkgmValue == null && proparcelValue == null) {
         Alert.alert(
@@ -1948,16 +1916,24 @@ export default function Index() {
     [closeMenu, isProMode, handleAdaParselSubmit]
   );
 
-  // Basit moda geçtikten sonra pending payload varsa otomatik sorgu çalıştır
+  // Deep link (App.tsx) veya pro→basit geçiş sonrası basit sorgu
   useEffect(() => {
+    const params = route.params as { deepLinkSimpleQuery?: SimpleQueryDeepLinkPayload } | undefined;
+    if (params?.deepLinkSimpleQuery) {
+      pendingDeepLinkPayloadRef.current = params.deepLinkSimpleQuery;
+      navigation.setParams({ deepLinkSimpleQuery: undefined } as any);
+      if (isProMode) {
+        setIsProMode(false);
+        return;
+      }
+    }
     if (isProMode) return;
     const payload = pendingDeepLinkPayloadRef.current;
     if (!payload) return;
     pendingDeepLinkPayloadRef.current = null;
-    // Ada/Parsel formunu kapat, direkt sorgula
     setActiveScreen(null);
     handleAdaParselSubmit(payload);
-  }, [isProMode, handleAdaParselSubmit]);
+  }, [route.params, isProMode, handleAdaParselSubmit, navigation]);
   
   // Pro moda geçtikten sonra navigation'dan gelen pro query varsa otomatik çalıştır
   useEffect(() => {
@@ -1972,13 +1948,183 @@ export default function Index() {
   }, [isProMode, handleAdaParselSubmit]);
 
   const toggleMode = () => setIsProMode(prev => !prev);
+  const applyMapCamera = useCallback(
+    (center: [number, number], zoom: number, animated = true) => {
+      if (!cameraRef.current?.setCamera) return false;
+      isProgrammaticMoveRef.current = true;
+      if (programmaticTimerRef.current) clearTimeout(programmaticTimerRef.current);
+      const pitch = camRef.current.pitch || 0;
+      const heading = camRef.current.heading || 0;
+      camRef.current = { center, zoom, pitch, heading };
+      // defaultSettings güncellemesi Android'de Camera remount → izin sonrası çökme
+      try {
+        cameraRef.current.setCamera({
+          centerCoordinate: center,
+          zoomLevel: zoom,
+          pitch,
+          heading,
+          animationDuration: animated ? 800 : 0,
+        });
+      } catch (camErr) {
+        if (__DEV__) console.warn("[Index] setCamera:", camErr);
+        return false;
+      }
+      programmaticTimerRef.current = setTimeout(() => {
+        isProgrammaticMoveRef.current = false;
+      }, animated ? 900 : 80);
+      return true;
+    },
+    [],
+  );
+
+  const focusTurkeyOnMap = useCallback(
+    (animated = false) => {
+      applyMapCamera(TURKEY_MAP_CENTER, TURKEY_MAP_ZOOM, animated);
+    },
+    [applyMapCamera],
+  );
+
+  const applyMapCameraWithRetry = useCallback(
+    async (center: [number, number], zoom: number, animated = true) => {
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        if (applyMapCamera(center, zoom, animated)) return true;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      return false;
+    },
+    [applyMapCamera],
+  );
+
+  const handleLocationHierarchySelect = useCallback(
+    async (sel: LocationHierarchySelection) => {
+      const reqId = ++hierarchyMapReqRef.current;
+      setAdminBoundary(null);
+      try {
+        const result = await loadLocationBoundaryForSelection(sel);
+        if (reqId !== hierarchyMapReqRef.current) return;
+        setAdminBoundary(
+          result.geometry ? { level: result.level, geometry: result.geometry } : null,
+        );
+        if (result.center != null && result.zoom != null) {
+          await applyMapCameraWithRetry(result.center, result.zoom, true);
+        }
+      } catch (err) {
+        if (__DEV__) console.warn('[Index] il/ilçe/mahalle harita:', err);
+      }
+    },
+    [applyMapCameraWithRetry],
+  );
+
+  const moveMapToUserLocation = useCallback(
+    async (
+      zoom: number,
+      options: { showBlueDot?: boolean; animated?: boolean } = {},
+    ): Promise<boolean> => {
+      const { showBlueDot = false, animated = true } = options;
+      try {
+        if (AppState.currentState !== "active") {
+          await waitForUiSettled(400);
+        }
+        const { longitude, latitude } = await getCurrentCoordinates();
+        const center: [number, number] = [longitude, latitude];
+        const moved = await applyMapCameraWithRetry(center, zoom, animated);
+        if (moved && showBlueDot) {
+          setUserLocation(center);
+          setShowUserLocation(true);
+        }
+        return moved;
+      } catch (err) {
+        if (__DEV__) console.warn("[Index] Konum alınamadı:", err);
+        return false;
+      }
+    },
+    [applyMapCameraWithRetry],
+  );
+
+  const focusUserLocationBootstrap = useCallback(
+    (animated = true) =>
+      moveMapToUserLocation(USER_BOOTSTRAP_ZOOM, { showBlueDot: false, animated }),
+    [moveMapToUserLocation],
+  );
+
+  const scheduleFocusUserLocation = useCallback(
+    (delayMs = 2000) => {
+      if (locationBootstrapRef.current) return;
+      locationBootstrapRef.current = true;
+      setTimeout(() => {
+        if (AppState.currentState !== "active") return;
+        void focusUserLocationBootstrap(true);
+      }, delayMs);
+    },
+    [focusUserLocationBootstrap],
+  );
+
+  const requestLocationPermissionOnLaunch = useCallback(async () => {
+    try {
+      const already = await hasAppLocationPermission();
+      if (already) {
+        scheduleFocusUserLocation(2500);
+        return;
+      }
+      const granted = await requestAppLocationPermission();
+      if (granted) {
+        scheduleFocusUserLocation(2500);
+      }
+    } catch (err) {
+      if (__DEV__) console.warn("[Index] Konum izni:", err);
+    }
+  }, [scheduleFocusUserLocation]);
+
+  const onHomeMapLoaded = useCallback(() => {
+    if (__DEV__) console.log("[Mapbox] Harita yüklendi");
+    if (!mapTurkeyAppliedRef.current) {
+      mapTurkeyAppliedRef.current = true;
+      focusTurkeyOnMap(false);
+    }
+  }, [focusTurkeyOnMap]);
+
+  useEffect(() => {
+    if (permissionLaunchRequestedRef.current) return;
+    permissionLaunchRequestedRef.current = true;
+    const t = setTimeout(() => {
+      void requestLocationPermissionOnLaunch();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [requestLocationPermissionOnLaunch]);
+
+  useEffect(() => {
+    const fallback = setTimeout(() => {
+      if (!mapTurkeyAppliedRef.current) {
+        mapTurkeyAppliedRef.current = true;
+        focusTurkeyOnMap(false);
+      }
+    }, 2000);
+    return () => clearTimeout(fallback);
+  }, [focusTurkeyOnMap]);
+
+  // Oturum kontrolü bitince harita [0,0] / Afrika'ya kaymışsa Türkiye'ye al (misafir açılış)
+  useEffect(() => {
+    if (isAuthLoading || !mapTurkeyAppliedRef.current) return;
+    const [lng, lat] = camRef.current.center;
+    const looksLikeWorldDefault =
+      (Math.abs(lng) < 1 && Math.abs(lat) < 1) ||
+      lat < 10 ||
+      lat > 50 ||
+      lng < 20 ||
+      lng > 50;
+    if (looksLikeWorldDefault && !parcelData?.geometry && simpleModeParcels.length === 0) {
+      focusTurkeyOnMap(false);
+    }
+  }, [isAuthLoading, parcelData?.geometry, simpleModeParcels.length, focusTurkeyOnMap]);
+
   const onCameraChanged = useCallback((e: any) => {
     if (isSharingRef.current) return;
     updateCamRefFromCameraChanged(e, camRef, isProgrammaticMoveRef);
+    bumpHomeTextBoxLayout();
     if (!isProgrammaticMoveRef.current && is3DMode && show3DSlider) {
       const p = e?.properties?.pitch; if (typeof p === 'number') setPitchValue(prev => Math.abs(prev - p) >= 2 ? p : prev);
     }
-  }, [is3DMode, show3DSlider]);
+  }, [is3DMode, show3DSlider, bumpHomeTextBoxLayout]);
   
   const toggle3DMode = () => {
     const n = !is3DMode; 
@@ -2730,16 +2876,40 @@ export default function Index() {
     }
   }, [pendingTkgmData, pendingCoordinates, is3DMode, router, isAuthenticated, applyShareSelectionToRequest, clearPendingPropertyTypeState, finishProQueryNavigation]);
 
-  const handleShowMyLocation = async () => {
-    menuItemClickedRef.current = true; setLocationMenuVisible(false);
-    if (!Location) return;
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') return;
-    const l = await Location.getCurrentPositionAsync({});
-    const c: [number, number] = [l.coords.longitude, l.coords.latitude];
-    setUserLocation(c); setShowUserLocation(true);
-    cameraRef.current?.setCamera({ centerCoordinate: c, zoomLevel: 16, animationDuration: 1000 });
-  };
+  const handleShowMyLocation = useCallback(async () => {
+    suppressGhostMapPress();
+    menuItemClickedRef.current = true;
+    setLocationMenuVisible(false);
+    setRulerQuickMenuVisible(false);
+    setHomeMapToolsSheetOpen(false);
+
+    try {
+      const granted = await requestAppLocationPermission();
+      if (!granted) {
+        showLocationPermissionAlert();
+        return;
+      }
+      await waitForUiSettled(400);
+      const ok = await moveMapToUserLocation(USER_MENU_LOCATION_ZOOM, {
+        showBlueDot: true,
+        animated: true,
+      });
+      if (!ok) {
+        Alert.alert(
+          "Konum alınamadı",
+          "GPS açık mı kontrol edin veya bir süre sonra tekrar deneyin.",
+          [{ text: "Tamam" }],
+        );
+      }
+    } catch (err) {
+      if (__DEV__) console.warn("[Index] handleShowMyLocation:", err);
+      Alert.alert(
+        "Konum alınamadı",
+        "GPS açık mı kontrol edin veya bir süre sonra tekrar deneyin.",
+        [{ text: "Tamam" }],
+      );
+    }
+  }, [suppressGhostMapPress, moveMapToUserLocation]);
 
   const handleGetDirections = () => {
     menuItemClickedRef.current = true;
@@ -2836,11 +3006,14 @@ export default function Index() {
         </View>
 
         <View style={styles.headerCenter}>
-          <Image
-            source={proparcelFavicon}
-            style={styles.headerLogo}
-            resizeMode="contain"
-          />
+          <View style={styles.headerLogoOrb}>
+            <Image
+              source={proparcelFavicon}
+              style={styles.headerLogo}
+              resizeMode="cover"
+              accessibilityLabel="ProParcel"
+            />
+          </View>
           <TouchableOpacity
             onPress={() => router.push('landing', { skipIntro: true })}
             activeOpacity={0.75}
@@ -3050,7 +3223,7 @@ export default function Index() {
                 key={mapViewKey} 
                 ref={mapRef} 
                 styleURL={Mapbox.StyleURL?.SatelliteStreet || Mapbox.StyleURL?.Default} 
-                style={styles.map} 
+                style={[styles.map, { backgroundColor: '#1e293b' }]} 
                 logoEnabled={false} 
                 attributionEnabled={false} 
                 scaleBarEnabled={false} 
@@ -3076,6 +3249,11 @@ export default function Index() {
                 onError={(error: any) => {
                   console.error('[Mapbox] Harita hatası:', error);
                 }}
+                onDidFinishLoadingMap={onHomeMapLoaded}
+                onDidFinishLoadingStyle={onHomeMapLoaded}
+                onMapLoadingError={(error: any) => {
+                  console.error('[Mapbox] Yükleme hatası:', error);
+                }}
               >
                 <Mapbox.Camera ref={cameraRef} defaultSettings={mapDefaultSettings} maxZoomLevel={22} minZoomLevel={2} />
                 {is3DMode && RasterDemSource && Terrain && (<RasterDemSource id="mapbox-dem" url="mapbox://mapbox.mapbox-terrain-dem-v1" tileSize={512} maxZoomLevel={15}><Terrain style={{ exaggeration: 1.2 }} /></RasterDemSource>)}
@@ -3092,6 +3270,25 @@ export default function Index() {
                   />
                 )}
                 
+                {adminBoundary?.geometry ? (
+                  <Mapbox.ShapeSource
+                    id="admin-boundary-source"
+                    shape={{
+                      type: 'Feature',
+                      geometry: adminBoundary.geometry,
+                      properties: { level: adminBoundary.level },
+                    }}
+                  >
+                    <Mapbox.LineLayer
+                      id="admin-boundary-line"
+                      style={{
+                        lineColor: ADMIN_BOUNDARY_STYLES[adminBoundary.level].stroke,
+                        lineWidth: 2.5,
+                      }}
+                    />
+                  </Mapbox.ShapeSource>
+                ) : null}
+
                 {/* Pro mod: Tek parsel çizimi - seçili parsel highlight */}
                 {isProMode && parcelData?.geometry && (() => {
                   const centroid = getParcelCentroid(parcelData.geometry);
@@ -3496,6 +3693,17 @@ export default function Index() {
                   setHomeMapSelectedShapeId((prev) => (prev === id ? null : id));
                 }}
               />
+              <TextBoxMapOverlay
+                shapes={homeMapSketchShapes}
+                mapRef={mapRef}
+                layoutTick={homeTextBoxLayoutTick}
+                selectedShapeId={homeMapSelectedShapeId}
+                onShapePress={(id) => {
+                  if (homeMapShapeDrawingMode === 'pen') return;
+                  setHomeMapSelectedShapeId((prev) => (prev === id ? null : id));
+                }}
+                enabled={homeMapShapeDrawingMode !== 'pen' && !measurementMode}
+              />
               <FreehandDrawOverlay
                 active={homeMapShapeDrawingMode === 'pen'}
                 mode="pen"
@@ -3755,7 +3963,12 @@ export default function Index() {
           }
           return shouldShow;
         })()} />
-        <ParcelSearchModal visible={activeScreen === 'ada-parsel'} onClose={handleCloseForm} onSubmit={handleAdaParselSubmit} />
+        <ParcelSearchModal
+          visible={activeScreen === 'ada-parsel'}
+          onClose={handleCloseForm}
+          onSubmit={handleAdaParselSubmit}
+          onHierarchySelect={handleLocationHierarchySelect}
+        />
         <MyQueriesModal
           visible={myQueriesVisible}
           onClose={() => setMyQueriesVisible(false)}
@@ -3910,7 +4123,12 @@ export default function Index() {
                 <TouchableOpacity 
                   testID="show-my-location-opt" 
                   style={styles.locationSubMenuItem} 
-                  onPress={handleShowMyLocation}
+                  onPress={() => {
+                    suppressGhostMapPress();
+                    setTimeout(() => {
+                      void handleShowMyLocation();
+                    }, 0);
+                  }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <MaterialCommunityIcons name="map-marker" size={18} color="#fff" />
@@ -4216,7 +4434,11 @@ export default function Index() {
           onSave={(nextText) => {
             if (!homeTextBoxEditShapeId) return;
             setHomeMapSketchShapes((prev) =>
-              prev.map((s) => (s.id === homeTextBoxEditShapeId ? { ...s, text: nextText } : s))
+              prev.map((s) =>
+                s.id === homeTextBoxEditShapeId
+                  ? patchTextBoxShape(s, { text: String(nextText ?? "") })
+                  : s
+              )
             );
             setHomeTextBoxEditVisible(false);
             setHomeTextBoxEditShapeId(null);
@@ -4245,7 +4467,7 @@ export default function Index() {
             creditBalance={creditBalance}
             onPressProfile={() => {
               closeMenu();
-              router.push('profile');
+              router.push(isAuthenticated ? 'profile' : 'login');
             }}
             onPressCredits={() => {
               closeMenu();
@@ -5198,14 +5420,25 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#1e293b',
   },
-  headerLogo: {
+  headerLogoOrb: {
     width: 28,
     height: 28,
+    borderRadius: 14,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(8, 26, 55, 0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 223, 255, 0.35)',
     shadowColor: '#38bdf8',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.55,
     shadowRadius: 10,
     ...(Platform.OS === 'android' ? { elevation: 6 } : {}),
+  },
+  headerLogo: {
+    width: 28,
+    height: 28,
   },
   headerButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: '#334155', borderRadius: 6 },
   // Topbar VIP rozeti
@@ -5216,7 +5449,7 @@ const styles = StyleSheet.create({
   headerModeImg: { width: 34, height: 34 },
   // Ana sayfa coin alanı: 3D sayfası ölçülerine göre
   headerTitle: { fontSize: 17, fontWeight: '700', color: '#fff', letterSpacing: 0.2 },
-  content: { flex: 1, backgroundColor: '#f5f5f5', position: 'relative', overflow: 'visible' },
+  content: { flex: 1, backgroundColor: '#1e293b', position: 'relative', overflow: 'visible' },
   homeContainer: { flex: 1 },
   mapContainer: { flex: 1 },
   map: { flex: 1 },

@@ -20,6 +20,7 @@ import {
   extractSmartQueryFromText,
   type SmartQueryExtractResponse,
 } from '../services/smartQueryService';
+import type { LocationHierarchySelection } from '../src/utils/locationHierarchyMap';
 
 type TabKey = 'parcel' | 'smart';
 
@@ -204,12 +205,14 @@ interface ParcelSearchModalProps {
   visible: boolean;
   onClose: () => void;
   onSubmit?: (payload: ParcelSubmitPayload) => void | Promise<void>;
+  onHierarchySelect?: (selection: LocationHierarchySelection) => void;
 }
 
 export default function ParcelSearchModal({
   visible,
   onClose,
   onSubmit,
+  onHierarchySelect,
 }: ParcelSearchModalProps) {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabKey>('parcel');
@@ -360,7 +363,13 @@ export default function ParcelSearchModal({
 
         <BottomSheetScrollView style={styles.body} contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
           {tab === 'parcel' ? (
-            <AdaParselForm onClose={onClose} onSubmit={onSubmit} variant="dark" inBottomSheet />
+            <AdaParselForm
+              onClose={onClose}
+              onSubmit={onSubmit}
+              variant="dark"
+              inBottomSheet
+              onHierarchySelect={onHierarchySelect}
+            />
           ) : (
             <View style={styles.smartContainer}>
               <View style={styles.smartCard}>

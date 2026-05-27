@@ -14,6 +14,12 @@ export type ProfileSectionId =
   | "ayarlar"
   | "danisman";
 
+/** Profilden açılan alt ekranlarda geri dönüş hedefi */
+export type ProfileReturnRouteParams = {
+  returnScreen?: "profile";
+  profileSection?: ProfileSectionId;
+};
+
 export const PROFILE_SECTION_LABELS: Record<ProfileSectionId, string> = {
   genel: "Genel Bakış",
   puan_yorumlar: "Puan ve yorumlar",

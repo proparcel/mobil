@@ -4,7 +4,7 @@
  * Yeni kullanıcı kaydı - Bireysel/Kurumsal + OTP akışı.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -15,7 +15,9 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../../src/hooks/useNavigation";
 import { useAuth } from "../../contexts/AuthContext";
@@ -23,8 +25,30 @@ import { authService } from "../../../services/authService";
 import { storageService } from "../../../services/storageService";
 import { StatusBar } from "react-native";
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
+import { LandingLegalFooter } from "../../../components/landing/LandingLegalFooter";
+import { AddressPickerModal, type AddressValue } from "../../../components/app/AddressPickerModal";
 
 type MemberType = "individual" | "consultant" | "corporate";
+type CorporateType = "emlak" | "spk" | "lihkab";
+
+type CompanySearchItem = {
+  id?: number;
+  company_name?: string;
+  name?: string;
+  title?: string;
+  vergi_no: string;
+  vergi_dairesi?: string;
+  corporate_type?: "emlak" | "spk" | "lihkab" | null;
+};
+
+function getCompanyDisplayName(company: CompanySearchItem | null): string {
+  if (!company) return "";
+  return (company.company_name || company.name || company.title || company.vergi_no || "").trim();
+}
+
+function getConsultantTypeFromCompany(company: CompanySearchItem | null): "emlak" | "spk" | "lihkab" {
+  return company?.corporate_type || "emlak";
+}
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -40,18 +64,34 @@ export default function RegisterScreen() {
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [referralCode, setReferralCode] = useState("");
   const [companyName, setCompanyName] = useState("");
-  const [emlakYetkiBelgeNo, setEmlakYetkiBelgeNo] = useState("");
+  const [corporateType, setCorporateType] = useState<CorporateType | null>(null);
+  const [companyLicenseNo, setCompanyLicenseNo] = useState("");
+  const [officeNo, setOfficeNo] = useState("");
+  const [spkTcNo, setSpkTcNo] = useState("");
   const [vergiNo, setVergiNo] = useState("");
   const [vergiDairesi, setVergiDairesi] = useState("");
-  const [companyVergiNo, setCompanyVergiNo] = useState("");
-  const [companyVergiCheck, setCompanyVergiCheck] = useState<{
-    checking: boolean;
-    exists?: boolean;
-    companyName?: string;
-    lastChecked?: string;
-    message?: string;
-  }>({ checking: false });
-  const lastCompanyVergiNoAlertedRef = useRef<string>("");
+  const [postalCode, setPostalCode] = useState("");
+  const [educationLevel, setEducationLevel] = useState<number | null>(null);
+  const [universityId, setUniversityId] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [customDepartment, setCustomDepartment] = useState("");
+  const [showCorporateAddressModal, setShowCorporateAddressModal] = useState(false);
+  const [corporateAddress, setCorporateAddress] = useState<AddressValue>({
+    cityId: null,
+    cityName: "",
+    districtId: null,
+    districtName: "",
+    quarterId: null,
+    quarterName: "",
+    quarterValue: null,
+    streetAndNumber: "",
+  });
+  const [companySearchText, setCompanySearchText] = useState("");
+  const [companySearchResults, setCompanySearchResults] = useState<CompanySearchItem[]>([]);
+  const [selectedCompany, setSelectedCompany] = useState<CompanySearchItem | null>(null);
+  const [isCompanySearching, setIsCompanySearching] = useState(false);
+  const [companySearchError, setCompanySearchError] = useState("");
+  const [isCompanyPickerOpen, setIsCompanyPickerOpen] = useState(false);
   const [otp, setOtp] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSending, setIsSending] = useState(false);
@@ -64,65 +104,59 @@ export default function RegisterScreen() {
     });
   }, []);
 
-  // Danışman: Firma vergi no canlı kontrol (10 hane girilince)
+  // Danışman: Firma arama (autocomplete)
   useEffect(() => {
     if (memberType !== "consultant") {
-      setCompanyVergiCheck({ checking: false });
+      setIsCompanySearching(false);
+      setCompanySearchResults([]);
+      setIsCompanyPickerOpen(false);
       return;
     }
 
-    const vkn = (companyVergiNo || "").trim();
-    if (!/^\d{10}$/.test(vkn)) {
-      setCompanyVergiCheck({ checking: false });
+    const q = companySearchText.trim();
+    if (q && /^\d+$/.test(q)) {
+      setIsCompanySearching(false);
+      setCompanySearchResults([]);
+      setCompanySearchError("Firma adı ile arama yapın.");
+      return;
+    }
+
+    if (!isCompanyPickerOpen) {
+      setIsCompanySearching(false);
+      setCompanySearchResults([]);
+      return;
+    }
+
+    if (selectedCompany && q === getCompanyDisplayName(selectedCompany)) {
+      setIsCompanySearching(false);
+      setCompanySearchResults([]);
+      setCompanySearchError("");
       return;
     }
 
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        setCompanyVergiCheck((s) => ({
-          ...s,
-          checking: true,
-          lastChecked: vkn,
-          message: undefined,
-        }));
-        const res = await authService.checkCompanyVergiNo(vkn);
+        setIsCompanySearching(true);
+        setCompanySearchError("");
+        const res = await authService.listCompanies(q, 20);
         if (cancelled) return;
 
-        const exists = !!res?.data?.exists;
-        const companyName = (res?.data as any)?.company_name as string | undefined;
-        setCompanyVergiCheck({
-          checking: false,
-          exists,
-          companyName: (companyName || "").trim() || undefined,
-          lastChecked: vkn,
-          message: res?.message,
-        });
-
-        if (!exists) {
-          setErrors((e) => ({
-            ...e,
-            companyVergiNo: "Bu vergi numarasıyla kayıtlı firma bulunamadı.",
-          }));
-        } else {
-          setErrors((e) => ({ ...e, companyVergiNo: "" }));
-        }
+        setCompanySearchResults((res.data || []).filter((company) => !!company.vergi_no));
+        if (!res.success) setCompanySearchError(res.message || "Firma araması yapılamadı.");
       } catch (e) {
         if (cancelled) return;
-        setCompanyVergiCheck({
-          checking: false,
-          exists: undefined,
-          lastChecked: vkn,
-          message: "Kontrol sırasında hata oluştu",
-        });
+        setCompanySearchError("Firma araması sırasında hata oluştu.");
+      } finally {
+        if (!cancelled) setIsCompanySearching(false);
       }
-    }, 600);
+    }, q ? 400 : 0);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [companyVergiNo, memberType]);
+  }, [companySearchText, isCompanyPickerOpen, memberType, selectedCompany]);
 
   /**
    * Form validasyonu
@@ -163,8 +197,17 @@ export default function RegisterScreen() {
       if (!companyName) {
         newErrors.companyName = "Firma adı gereklidir";
       }
-      if (!emlakYetkiBelgeNo || emlakYetkiBelgeNo.length !== 7 || !/^\d{7}$/.test(emlakYetkiBelgeNo)) {
-        newErrors.emlakYetkiBelgeNo = "7 haneli emlak yetki belge no gereklidir";
+      if (!corporateType) {
+        newErrors.corporateType = "Firma tipi seçiniz";
+      }
+      if (!companyLicenseNo) {
+        newErrors.companyLicenseNo = "Lisans / yetki belge no gereklidir";
+      }
+      if (corporateType === "spk" && (!spkTcNo || !/^\d{11}$/.test(spkTcNo))) {
+        newErrors.spkTcNo = "SPK için 11 haneli TC kimlik no gereklidir";
+      }
+      if (corporateType === "lihkab" && !officeNo.trim()) {
+        newErrors.officeNo = "Lihkab büro için büro no gereklidir";
       }
       if (!vergiNo || vergiNo.length !== 10 || !/^\d{10}$/.test(vergiNo)) {
         newErrors.vergiNo = "10 haneli vergi no gereklidir";
@@ -172,25 +215,73 @@ export default function RegisterScreen() {
       if (!vergiDairesi) {
         newErrors.vergiDairesi = "Vergi dairesi gereklidir";
       }
+      if (!corporateAddress.cityId || !corporateAddress.districtId || !corporateAddress.quarterValue) {
+        newErrors.address = "Adres için il, ilçe ve mahalle seçiniz";
+      }
+      if (!corporateAddress.streetAndNumber.trim()) {
+        newErrors.streetAndNumber = "Sokak ve numara bilgisi gereklidir";
+      }
+      if (corporateType === "spk") {
+        if (educationLevel === null) {
+          newErrors.educationLevel = "Mezuniyet seviyesi seçiniz";
+        }
+        if ((educationLevel === 1 || educationLevel === 2) && !universityId.trim()) {
+          newErrors.universityId = "Üniversite ID gereklidir";
+        }
+      }
     }
 
     // Danışman için ek alanlar
     if (memberType === "consultant") {
-      if (!companyVergiNo || companyVergiNo.length !== 10 || !/^\d{10}$/.test(companyVergiNo)) {
-        newErrors.companyVergiNo = "10 haneli firma vergi no gereklidir";
-      } else {
-        // Firma varlık kontrolü
-        const checkedSame = companyVergiCheck.lastChecked === companyVergiNo;
-        if (companyVergiCheck.checking) {
-          newErrors.companyVergiNo = "Firma vergi numarası doğrulanıyor...";
-        } else if (!checkedSame || companyVergiCheck.exists !== true) {
-          newErrors.companyVergiNo = "Bu vergi numarasıyla kayıtlı firma bulunamadı.";
-        }
+      if (!selectedCompany) {
+        newErrors.companyPicker = "Lütfen listeden firma seçiniz";
       }
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const buildRegisterData = () => {
+    const selectedCompanyVergiNo = (selectedCompany?.vergi_no || "").trim();
+
+    return {
+      member_type: memberType,
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      phone_number: phoneNumber,
+      password,
+      password_confirm: passwordConfirm,
+      referral_code: referralCode?.trim() || undefined,
+      ...(memberType === "consultant" && selectedCompanyVergiNo && {
+        consultant_type: getConsultantTypeFromCompany(selectedCompany),
+        consultant_license_no: "",
+        company_vergi_no: selectedCompanyVergiNo,
+      }),
+      ...(memberType === "corporate" && {
+        corporate_type: corporateType || undefined,
+        company_name: companyName,
+        company_license_no: companyLicenseNo,
+        office_no: corporateType === "lihkab" ? officeNo.trim() : undefined,
+        spk_tc_no: corporateType === "spk" ? spkTcNo : undefined,
+        vergi_no: vergiNo,
+        vergi_dairesi: vergiDairesi,
+        city_id: corporateAddress.cityId || undefined,
+        district_id: corporateAddress.districtId || undefined,
+        quarter_id: corporateAddress.quarterId || undefined,
+        quarter_value: corporateAddress.quarterValue || undefined,
+        city_name: corporateAddress.cityName || undefined,
+        district_name: corporateAddress.districtName || undefined,
+        quarter_name: corporateAddress.quarterName || undefined,
+        street_and_number: corporateAddress.streetAndNumber.trim(),
+        postal_code: postalCode.trim() || undefined,
+        education_level: educationLevel ?? undefined,
+        university_id: universityId.trim() ? Number(universityId.trim()) : undefined,
+        department_id: departmentId.trim() ? Number(departmentId.trim()) : undefined,
+        custom_department: customDepartment.trim() || undefined,
+      }),
+    };
   };
 
   /** API errors içinden kayıt-varlığı uyarı metnini üretir */
@@ -208,25 +299,7 @@ export default function RegisterScreen() {
   const handleDevam = async () => {
     if (!validateForm()) return;
 
-    const registerData = {
-      member_type: memberType,
-      first_name: firstName,
-      last_name: lastName,
-      email,
-      phone_number: phoneNumber,
-      password,
-      password_confirm: passwordConfirm,
-      referral_code: referralCode?.trim() || undefined,
-      ...(memberType === "consultant" && {
-        company_vergi_no: companyVergiNo,
-      }),
-      ...(memberType === "corporate" && {
-        company_name: companyName,
-        emlak_yetki_belge_no: emlakYetkiBelgeNo,
-        vergi_no: vergiNo,
-        vergi_dairesi: vergiDairesi,
-      }),
-    };
+    const registerData = buildRegisterData();
 
     setIsSending(true);
     setErrors({});
@@ -273,25 +346,7 @@ export default function RegisterScreen() {
       return;
     }
 
-    const registerData = {
-      member_type: memberType,
-      first_name: firstName,
-      last_name: lastName,
-      email,
-      phone_number: phoneNumber,
-      password,
-      password_confirm: passwordConfirm,
-      referral_code: referralCode?.trim() || undefined,
-      ...(memberType === "consultant" && {
-        company_vergi_no: companyVergiNo,
-      }),
-      ...(memberType === "corporate" && {
-        company_name: companyName,
-        emlak_yetki_belge_no: emlakYetkiBelgeNo,
-        vergi_no: vergiNo,
-        vergi_dairesi: vergiDairesi,
-      }),
-    };
+    const registerData = buildRegisterData();
 
     setOtpModalError("");
 
@@ -315,7 +370,7 @@ export default function RegisterScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.safe} edges={["top"]}>
       <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.topbar}>
         <TouchableOpacity
@@ -491,44 +546,105 @@ export default function RegisterScreen() {
             {memberType === "consultant" && (
               <>
                 <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Çalıştığınız Firmanın Vergi No *</Text>
-                  <TextInput
-                    style={[styles.input, errors.companyVergiNo && styles.inputError]}
-                    placeholder="10 haneli vergi no"
-                    placeholderTextColor="#999"
-                    keyboardType="number-pad"
-                    maxLength={10}
-                    value={companyVergiNo}
-                    onChangeText={(text) => {
-                      setCompanyVergiNo(text.replace(/\D/g, ""));
-                      if (errors.companyVergiNo) setErrors((e) => ({ ...e, companyVergiNo: "" }));
+                  <Text style={styles.label}>Firma Seç</Text>
+                  <TouchableOpacity
+                    style={[styles.select2Button, errors.companyPicker && styles.inputError]}
+                    onPress={() => {
+                      setCompanySearchText(selectedCompany ? getCompanyDisplayName(selectedCompany) : "");
+                      setCompanySearchError("");
+                      setIsCompanyPickerOpen((open) => !open);
                     }}
-                    onEndEditing={() => {
-                      const vkn = (companyVergiNo || "").trim();
-                      const checkedSame = companyVergiCheck.lastChecked === vkn;
-                      if (/^\d{10}$/.test(vkn) && checkedSame && companyVergiCheck.exists === false) {
-                        if (lastCompanyVergiNoAlertedRef.current !== vkn) {
-                          lastCompanyVergiNoAlertedRef.current = vkn;
-                          Alert.alert("Uyarı", "Bu vergi numarasıyla kayıtlı firma bulunamadı.");
-                        }
-                      }
-                    }}
-                  />
-                  {companyVergiCheck.checking && companyVergiNo.length === 10 ? (
-                    <Text style={{ marginTop: 6, color: "#666", fontSize: 12 }}>
-                      Firma doğrulanıyor...
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.select2ButtonText,
+                        !selectedCompany && styles.select2Placeholder,
+                      ]}
+                    >
+                      {selectedCompany ? getCompanyDisplayName(selectedCompany) : "Listeden firma seçin"}
                     </Text>
+                    <Ionicons name="chevron-down" size={18} color="#64748b" />
+                  </TouchableOpacity>
+                  {isCompanyPickerOpen ? (
+                    <View style={styles.select2Dropdown}>
+                      <TextInput
+                        style={styles.select2SearchInput}
+                        placeholder="Firma adı ile ara"
+                        placeholderTextColor="#999"
+                        value={companySearchText}
+                        onChangeText={(text) => {
+                          setCompanySearchText(text);
+                          setCompanySearchError("");
+                        }}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                      />
+
+                      {isCompanySearching ? (
+                        <View style={styles.companyPickerStatus}>
+                          <ActivityIndicator color="#1a73e8" />
+                          <Text style={styles.helperText}>Firma listesi yükleniyor...</Text>
+                        </View>
+                      ) : null}
+
+                      {companySearchError ? (
+                        <Text style={styles.fieldError}>{companySearchError}</Text>
+                      ) : null}
+
+                      {!isCompanySearching && !companySearchError && companySearchResults.length === 0 ? (
+                        <Text style={styles.helperText}>Firma adı yazarak listeden seçim yapın.</Text>
+                      ) : null}
+
+                      {companySearchResults.length > 0 ? (
+                        <ScrollView style={styles.companyResults} keyboardShouldPersistTaps="handled">
+                          {companySearchResults.map((company) => {
+                            const displayName = getCompanyDisplayName(company);
+                            return (
+                              <TouchableOpacity
+                                key={`${company.vergi_no}-${company.id || displayName}`}
+                                style={styles.companyResultItem}
+                                onPress={() => {
+                                  setSelectedCompany(company);
+                                  setCompanySearchText(displayName);
+                                  setCompanySearchResults([]);
+                                  setCompanySearchError("");
+                                  setIsCompanyPickerOpen(false);
+                                  if (errors.companyPicker) setErrors((e) => ({ ...e, companyPicker: "" }));
+                                }}
+                              >
+                                <Text style={styles.companyResultTitle}>{displayName}</Text>
+                                {company.vergi_dairesi ? (
+                                  <Text style={styles.companyResultMeta}>{company.vergi_dairesi}</Text>
+                                ) : null}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      ) : null}
+                    </View>
                   ) : null}
-                  {!companyVergiCheck.checking &&
-                  companyVergiNo.length === 10 &&
-                  companyVergiCheck.lastChecked === companyVergiNo &&
-                  companyVergiCheck.exists === true ? (
-                    <Text style={{ marginTop: 6, color: "#198754", fontSize: 12 }}>
-                      Firma bulundu{companyVergiCheck.companyName ? `: ${companyVergiCheck.companyName}` : ""}
-                    </Text>
+                  {selectedCompany ? (
+                    <View style={styles.selectedCompanyBox}>
+                      <View style={styles.selectedCompanyText}>
+                        <Text style={styles.selectedCompanyTitle}>{getCompanyDisplayName(selectedCompany)}</Text>
+                        {selectedCompany.vergi_dairesi ? (
+                          <Text style={styles.selectedCompanyMeta}>{selectedCompany.vergi_dairesi}</Text>
+                        ) : null}
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setSelectedCompany(null);
+                          setCompanySearchText("");
+                          setIsCompanyPickerOpen(true);
+                        }}
+                      >
+                        <Text style={styles.clearCompanyText}>Kaldır</Text>
+                      </TouchableOpacity>
+                    </View>
                   ) : null}
-                  {errors.companyVergiNo ? (
-                    <Text style={styles.fieldError}>{errors.companyVergiNo}</Text>
+                  {errors.companyPicker ? (
+                    <Text style={styles.fieldError}>{errors.companyPicker}</Text>
                   ) : null}
                 </View>
               </>
@@ -537,7 +653,6 @@ export default function RegisterScreen() {
             {/* Corporate Fields */}
             {memberType === "corporate" && (
               <>
-                {/* Company Name */}
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>Firma Marka/Ünvan *</Text>
                   <TextInput
@@ -555,31 +670,110 @@ export default function RegisterScreen() {
                   ) : null}
                 </View>
 
-                {/* Emlak Yetki Belge No */}
                 <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Emlak Yetki Belge No *</Text>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      errors.emlakYetkiBelgeNo && styles.inputError,
-                    ]}
-                    placeholder="7 haneli kod"
-                    placeholderTextColor="#999"
-                    keyboardType="number-pad"
-                    maxLength={7}
-                    value={emlakYetkiBelgeNo}
-                    onChangeText={(text) => {
-                      setEmlakYetkiBelgeNo(text.replace(/\D/g, ""));
-                      if (errors.emlakYetkiBelgeNo)
-                        setErrors((e) => ({ ...e, emlakYetkiBelgeNo: "" }));
-                    }}
-                  />
-                  {errors.emlakYetkiBelgeNo ? (
-                    <Text style={styles.fieldError}>{errors.emlakYetkiBelgeNo}</Text>
+                  <Text style={styles.label}>Firma Tipi *</Text>
+                  <View style={styles.corporateTypeTabs}>
+                    {[
+                      { value: "emlak", label: "Emlak" },
+                      { value: "spk", label: "SPK" },
+                      { value: "lihkab", label: "LİHKAB" },
+                    ].map((item) => (
+                      <TouchableOpacity
+                        key={item.value}
+                        style={[
+                          styles.corporateTypeTab,
+                          corporateType === item.value && styles.corporateTypeTabActive,
+                        ]}
+                        onPress={() => {
+                          setCorporateType(item.value as CorporateType);
+                          if (item.value === "spk") {
+                            setEducationLevel(1);
+                          } else if (item.value === "lihkab") {
+                            setEducationLevel(null);
+                            setUniversityId("");
+                            setDepartmentId("");
+                            setCustomDepartment("");
+                          }
+                          if (errors.corporateType) setErrors((e) => ({ ...e, corporateType: "" }));
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.corporateTypeTabText,
+                            corporateType === item.value && styles.corporateTypeTabTextActive,
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {errors.corporateType ? (
+                    <Text style={styles.fieldError}>{errors.corporateType}</Text>
                   ) : null}
                 </View>
 
-                {/* Vergi No */}
+                {corporateType === "spk" ? (
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>TC Kimlik No *</Text>
+                    <TextInput
+                      style={[styles.input, errors.spkTcNo && styles.inputError]}
+                      placeholder="11 haneli TC kimlik no"
+                      placeholderTextColor="#999"
+                      keyboardType="number-pad"
+                      maxLength={11}
+                      value={spkTcNo}
+                      onChangeText={(text) => {
+                        setSpkTcNo(text.replace(/\D/g, ""));
+                        if (errors.spkTcNo) setErrors((e) => ({ ...e, spkTcNo: "" }));
+                      }}
+                    />
+                    {errors.spkTcNo ? (
+                      <Text style={styles.fieldError}>{errors.spkTcNo}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {corporateType === "lihkab" ? (
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Büro No *</Text>
+                    <TextInput
+                      style={[styles.input, errors.officeNo && styles.inputError]}
+                      placeholder="Büro no"
+                      placeholderTextColor="#999"
+                      value={officeNo}
+                      onChangeText={(text) => {
+                        setOfficeNo(text);
+                        if (errors.officeNo) setErrors((e) => ({ ...e, officeNo: "" }));
+                      }}
+                    />
+                    {errors.officeNo ? (
+                      <Text style={styles.fieldError}>{errors.officeNo}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Lisans / Yetki Belge No *</Text>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      errors.companyLicenseNo && styles.inputError,
+                    ]}
+                    placeholder={corporateType === "emlak" ? "7 haneli TTBS yetki belge no" : "Lisans / yetki belge no"}
+                    placeholderTextColor="#999"
+                    value={companyLicenseNo}
+                    onChangeText={(text) => {
+                      setCompanyLicenseNo(corporateType === "emlak" ? text.replace(/\D/g, "") : text);
+                      if (errors.companyLicenseNo)
+                        setErrors((e) => ({ ...e, companyLicenseNo: "" }));
+                    }}
+                  />
+                  {errors.companyLicenseNo ? (
+                    <Text style={styles.fieldError}>{errors.companyLicenseNo}</Text>
+                  ) : null}
+                </View>
+
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>Vergi No *</Text>
                   <TextInput
@@ -599,7 +793,6 @@ export default function RegisterScreen() {
                   ) : null}
                 </View>
 
-                {/* Vergi Dairesi */}
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>Vergi Dairesi *</Text>
                   <TextInput
@@ -617,6 +810,122 @@ export default function RegisterScreen() {
                     <Text style={styles.fieldError}>{errors.vergiDairesi}</Text>
                   ) : null}
                 </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Adres *</Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.select2Button,
+                      (errors.address || errors.streetAndNumber) && styles.inputError,
+                    ]}
+                    onPress={() => setShowCorporateAddressModal(true)}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.select2ButtonText,
+                        !corporateAddress.cityName && styles.select2Placeholder,
+                      ]}
+                    >
+                      {corporateAddress.cityName
+                        ? `${corporateAddress.cityName} / ${corporateAddress.districtName || "-"} / ${corporateAddress.quarterName || "-"}`
+                        : "İl, ilçe, mahalle ve sokak seçin"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={18} color="#64748b" />
+                  </TouchableOpacity>
+                  {corporateAddress.streetAndNumber ? (
+                    <Text style={styles.helperText}>{corporateAddress.streetAndNumber}</Text>
+                  ) : null}
+                  {errors.address ? <Text style={styles.fieldError}>{errors.address}</Text> : null}
+                  {errors.streetAndNumber ? <Text style={styles.fieldError}>{errors.streetAndNumber}</Text> : null}
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Posta Kodu (opsiyonel)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Posta kodu"
+                    placeholderTextColor="#999"
+                    keyboardType="number-pad"
+                    maxLength={10}
+                    value={postalCode}
+                    onChangeText={(text) => setPostalCode(text.replace(/\D/g, ""))}
+                  />
+                </View>
+
+                {corporateType === "spk" ? (
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.label}>Mezuniyet Bilgileri *</Text>
+                    <View style={styles.educationOptions}>
+                      {[
+                        { value: 0, label: "Lise" },
+                        { value: 2, label: "Ön Lisans" },
+                        { value: 1, label: "Lisans" },
+                      ].map((item) => (
+                        <TouchableOpacity
+                          key={item.value}
+                          style={[
+                            styles.educationOption,
+                            item.value !== 1 && styles.educationOptionDisabled,
+                            educationLevel === item.value && styles.educationOptionActive,
+                          ]}
+                          onPress={() => {
+                            setEducationLevel(item.value);
+                            if (errors.educationLevel) setErrors((e) => ({ ...e, educationLevel: "" }));
+                          }}
+                          disabled={item.value !== 1}
+                        >
+                          <Text
+                            style={[
+                              styles.educationOptionText,
+                              item.value !== 1 && styles.educationOptionTextDisabled,
+                              educationLevel === item.value && styles.educationOptionTextActive,
+                            ]}
+                          >
+                            {item.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    {errors.educationLevel ? (
+                      <Text style={styles.fieldError}>{errors.educationLevel}</Text>
+                    ) : null}
+
+                    {(educationLevel === 1 || educationLevel === 2) ? (
+                      <>
+                        <TextInput
+                          style={[styles.input, styles.stackedInput, errors.universityId && styles.inputError]}
+                          placeholder="Üniversite ID *"
+                          placeholderTextColor="#999"
+                          keyboardType="number-pad"
+                          value={universityId}
+                          onChangeText={(text) => {
+                            setUniversityId(text.replace(/\D/g, ""));
+                            if (errors.universityId) setErrors((e) => ({ ...e, universityId: "" }));
+                          }}
+                        />
+                        {errors.universityId ? (
+                          <Text style={styles.fieldError}>{errors.universityId}</Text>
+                        ) : null}
+                        <TextInput
+                          style={[styles.input, styles.stackedInput]}
+                          placeholder="Bölüm ID (opsiyonel)"
+                          placeholderTextColor="#999"
+                          keyboardType="number-pad"
+                          value={departmentId}
+                          onChangeText={(text) => setDepartmentId(text.replace(/\D/g, ""))}
+                        />
+                        <TextInput
+                          style={[styles.input, styles.stackedInput]}
+                          placeholder="Bölüm listede yoksa yazın"
+                          placeholderTextColor="#999"
+                          value={customDepartment}
+                          onChangeText={setCustomDepartment}
+                        />
+                      </>
+                    ) : null}
+                  </View>
+                ) : null}
               </>
             )}
 
@@ -680,7 +989,22 @@ export default function RegisterScreen() {
             <Text style={styles.loginLink}>Giriş Yap</Text>
           </TouchableOpacity>
         </View>
+
+        <LandingLegalFooter tone="light" />
       </KeyboardAwareScrollScreen>
+
+      <AddressPickerModal
+        visible={showCorporateAddressModal}
+        title="Kurumsal Adres"
+        initialValue={corporateAddress}
+        saveLabel="Adresi Seç"
+        onCancel={() => setShowCorporateAddressModal(false)}
+        onSave={(addr) => {
+          setCorporateAddress(addr);
+          setShowCorporateAddressModal(false);
+          setErrors((e) => ({ ...e, address: "", streetAndNumber: "" }));
+        }}
+      />
 
       {/* OTP Onay Modal */}
       <Modal
@@ -737,14 +1061,14 @@ export default function RegisterScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#1e293b",
   },
   scrollContent: {
     flexGrow: 1,
@@ -865,6 +1189,168 @@ const styles = StyleSheet.create({
     color: "#dc3545",
     fontSize: 12,
     marginTop: 4,
+  },
+  select2Button: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    backgroundColor: "#fafafa",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  select2ButtonText: {
+    flex: 1,
+    color: "#111827",
+    fontSize: 16,
+    marginRight: 12,
+  },
+  select2Placeholder: {
+    color: "#999",
+  },
+  select2Dropdown: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 8,
+    backgroundColor: "#fff",
+    padding: 10,
+  },
+  select2SearchInput: {
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    backgroundColor: "#f8fafc",
+  },
+  corporateTypeTabs: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  corporateTypeTab: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  corporateTypeTabActive: {
+    backgroundColor: "#1a73e8",
+    borderColor: "#1a73e8",
+  },
+  corporateTypeTabText: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  corporateTypeTabTextActive: {
+    color: "#fff",
+  },
+  educationOptions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  educationOption: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+    backgroundColor: "#fff",
+  },
+  educationOptionActive: {
+    backgroundColor: "#eff6ff",
+    borderColor: "#1a73e8",
+  },
+  educationOptionDisabled: {
+    opacity: 0.45,
+  },
+  educationOptionText: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  educationOptionTextDisabled: {
+    color: "#94a3b8",
+  },
+  educationOptionTextActive: {
+    color: "#1a73e8",
+  },
+  stackedInput: {
+    marginTop: 10,
+  },
+  helperText: {
+    marginTop: 6,
+    color: "#666",
+    fontSize: 12,
+  },
+  companyPickerStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+  },
+  companyResults: {
+    marginTop: 8,
+    maxHeight: 320,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 8,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+  },
+  companyResultItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  companyResultTitle: {
+    color: "#111827",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  companyResultMeta: {
+    color: "#64748b",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  selectedCompanyBox: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+    backgroundColor: "#eff6ff",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  selectedCompanyText: {
+    flex: 1,
+  },
+  selectedCompanyTitle: {
+    color: "#1e3a8a",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  selectedCompanyMeta: {
+    color: "#1d4ed8",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  clearCompanyText: {
+    color: "#1a73e8",
+    fontSize: 13,
+    fontWeight: "600",
   },
   button: {
     backgroundColor: "#1a73e8",

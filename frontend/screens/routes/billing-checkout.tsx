@@ -9,6 +9,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   ActivityIndicator,
   Alert,
   Image,
@@ -65,6 +66,43 @@ function statusDetail(status: string, pr?: HavalePaymentRequest | null) {
   if (status === "approved") return "Paketiniz aktif edildi.";
   if (status === "needs_revision") return pr.admin_note || "Yeni dekont veya bilgi gerekebilir.";
   return "";
+}
+
+const RECEIPT_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+
+async function pickReceiptFromFiles(): Promise<{ uri: string; name: string; type: string } | null> {
+  try {
+    const DocumentPicker = await import("expo-document-picker");
+    const result = await DocumentPicker.getDocumentAsync({
+      type: RECEIPT_MIME_TYPES,
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled || !result.assets?.[0]) return null;
+    const asset = result.assets[0];
+    const name = asset.name || `receipt.${asset.mimeType?.includes("pdf") ? "pdf" : "jpg"}`;
+    const type = asset.mimeType || (name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+    return { uri: asset.uri, name, type };
+  } catch (error) {
+    console.error("[BillingCheckout] document picker", error);
+    Alert.alert(
+      "Dosya seçici kullanılamıyor",
+      "Drive veya dosya yöneticisinden seçim için uygulamanın güncel sürümünü kurmanız gerekir. Şimdilik galeriden fotoğraf seçebilirsiniz."
+    );
+    return null;
+  }
+}
+
+async function pickReceiptFromGallery(): Promise<{ uri: string; name: string; type: string } | null> {
+  const result = await launchImageLibrary({
+    mediaType: "photo",
+    selectionLimit: 1,
+  });
+  if (result.didCancel || !result.assets?.[0]?.uri) return null;
+  const asset = result.assets[0];
+  const name = asset.fileName || "receipt.jpg";
+  const type = asset.type || "image/jpeg";
+  return { uri: asset.uri, name, type };
 }
 
 export default function BillingCheckoutScreen() {
@@ -189,28 +227,21 @@ export default function BillingCheckoutScreen() {
     paymentRequest &&
     !["pending_receipt", "needs_revision"].includes(paymentRequest.payment_status);
 
-  const handlePickReceipt = async () => {
+  const handlePickReceipt = async (source: "files" | "gallery") => {
     if (!canUploadReceipt || !paymentRequest || !selectedBankId) {
       setError("Banka seçin ve Mesafeli Satış Sözleşmesini onaylayın.");
       return;
     }
-    const result = await launchImageLibrary({
-      mediaType: "mixed",
-      selectionLimit: 1,
-    });
-    if (result.didCancel || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    const uri = asset.uri;
-    if (!uri) return;
-    const name = asset.fileName || `receipt.${asset.type?.includes("pdf") ? "pdf" : "jpg"}`;
-    const type = asset.type || "image/jpeg";
+    const file = source === "gallery" ? await pickReceiptFromGallery() : await pickReceiptFromFiles();
+    if (!file) return;
+
     setSubmitting(true);
     setError("");
     try {
       const { data: updated, error: uploadErr } = await uploadReceipt(
         paymentRequest.id,
         selectedBankId,
-        { uri, name, type }
+        file
       );
       if (updated) {
         setPaymentRequest(updated);
@@ -231,6 +262,14 @@ export default function BillingCheckoutScreen() {
   const copyIban = (iban: string) => {
     Clipboard.setString(iban.replace(/\s/g, ""));
     setSuccess("IBAN kopyalandı.");
+    setTimeout(() => setSuccess(""), 2000);
+  };
+
+  const copyReferenceCode = () => {
+    const code = paymentRequest?.payment_reference?.trim();
+    if (!code) return;
+    Clipboard.setString(code);
+    setSuccess("Referans kodu kopyalandı.");
     setTimeout(() => setSuccess(""), 2000);
   };
 
@@ -296,6 +335,12 @@ export default function BillingCheckoutScreen() {
             <View style={styles.card}>
               <Text style={styles.refLabel}>ÖDEME REFERANS KODUNUZ</Text>
               <Text style={styles.refCode}>{refCode}</Text>
+              {paymentRequest?.payment_reference ? (
+                <TouchableOpacity style={styles.copyRefBtn} onPress={copyReferenceCode} activeOpacity={0.85}>
+                  <Ionicons name="copy-outline" size={18} color="#1a5fb4" />
+                  <Text style={styles.copyRefText}>Referans kodunu kopyala</Text>
+                </TouchableOpacity>
+              ) : null}
               <Text style={styles.refHint}>
                 Havale açıklamasına bu kodu eksiksiz yazın. Ödeme sonrası dekont yükleyin.
               </Text>
@@ -334,6 +379,11 @@ export default function BillingCheckoutScreen() {
                   </View>
                   <Text style={styles.iban}>{bank.iban}</Text>
                   <Text style={styles.holder}>{bank.account_holder_name}</Text>
+                  {bank.qr_image_url ? (
+                    <TouchableOpacity onPress={() => setQrBank(bank)} activeOpacity={0.85}>
+                      <Image source={{ uri: bank.qr_image_url }} style={styles.qrThumb} resizeMode="contain" />
+                    </TouchableOpacity>
+                  ) : null}
                   <View style={styles.bankActions}>
                     <TouchableOpacity onPress={() => copyIban(bank.iban)}>
                       <Text style={styles.linkText}>IBAN kopyala</Text>
@@ -389,25 +439,53 @@ export default function BillingCheckoutScreen() {
         )}
       </ScrollView>
 
-      <Modal visible={receiptModalVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Dekont yükle</Text>
-            <Text style={styles.modalHint}>
-              JPG, PNG, WEBP veya PDF (en fazla 20MB). Tutar ve referans kodu otomatik okunur.
-            </Text>
-            <TouchableOpacity style={styles.primaryBtn} onPress={handlePickReceipt} disabled={submitting}>
-              {submitting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryBtnText}>Dosya seç ve gönder</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.modalCancel} onPress={() => setReceiptModalVisible(false)}>
-              <Text style={styles.mutedText}>İptal</Text>
-            </TouchableOpacity>
+      <Modal
+        visible={receiptModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReceiptModalVisible(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setReceiptModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={() => {}}>
+              <View style={styles.modalBox}>
+                <Text style={styles.modalTitle}>Dekont yükle</Text>
+                <Text style={styles.modalHint}>
+                  JPG, PNG, WEBP veya PDF (en fazla 20MB). Drive ve dosya yöneticisinden de seçebilirsiniz.
+                </Text>
+                <TouchableOpacity
+                  style={styles.primaryBtn}
+                  onPress={() => handlePickReceipt("files")}
+                  disabled={submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="folder-open-outline" size={20} color="#fff" style={styles.modalBtnIcon} />
+                      <Text style={styles.primaryBtnText}>Dosya / PDF seç</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.secondaryBtn, submitting && styles.primaryBtnDisabled]}
+                  onPress={() => handlePickReceipt("gallery")}
+                  disabled={submitting}
+                >
+                  <Ionicons name="images-outline" size={20} color="#1a5fb4" style={styles.modalBtnIcon} />
+                  <Text style={styles.secondaryBtnText}>Galeriden fotoğraf seç</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.modalCancel}
+                  onPress={() => setReceiptModalVisible(false)}
+                  disabled={submitting}
+                >
+                  <Text style={styles.mutedText}>İptal</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
 
       <Modal visible={!!qrBank} transparent animationType="fade">
@@ -483,6 +561,20 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 16, fontWeight: "700", color: "#1e293b", marginBottom: 12 },
   refLabel: { fontSize: 11, fontWeight: "700", color: "#64748b", letterSpacing: 0.5 },
   refCode: { fontSize: 22, fontWeight: "800", color: "#1a5fb4", marginTop: 6 },
+  copyRefBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(26, 95, 180, 0.25)",
+    backgroundColor: "#eff6ff",
+  },
+  copyRefText: { color: "#1a5fb4", fontWeight: "700", fontSize: 14 },
   refHint: { fontSize: 12, color: "#64748b", marginTop: 8, lineHeight: 18 },
   pkgMeta: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: "#e2e8f0" },
   pkgName: { fontSize: 15, fontWeight: "600", color: "#1e293b" },
@@ -513,17 +605,33 @@ const styles = StyleSheet.create({
   iban: { fontSize: 13, color: "#334155", marginTop: 6, fontFamily: "monospace" },
   holder: { fontSize: 12, color: "#64748b", marginTop: 2 },
   bankActions: { flexDirection: "row", gap: 16, marginTop: 8 },
+  qrThumb: { width: 96, height: 96, marginTop: 10, borderRadius: 8, backgroundColor: "#f8fafc" },
   linkText: { color: "#1a5fb4", fontWeight: "600", fontSize: 13 },
   summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12 },
   summaryAmount: { fontSize: 18, fontWeight: "700", color: "#1e293b" },
   consentRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 16 },
   consentText: { flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 },
   primaryBtn: {
+    flexDirection: "row",
     backgroundColor: "#1a5fb4",
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: "center",
+    justifyContent: "center",
   },
+  secondaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(26, 95, 180, 0.35)",
+    backgroundColor: "#fff",
+  },
+  secondaryBtnText: { color: "#1a5fb4", fontWeight: "700", fontSize: 15 },
+  modalBtnIcon: { marginRight: 8 },
   primaryBtnDisabled: { opacity: 0.5 },
   primaryBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: "#f1f5f9" },

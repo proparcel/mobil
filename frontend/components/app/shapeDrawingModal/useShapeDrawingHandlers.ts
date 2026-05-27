@@ -198,9 +198,8 @@ export function useShapeDrawingHandlers(args: Args) {
         setShapes((prev) => [...prev, shape]);
       }
       setShapeDrawingPoints([]);
-      setShapeDrawingMode(null);
     },
-    [shapeDrawingPoints, setShapeDrawingMode, setShapeDrawingPoints, setShapes, drawOptions]
+    [shapeDrawingPoints, setShapeDrawingPoints, setShapes, drawOptions]
   );
 
   return { handleShapeDrawingPress, openTextBoxEditor, finalizePolygonOrLine };

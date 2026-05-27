@@ -117,7 +117,29 @@ function RootCategoryRow({
   );
 }
 
+/** Menü / landing doğrudan `emlak-vitrini-liste` açar; bu route eski deep link için yönlendirir. */
 export default function EmlakVitriniScreen() {
+  const navigation = useNavigation<NavigationProp>();
+
+  useEffect(() => {
+    navigation.replace('emlak-vitrini-liste', {});
+  }, [navigation]);
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.headerBg} />
+      <View style={styles.centerState}>
+        <ActivityIndicator size="large" color={COLORS.accentBlue} />
+      </View>
+    </SafeAreaView>
+  );
+}
+
+/**
+ * Kategori → işlem türü → il sihirbazı (pasif; `EMLAK_VITRINI_WIZARD_ENABLED` ile açılabilir).
+ * Bkz. `mobile/doc/components/portal_list_modes.md`
+ */
+function EmlakVitriniWizardScreen() {
   const router = useRouter();
   const navigation = useNavigation<NavigationProp>();
   const [step, setStep] = useState<StepKey>('category');
@@ -525,3 +547,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.pageBg,
   },
 });
+
+/** Sihirbaz yeniden açılınca default export ile değiştirilebilir */
+export { EmlakVitriniWizardScreen };

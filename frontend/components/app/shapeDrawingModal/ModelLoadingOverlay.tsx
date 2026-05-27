@@ -40,7 +40,7 @@ export const ModelLoadingOverlay: React.FC<Props> = ({ visible, text, progress }
             </Text>
           )}
           <Text style={{ color: "#94a3b8", fontSize: 12, marginTop: 10, textAlign: "center" }}>
-            İlk indirme uzun sürebilir. İndirme bitince model `file://` cache’ten kullanılacak.
+            İlk indirme uzun sürebilir. Mapbox modeli sunucu URL'sinden yükler; tekrar kullanımda cache kullanılır.
           </Text>
         </View>
       </View>

@@ -135,17 +135,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
         // Determine what changed
         const serverRole = serverUser?.role || currentUser.role;
         const serverVipStartedAt = serverUser?.vip_started_at ?? currentUser.vip_started_at;
+        const serverMemberType = profile?.member_type || serverUser?.member_type;
         const nameChanged = derivedFullName && derivedFullName !== (currentUser.full_name || "").trim();
         const roleChanged = serverRole !== currentUser.role;
         const vipChanged = serverVipStartedAt !== currentUser.vip_started_at;
+        const memberTypeChanged =
+          Boolean(serverMemberType) && serverMemberType !== currentUser.member_type;
 
-        if (!nameChanged && !roleChanged && !vipChanged) return;
+        if (!nameChanged && !roleChanged && !vipChanged && !memberTypeChanged) return;
 
         const updatedUser: User = {
           ...currentUser,
           ...(nameChanged ? { full_name: derivedFullName } : {}),
           ...(roleChanged ? { role: serverRole } : {}),
           ...(vipChanged ? { vip_started_at: serverVipStartedAt } : {}),
+          ...(memberTypeChanged ? { member_type: serverMemberType } : {}),
         };
 
         setState((prev) => {

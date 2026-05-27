@@ -9,6 +9,7 @@ import {
   Image,
   ScrollView,
   StyleSheet,
+  StatusBar,
   Text,
   TextInput,
   TouchableOpacity,
@@ -240,6 +241,7 @@ export default function AiImageAnimationEditorScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
+      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
       <View style={styles.toolbar}>
         <TouchableOpacity onPress={() => router.back()} style={styles.toolbarBtn} accessibilityLabel="Geri">
           <Ionicons name="arrow-back" size={18} color={DE.text} />
@@ -254,7 +256,7 @@ export default function AiImageAnimationEditorScreen() {
       </View>
 
       <KeyboardAwareScrollScreen
-        headerHeight={52}
+        headerHeight={63}
         backgroundColor={DE.shell}
         style={styles.body}
         contentContainerStyle={[styles.bodyContent, { paddingBottom: 20 + insets.bottom }]}
@@ -391,19 +393,29 @@ export default function AiImageAnimationEditorScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DE.shell },
+  safe: { flex: 1, backgroundColor: "#1e293b" },
   toolbar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingBottom: 10,
-    backgroundColor: DE.toolbar,
-    borderBottomWidth: 1,
-    borderBottomColor: DE.border,
+    justifyContent: "space-between",
+    backgroundColor: "#1e293b",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 3,
+    borderBottomColor: "#3b82f6",
   },
-  toolbarBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  toolbarBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
   toolbarCenter: { flex: 1, alignItems: "center", paddingHorizontal: 8 },
-  toolbarTitle: { fontSize: 15, fontWeight: "800", color: DE.text },
+  toolbarTitle: { fontSize: 18, fontWeight: "bold", color: "#fff" },
   toolbarSub: { fontSize: 11, color: DE.muted, marginTop: 2 },
   body: { flex: 1, backgroundColor: DE.shell },
   bodyContent: { padding: 12, gap: 10 },

@@ -33,6 +33,7 @@ function toEntry(row: Parcel3dLicenseRow): Parcel3dEntry {
     mahalle: String(row.mahalle ?? "").trim(),
     ada: String(row.ada ?? "").trim(),
     parsel: String(row.parsel ?? "").trim(),
+    referenceId: String(row.reference_id ?? "").trim() || undefined,
   };
 }
 

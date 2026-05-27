@@ -4,7 +4,7 @@
  * Kredi paketleri satın alma sayfası.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -15,24 +15,16 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
-  Image,
   Modal,
   Dimensions,
 } from "react-native";
 
 const { height: WINDOW_HEIGHT } = Dimensions.get("window");
 
-const TepeCoinIcon = require("../../assets/images/TepeCoin.png");
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  Easing,
-  runOnJS,
-} from "react-native-reanimated";
 import { StatusBar } from "react-native";
 import { useRouter } from "../../src/hooks/useNavigation";
+import { useProfileAwareBack } from "../../src/utils/profileReturnNavigation";
 import { useAuth } from "../contexts/AuthContext";
 import { creditService } from "../../services/creditService";
 import { DJANGO_API_URL } from "../../config/api";
@@ -45,6 +37,7 @@ type CustomerType = "kurumsal" | "bireysel" | "ek_paket";
 
 export default function PricingScreen() {
   const router = useRouter();
+  const handleBack = useProfileAwareBack(() => router.back());
   const insets = useSafeAreaInsets();
   const { isAuthenticated } = useAuth();
 
@@ -73,29 +66,6 @@ export default function PricingScreen() {
     share: { bg: "rgba(39,103,73,0.1)", color: "#276749" },
     circle: { bg: "rgba(74,85,104,0.1)", color: "#4a5568" },
   };
-
-  // Bakiye kartındaki coin: tam dönüş (0→360°) soldan sağa, bitince sıfırlayıp tekrarla
-  const coinRotation = useSharedValue(0);
-  const runCoinRotation = useCallback(() => {
-    coinRotation.value = 0;
-    coinRotation.value = withTiming(
-      360,
-      { duration: 4000, easing: Easing.linear },
-      (finished) => {
-        "worklet";
-        if (finished) runOnJS(runCoinRotation)();
-      }
-    );
-  }, [coinRotation]);
-  useEffect(() => {
-    runCoinRotation();
-  }, [runCoinRotation]);
-  const animatedCoinStyle = useAnimatedStyle(() => ({
-    transform: [
-      { perspective: 400 },
-      { rotateY: `${coinRotation.value}deg` },
-    ],
-  }));
 
   /**
    * Paketleri ve bakiyeyi yükle
@@ -236,7 +206,7 @@ export default function PricingScreen() {
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.headerBtn}
-            onPress={() => router.back()}
+            onPress={handleBack}
             accessibilityLabel="Geri"
           >
             <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -258,7 +228,7 @@ export default function PricingScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBtn}
-          onPress={() => router.back()}
+          onPress={handleBack}
           accessibilityLabel="Geri"
         >
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -286,9 +256,7 @@ export default function PricingScreen() {
                 onPress={() => setCoinModalVisible(true)}
                 activeOpacity={0.9}
               >
-                <Animated.View style={animatedCoinStyle}>
-                  <Image source={TepeCoinIcon} style={styles.balanceTepeCoinIconLarge} resizeMode="contain" />
-                </Animated.View>
+                <Ionicons name="wallet-outline" size={36} color="#3b82f6" />
               </TouchableOpacity>
               <View style={styles.balanceCardInfoCol}>
                 <Text style={styles.balanceTitle}>Mevcut Bakiyeniz</Text>
@@ -313,7 +281,7 @@ export default function PricingScreen() {
         >
           <View style={styles.earnCardRow}>
             <View style={styles.earnCardIconWrap}>
-              <Image source={TepeCoinIcon} style={styles.earnCardIcon} resizeMode="contain" />
+              <Ionicons name="gift-outline" size={24} color="#3b82f6" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.earnCardTitle}>Tepe Coin Kazan!</Text>
@@ -407,7 +375,10 @@ export default function PricingScreen() {
                   >
                     <Ionicons name="close" size={28} color="#64748b" />
                   </TouchableOpacity>
-                  <Image source={TepeCoinIcon} style={styles.coinModalPng} resizeMode="contain" />
+                  <View style={styles.coinModalIconWrap}>
+                    <Ionicons name="information-circle-outline" size={48} color="#3b82f6" />
+                  </View>
+                  <Text style={styles.coinModalTitle}>Tepe Coin Nedir?</Text>
                   <View style={styles.coinModalScrollWrap}>
                     <ScrollView
                       style={styles.coinModalScroll}
@@ -461,7 +432,7 @@ export default function PricingScreen() {
                     {pkg.credits.toLocaleString("tr-TR")}
                   </Text>
                   <View style={styles.packageCreditsLabelRow}>
-                    <Image source={TepeCoinIcon} style={styles.packageTepeCoinIcon} resizeMode="contain" />
+                    <Ionicons name="layers-outline" size={18} color="#64748b" />
                     <Text style={styles.creditsLabel}>Tepe Coin</Text>
                   </View>
                   {showYearlyStyle && pkg.monthly_credits && (
@@ -521,11 +492,11 @@ export default function PricingScreen() {
                         : "12 Aylık Geçerlilik"}
                     </Text>
                   </View>
-                  {showYearlyStyle && (
+                  {showYearlyStyle && discountPct > 0 && (
                     <View style={[styles.feature, styles.featureHighlight]}>
                       <Ionicons name="pricetag" size={16} color="#f59e0b" />
                       <Text style={[styles.featureText, styles.featureTextHighlight]}>
-                        %40 Tasarruf
+                        %{discountPct} Tasarruf
                       </Text>
                     </View>
                   )}
@@ -581,7 +552,9 @@ export default function PricingScreen() {
         {/* Credit Usage Info */}
         <View style={styles.usageInfoSection}>
           <View style={styles.usageInfoHeader}>
-            <Image source={TepeCoinIcon} style={styles.usageInfoTepeCoinIcon} resizeMode="contain" />
+            <View style={styles.usageInfoHeaderIcon}>
+              <Ionicons name="help-circle-outline" size={22} color="#3b82f6" />
+            </View>
             <Text style={styles.usageInfoTitle}>Tepe Coin Nasıl Kullanılır?</Text>
           </View>
 
@@ -750,7 +723,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(59, 130, 246, 0.08)",
   },
-  earnCardIcon: { width: 26, height: 26 },
   earnCardTitle: { fontSize: 16, fontWeight: "900", color: "#1e293b" },
   earnCardSubtitle: { fontSize: 12, color: "#64748b", fontWeight: "600", marginTop: 4 },
   balanceCardInner: {
@@ -766,10 +738,6 @@ const styles = StyleSheet.create({
     padding: 2,
     backgroundColor: "rgba(59, 130, 246, 0.08)",
     borderRadius: 12,
-  },
-  balanceTepeCoinIconLarge: {
-    width: 72,
-    height: 72,
   },
   balanceCardInfoCol: {
     flex: 1,
@@ -820,9 +788,20 @@ const styles = StyleSheet.create({
     zIndex: 10,
     padding: 4,
   },
-  coinModalPng: {
-    width: 140,
-    height: 140,
+  coinModalIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(59, 130, 246, 0.08)",
+    marginBottom: 8,
+  },
+  coinModalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1e293b",
+    marginBottom: 4,
   },
   coinModalScrollWrap: {
     width: "100%",
@@ -985,10 +964,6 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 4,
   },
-  packageTepeCoinIcon: {
-    width: 22,
-    height: 22,
-  },
   creditsValue: {
     fontSize: 32,
     fontWeight: "bold",
@@ -997,7 +972,6 @@ const styles = StyleSheet.create({
   creditsLabel: {
     fontSize: 14,
     color: "#64748b",
-    marginTop: 4,
   },
   monthlyCredits: {
     fontSize: 12,
@@ -1103,9 +1077,13 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 20,
   },
-  usageInfoTepeCoinIcon: {
-    width: 24,
-    height: 24,
+  usageInfoHeaderIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(59, 130, 246, 0.08)",
   },
   usageInfoTitle: {
     fontSize: 18,

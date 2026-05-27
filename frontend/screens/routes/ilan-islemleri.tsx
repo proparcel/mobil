@@ -3,13 +3,15 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRouter } from '../../src/hooks/useNavigation';
+import { useProfileAwareBack } from '../../src/utils/profileReturnNavigation';
 
 export default function IlanIslemleriScreen() {
   const router = useRouter();
+  const handleBack = useProfileAwareBack(() => router.back());
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.title}>İlan İşlemleri</Text>

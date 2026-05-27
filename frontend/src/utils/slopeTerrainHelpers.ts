@@ -4,6 +4,90 @@ const MEDIA_BASE = DJANGO_API_URL.replace(/\/$/, '');
 
 export type SlopeInfo = { desc: string; iconUri: string };
 
+/** 0–1 kesir veya yüzde — terrain kartı her zaman yüzde bekler (PDF / web ile aynı). */
+export function normalizeSlopePercentValue(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n >= 0 && n <= 1) return n * 100;
+  return n;
+}
+
+/** Web DetailSlopeTab.enrichMorphologyForDisplay — grid yoksa slope_avg_poly ile doldur. */
+export function enrichMorphologyForDisplay(
+  morphology: Record<string, unknown> | null | undefined,
+  parcelSlope: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const morph = morphology && typeof morphology === 'object' ? { ...morphology } : {};
+  const ps = parcelSlope && typeof parcelSlope === 'object' ? parcelSlope : {};
+  const desc = String(morph.description || '');
+  const isFallback = desc.includes('bulunamadı') || desc.includes('varsayılan');
+  const avgSlope = ps.slope_avg_poly;
+  if (!isFallback || avgSlope == null || avgSlope === '' || Number.isNaN(Number(avgSlope))) {
+    return morph;
+  }
+  const avg = Number(avgSlope);
+  let typeLabel = 'Eğimli Arazi';
+  let typeCode = 'egimli';
+  if (avg < 15) {
+    typeLabel = 'Düz Arazi';
+    typeCode = 'duz';
+  } else if (avg < 30) {
+    typeLabel = 'Hafif Eğimli';
+    typeCode = 'hafif_egimli';
+  }
+  return {
+    ...morph,
+    type: typeCode,
+    type_label: typeLabel,
+    avg_slope: avg,
+    description: `Yükseklik morfolojisi grid verisi kayıtlı değil; parsel eğim analizi ortalama %${Math.round(avg)} olarak mevcut.`,
+    confidence: Math.max(Number(morph.confidence) || 0, 0.65),
+  };
+}
+
+/**
+ * Portal slope section / PDF ile aynı öncelik: slope_avg_poly → morphology.avg_slope.
+ */
+export function resolvePortalAvgSlopePercent(slopeElevationRoot: unknown): number | null {
+  const se = slopeElevationRoot && typeof slopeElevationRoot === 'object'
+    ? slopeElevationRoot as Record<string, unknown>
+    : null;
+  if (!se) return null;
+
+  const parcelSlope = (
+    se.parcel_slope_values && typeof se.parcel_slope_values === 'object'
+      ? se.parcel_slope_values
+      : se.slope_values && typeof se.slope_values === 'object'
+        ? se.slope_values
+        : {}
+  ) as Record<string, unknown>;
+
+  const morphology = enrichMorphologyForDisplay(
+    se.elevation_morphology as Record<string, unknown> | undefined,
+    parcelSlope,
+  );
+
+  const raw = parcelSlope.slope_avg_poly ?? morphology.avg_slope ?? parcelSlope.avg_slope;
+  return normalizeSlopePercentValue(raw);
+}
+
+/** Section API yanıtı veya doğrudan slope_elevation_json. */
+export function resolvePortalAvgSlopeFromSectionPayload(
+  sectionPayload: Record<string, unknown> | null | undefined,
+  detailSlopeElevation?: Record<string, unknown> | null,
+): number | null {
+  const fromSection = sectionPayload?.slope_elevation_json;
+  if (fromSection) {
+    const pct = resolvePortalAvgSlopePercent(fromSection);
+    if (pct != null) return pct;
+  }
+  if (detailSlopeElevation) {
+    return resolvePortalAvgSlopePercent(detailSlopeElevation);
+  }
+  return null;
+}
+
 export function getSlopeInfo(v: number | null | undefined): SlopeInfo {
   const icon = (name: string) => `${MEDIA_BASE}/media/avatars/EgimAvatars/${name}`;
   if (v == null || (typeof v === 'string' && v === '')) {

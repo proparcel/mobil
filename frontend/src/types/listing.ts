@@ -26,10 +26,13 @@ export type MineListingRow = {
   price_amount?: number | null;
   currency?: string | null;
   cover_image_url?: string | null;
+  thumb_url?: string | null;
   version?: number | null;
   /** Detay sayfası görüntülenme (yayında, sahibi dışı) */
   detail_view_count_total?: number | null;
   favorite_count_total?: number | null;
+  /** Portal puanlama — olumlu oy (beğeni) */
+  rating_success_count?: number | null;
   comment_count?: number | null;
 };
 

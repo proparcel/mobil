@@ -27,6 +27,25 @@ export function getFootprintStemBaseMultiplier(item: ModelCatalogFlatItem): numb
   return 1;
 }
 
+/**
+ * GLB pivot çoğu evde geometri merkezinde; Mapbox modelTranslation[2] metre cinsinden Z kaldırır.
+ * farm_house gibi büyük mesh'ler yarı gömülü görünmesin diye tabana oturtma.
+ */
+export function getTranslationForCatalogItem(
+  item: ModelCatalogFlatItem | undefined
+): [number, number, number] {
+  if (!item) return [0, 0, 0];
+  const stem = filenameStemLower(item);
+  const mult = getDefaultScaleMultiplierForCatalogItem(item);
+  if (item.groupId === "house" || item.isYapi) {
+    if (stem.includes("farm_house") || item.id === 5) {
+      return [0, 0, Math.max(6, 30 * mult)];
+    }
+    return [0, 0, 1.2];
+  }
+  return [0, 0, 0];
+}
+
 /** Dosya adına göre ilk yerleştirmede ek küçültme (farm_house büyük mesh). */
 export function getDefaultScaleMultiplierForCatalogItem(item: {
   filename: string;

@@ -30,17 +30,24 @@ import { creditService } from "../../services/creditService";
 import type { UserProfile, CompanyProfile, CompanyMembershipRequest, UserExpertiseArea, ProviderCoverageDistrict } from "../../src/types/auth";
 import { launchImageLibrary } from "react-native-image-picker";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useRoute } from "@react-navigation/native";
 import { SvgUri } from "react-native-svg";
 import type { BadgeOverviewItem } from "../../src/types/badges";
-import type { CreditBalance, CreditHistoryItem, CreditStats } from "../../services/creditService";
+import type { CreditBalance } from "../../services/creditService";
 import locationsJson from "../../src/data/locations.json";
 import { API_URL } from "../../config/api";
 import { AddressPickerModal, type AddressValue } from "../../components/app/AddressPickerModal";
 import ProfileMenuSheet from "../../components/app/ProfileMenuSheet";
 import ProfileGenelOverview from "../../components/app/ProfileGenelOverview";
 import ProfileRatingsComments from "../../components/app/ProfileRatingsComments";
+import ProfileUsageSection from "../../components/app/ProfileUsageSection";
+import ProfileMineListingsSection from "../../components/app/ProfileMineListingsSection";
+import ProfileCompanySubUsersSection from "../../components/app/ProfileCompanySubUsersSection";
 import { PROFILE_SECTION_LABELS, type ProfileSectionId } from "../../components/app/profileSectionTypes";
+import {
+  parseProfileSectionParam,
+  withProfileReturn,
+} from "../../src/utils/profileReturnNavigation";
 import { deactivateListing, getMyListings } from "../../services/listingService";
 import { getPortalRecentQueries, getPortalUserAgentRatings } from "../../services/portalService";
 import type { MineListingRow } from "../../src/types/listing";
@@ -71,6 +78,7 @@ function capitalizeName(s: string | null | undefined): string {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const route = useRoute();
   const insets = useSafeAreaInsets();
   const { user, logout, isAuthenticated } = useAuth();
 
@@ -163,16 +171,12 @@ export default function ProfileScreen() {
   const [proQueryRows, setProQueryRows] = useState<PortalQueryListItem[]>([]);
   const [proQueriesLoading, setProQueriesLoading] = useState(false);
   const [balance, setBalance] = useState<CreditBalance | null>(null);
-  const [stats, setStats] = useState<CreditStats | null>(null);
-  const [history, setHistory] = useState<CreditHistoryItem[]>([]);
   /** Genel Bakış: portal agent puanı (hero) */
   const [profileHeroRating, setProfileHeroRating] = useState<{
     avg: number | null;
     count: number;
   } | null>(null);
   const [profileHeroRatingLoading, setProfileHeroRatingLoading] = useState(false);
-  const [usageSectionBusy, setUsageSectionBusy] = useState(false);
-
   /**
    * Profil bilgilerini yükle
    */
@@ -277,21 +281,38 @@ export default function ProfileScreen() {
     }
   }, [isAuthenticated]);
 
-  const loadUsageData = useCallback(async () => {
+  /** Menü şeridindeki Tepe Coin bakiyesi */
+  const loadCreditBalance = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const [balanceRes, statsRes, historyRes] = await Promise.all([
-        creditService.getBalance(),
-        creditService.getStats(),
-        creditService.getHistory(10),
-      ]);
-      if (balanceRes.success && balanceRes.data) setBalance(balanceRes.data);
-      if (statsRes.success && statsRes.data) setStats(statsRes.data);
-      if (historyRes.success && historyRes.data) setHistory(historyRes.data.history || []);
+      const summaryRes = await creditService.getProfileUsageContext();
+      if (summaryRes.success && summaryRes.data) {
+        const s = summaryRes.data;
+        const bal = Number(s.wallet_balance) || 0;
+        const earned = Number(s.earned_balance) || 0;
+        const purchased = Number(s.purchased_balance) || 0;
+        setBalance({
+          balance: bal,
+          earned_balance: earned,
+          purchased_balance: purchased,
+          total_purchased: Number(s.total_purchased_lifetime) || 0,
+          total_earned: earned,
+          total_used: Number(s.total_used_lifetime) || 0,
+        });
+      } else {
+        setBalance(null);
+        if (__DEV__ && summaryRes.message) {
+          console.warn("[Profile] Bakiye özeti:", summaryRes.message);
+        }
+      }
     } catch (error) {
-      console.error("[Profile] Kullanım verisi yükleme hatası:", error);
+      console.error("[Profile] Bakiye yükleme hatası:", error);
+      setBalance(null);
     }
   }, [isAuthenticated]);
+
+  /** Eski ad — pull-to-refresh / focus çağrıları (Metro önbelleği uyumu) */
+  const loadUsageData = loadCreditBalance;
 
   const quarterLabelByValue = useMemo(() => {
     const map = new Map<number, string>();
@@ -369,6 +390,12 @@ export default function ProfileScreen() {
 
   // Profil yüklendiğinde (edit modunda değilken) uzmanlık bölgelerini senkronla
   useEffect(() => {
+    if (!isAuthenticated) {
+      router.replace("login");
+    }
+  }, [isAuthenticated, router]);
+
+  useEffect(() => {
     if (!profile) return;
     if (expertiseEditing) return;
     resetExpertiseDraftFromProfile(profile);
@@ -434,6 +461,15 @@ export default function ProfileScreen() {
     }, [isAuthenticated, loadProfile, loadBadgeStrip, loadUsageData])
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      const section = parseProfileSectionParam(
+        (route.params as { profileSection?: string } | undefined)?.profileSection,
+      );
+      if (section) setProfileSection(section);
+    }, [route.params]),
+  );
+
   useEffect(() => {
     if (!isAuthenticated || profileSection !== "ilanlar") return;
     let ignore = false;
@@ -488,24 +524,18 @@ export default function ProfileScreen() {
     };
   }, [profileSection, user?.id]);
 
-  useEffect(() => {
-    if (!isAuthenticated || profileSection !== "kullanimlarim") return;
-    let ignore = false;
-    setUsageSectionBusy(true);
-    void loadUsageData().finally(() => {
-      if (!ignore) setUsageSectionBusy(false);
-    });
-    return () => {
-      ignore = true;
-    };
-  }, [isAuthenticated, profileSection, loadUsageData]);
-
   const openListingEditor = useCallback(
     (listingId: string) => {
-      router.push("portal-webview", {
-        path: `/portal/ilan/${encodeURIComponent(listingId)}/duzenle/`,
-        title: "İlan düzenle",
-      });
+      router.push(
+        "portal-webview",
+        withProfileReturn(
+          {
+            path: `/portal/ilan/${encodeURIComponent(listingId)}/duzenle/`,
+            title: "İlan düzenle",
+          },
+          "ilanlar",
+        ),
+      );
     },
     [router],
   );
@@ -1043,40 +1073,7 @@ export default function ProfileScreen() {
 
   // Giriş yapılmamışsa
   if (!isAuthenticated) {
-    return (
-      <SafeAreaView style={styles.container} edges={["top"]}>
-        <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.headerBtn}
-            onPress={() => router.back()}
-            accessibilityLabel="Geri"
-          >
-            <Ionicons name="arrow-back" size={18} color="#f8fafc" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-          {PROFILE_SECTION_LABELS[profileSection]}
-        </Text>
-          <View style={styles.headerRight} />
-        </View>
-        <View style={styles.emptyContainer}>
-          <Ionicons name="lock-closed" size={64} color="#64748b" />
-          <Text style={styles.emptyText}>Giriş yapmanız gerekiyor</Text>
-          <TouchableOpacity
-            style={styles.loginButton}
-            onPress={() => router.push("login")}
-          >
-            <Text style={styles.loginButtonText}>Giriş Yap</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.loginButton, { marginTop: 14, backgroundColor: "transparent", borderWidth: 1, borderColor: "#3b82f6" }]}
-            onPress={() => router.push("legal-hub")}
-          >
-            <Text style={[styles.loginButtonText, { color: "#3b82f6" }]}>Hukuki metinler</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
+    return null;
   }
 
   // Yükleniyor
@@ -1352,7 +1349,7 @@ export default function ProfileScreen() {
                         <Text style={styles.profileHeroBadgeTitle} numberOfLines={2}>
                           {badgeStrip[0].title || badgeStrip[0].code}
                         </Text>
-                        <TouchableOpacity onPress={() => router.push("badges")}>
+                        <TouchableOpacity onPress={() => router.push("badges", withProfileReturn({}, "genel"))}>
                           <Text style={styles.profileHeroBadgeMore}>Tüm rozetler →</Text>
                         </TouchableOpacity>
                       </View>
@@ -1368,6 +1365,7 @@ export default function ProfileScreen() {
           <ProfileGenelOverview
             userId={Number(user.id)}
             onOpenProfileSection={setProfileSection}
+            onOpenProfileMenu={() => setProfileMenuOpen(true)}
           />
         ) : null}
 
@@ -1376,86 +1374,13 @@ export default function ProfileScreen() {
         ) : null}
 
         {profileSection === "ilanlar" ? (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Ionicons name="images" size={20} color="#3b82f6" />
-              <Text style={styles.cardTitle}>İlanlarım</Text>
-            </View>
-            <Text style={styles.cardHint}>
-              Yayın ve taslak ilanlarınız. Güncelleme portal düzenleyicide; yayında olan ilanı pasife alabilirsiniz.
-            </Text>
-            {mineListingsLoading ? (
-              <ActivityIndicator color="#3b82f6" style={{ marginVertical: 16 }} />
-            ) : mineListings.length ? (
-              <View>
-                {mineListings.slice(0, 12).map((row) => (
-                  <View key={row.listing_id} style={styles.profileListingCard}>
-                    <TouchableOpacity
-                      style={styles.profileListingMainTouch}
-                      onPress={() => openListingEditor(row.listing_id)}
-                      activeOpacity={0.88}
-                    >
-                      <Text style={styles.profileListingTitle} numberOfLines={2}>
-                        {row.title || row.listing_id}
-                      </Text>
-                      <Text style={styles.profileListingMeta}>
-                        {(row.publication_status || row.workflow_status || "—") +
-                          (row.updated_at
-                            ? ` · ${new Date(row.updated_at).toLocaleDateString("tr-TR")}`
-                            : "")}
-                      </Text>
-                    </TouchableOpacity>
-                    <View style={styles.profileListingActions}>
-                      <TouchableOpacity
-                        style={styles.profileListingActionBtn}
-                        onPress={() => openListingEditor(row.listing_id)}
-                        activeOpacity={0.85}
-                      >
-                        <Ionicons name="create-outline" size={18} color="#2563eb" />
-                        <Text style={styles.profileListingActionTxtPrimary}>Güncelle</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.profileListingActionBtn,
-                          styles.profileListingActionSecond,
-                          String(row.publication_status || "").toLowerCase() !== "published" &&
-                            styles.profileListingActionBtnDisabled,
-                        ]}
-                        onPress={() => onDeactivateListingPress(row)}
-                        disabled={String(row.publication_status || "").toLowerCase() !== "published"}
-                        activeOpacity={0.85}
-                      >
-                        <Ionicons
-                          name="pause-circle-outline"
-                          size={18}
-                          color={
-                            String(row.publication_status || "").toLowerCase() === "published"
-                              ? "#b45309"
-                              : "#94a3b8"
-                          }
-                        />
-                        <Text
-                          style={[
-                            styles.profileListingActionTxtWarn,
-                            String(row.publication_status || "").toLowerCase() !== "published" &&
-                              styles.profileListingActionTxtMuted,
-                          ]}
-                        >
-                          Pasife al
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <Text style={styles.emptySmallText}>Henüz ilan kaydı yok.</Text>
-            )}
-            <TouchableOpacity style={styles.updateButton} onPress={() => router.push("ilan-islemleri")}>
-              <Ionicons name="briefcase-outline" size={18} color="#3b82f6" />
-              <Text style={styles.updateButtonText}>İlan işlemleri</Text>
-            </TouchableOpacity>
-          </View>
+          <ProfileMineListingsSection
+            items={mineListings}
+            loading={mineListingsLoading}
+            onOpenEditor={openListingEditor}
+            onDeactivate={onDeactivateListingPress}
+            onOpenIlanIslemleri={() => router.push("ilan-islemleri")}
+          />
         ) : null}
 
         {profileSection === "prosorgular" ? (
@@ -1474,9 +1399,15 @@ export default function ProfileScreen() {
                     key={q.snapshot_id}
                     style={[styles.profileListingRow, { marginBottom: 10 }]}
                     onPress={() =>
-                      router.push("son-30-gun-detay", {
-                        snapshotId: String(q.snapshot_id),
-                      })
+                      router.push(
+                        "son-30-gun-detay",
+                        withProfileReturn(
+                          {
+                            snapshotId: String(q.snapshot_id),
+                          },
+                          "prosorgular",
+                        ),
+                      )
                     }
                     activeOpacity={0.85}
                   >
@@ -1492,7 +1423,10 @@ export default function ProfileScreen() {
             ) : (
               <Text style={styles.emptySmallText}>Henüz Pro sorgu bulunmuyor.</Text>
             )}
-            <TouchableOpacity style={styles.updateButton} onPress={() => router.push("son-30-gun")}>
+            <TouchableOpacity
+              style={styles.updateButton}
+              onPress={() => router.push("son-30-gun", withProfileReturn({}, "prosorgular"))}
+            >
               <Ionicons name="calendar-outline" size={18} color="#3b82f6" />
               <Text style={styles.updateButtonText}>Son 30 gün sorguları</Text>
             </TouchableOpacity>
@@ -1500,80 +1434,9 @@ export default function ProfileScreen() {
         ) : null}
 
         {profileSection === "kullanimlarim" ? (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="bar-chart" size={20} color="#3b82f6" />
-            <Text style={styles.cardTitle}>Kullanımlarım</Text>
-          </View>
-          <Text style={styles.cardHint}>
-            Tepe Coin bakiyeniz, son 30 gün kullanım özeti ve hareket geçmişiniz.
-          </Text>
-          {usageSectionBusy ? (
-            <View style={styles.usageLoadingWrap}>
-              <ActivityIndicator color="#3b82f6" />
-              <Text style={styles.usageLoadingTxt}>İstatistikler yükleniyor…</Text>
-            </View>
-          ) : null}
-          <View style={[styles.usageStatsGrid, usageSectionBusy ? styles.usageStatsDimmed : null]}>
-            <View style={styles.usageStatCard}>
-              <Text style={styles.usageStatValue}>{(balance?.balance ?? stats?.balance ?? 0).toLocaleString("tr-TR")}</Text>
-              <Text style={styles.usageStatLabel}>Mevcut Bakiye</Text>
-            </View>
-            <View style={styles.usageStatCard}>
-              <Text style={styles.usageStatValue}>{(balance?.earned_balance ?? stats?.earned_balance ?? 0).toLocaleString("tr-TR")}</Text>
-              <Text style={styles.usageStatLabel}>Kazanılan</Text>
-            </View>
-            <View style={styles.usageStatCard}>
-              <Text style={styles.usageStatValue}>{(balance?.purchased_balance ?? stats?.purchased_balance ?? 0).toLocaleString("tr-TR")}</Text>
-              <Text style={styles.usageStatLabel}>Satın Alınan</Text>
-            </View>
-            <View style={styles.usageStatCard}>
-              <Text style={styles.usageStatValue}>{(stats?.usage_last_30_days ?? stats?.last_30_days ?? 0).toLocaleString("tr-TR")}</Text>
-              <Text style={styles.usageStatLabel}>Son 30 Gün</Text>
-            </View>
-          </View>
-          <View style={styles.usageSummaryRow}>
-            <Text style={styles.usageSummaryText}>Pro Sorgu: {(stats?.usage_by_type?.pro_query ?? 0).toLocaleString("tr-TR")}</Text>
-            <Text style={styles.usageSummaryText}>İlan: {(stats?.usage_by_type?.ilan ?? 0).toLocaleString("tr-TR")}</Text>
-            <Text style={styles.usageSummaryText}>3D Tasarım: {(stats?.usage_by_type?.design_3d ?? 0).toLocaleString("tr-TR")}</Text>
-          </View>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Son Kullanımlar</Text>
-          </View>
-          {history.length > 0 ? (
-            <View style={styles.historyList}>
-              {history.map((item) => (
-                <View key={item.id} style={styles.historyItem}>
-                  <View style={styles.historyItemLeft}>
-                    <Ionicons name="time-outline" size={20} color="#64748b" />
-                    <View style={styles.historyItemContent}>
-                      <Text style={styles.historyItemTitle}>{item.action_type_display || item.action_type}</Text>
-                      {item.description ? (
-                        <Text style={styles.historyItemDescription}>{item.description}</Text>
-                      ) : null}
-                      <Text style={styles.historyItemDate}>
-                        {new Date(item.created_at).toLocaleDateString("tr-TR", {
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={styles.historyItemCredits}>-{item.credits_used} C</Text>
-                </View>
-              ))}
-            </View>
-          ) : (
-            <Text style={styles.emptySmallText}>Henüz kullanım geçmişi yok.</Text>
-          )}
-          <TouchableOpacity style={styles.updateButton} onPress={() => router.push("pricing")}>
-            <Ionicons name="add-circle-outline" size={18} color="#3b82f6" />
-            <Text style={styles.updateButtonText}>Tepe Coin Paketleri</Text>
-          </TouchableOpacity>
-        </View>
+          <ProfileUsageSection
+            onOpenPricing={() => router.push("pricing", withProfileReturn({}, "kullanimlarim"))}
+          />
         ) : null}
 
         {/* Rozetler — web ile aynı overview API */}
@@ -1617,7 +1480,10 @@ export default function ProfileScreen() {
               Henüz görüntülenecek rozet yok veya özet alınamadı.
             </Text>
           )}
-          <TouchableOpacity style={styles.updateButton} onPress={() => router.push("badges")}>
+          <TouchableOpacity
+            style={styles.updateButton}
+            onPress={() => router.push("badges", withProfileReturn({}, "rozetler"))}
+          >
             <Ionicons name="chevron-forward-circle" size={18} color="#3b82f6" />
             <Text style={styles.updateButtonText}>Tüm rozetleri gör</Text>
           </TouchableOpacity>
@@ -2027,10 +1893,16 @@ export default function ProfileScreen() {
                 <TouchableOpacity
                   style={styles.updateButton}
                   onPress={() =>
-                    router.push("accounts-webview", {
-                      path: "profile/#danisman",
-                      title: "Danışman Başvurusu",
-                    })
+                    router.push(
+                      "accounts-webview",
+                      withProfileReturn(
+                        {
+                          path: "profile/#danisman",
+                          title: "Danışman Başvurusu",
+                        },
+                        "danisman",
+                      ),
+                    )
                   }
                 >
                   <Ionicons name="open-outline" size={18} color="#3b82f6" />
@@ -2367,10 +2239,16 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 style={styles.updateButton}
                 onPress={() =>
-                  router.push("accounts-webview", {
-                    path: "profile/#firma",
-                    title: "Firma bilgileri",
-                  })
+                  router.push(
+                    "accounts-webview",
+                    withProfileReturn(
+                      {
+                        path: "profile/#firma",
+                        title: "Firma bilgileri",
+                      },
+                      "firma",
+                    ),
+                  )
                 }
               >
                 <Ionicons name="create-outline" size={18} color="#3b82f6" />
@@ -2424,40 +2302,13 @@ export default function ProfileScreen() {
                 </View>
               )}
 
-            {/* Alt Kullanıcılar (Yetkili ise) */}
-            {profile?.is_company_authority && profile?.sub_users && (
-              <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <Ionicons name="people" size={20} color="#3b82f6" />
-                  <Text style={styles.cardTitle}>Alt Kullanıcılar</Text>
-                </View>
-                {profile.sub_users.length > 0 ? (
-                  profile.sub_users.map((subUser) => (
-                    <View key={subUser.email} style={styles.subUserItem}>
-                      <View style={styles.subUserContent}>
-                        <Text style={styles.subUserEmail}>{subUser.email}</Text>
-                        {subUser.first_name && (
-                          <Text style={styles.subUserName}>
-                            {subUser.first_name} {subUser.last_name}
-                          </Text>
-                        )}
-                      </View>
-                      <TouchableOpacity
-                        style={styles.removeButton}
-                        onPress={() => {
-                          // subUser.user.id gerekli, şimdilik email ile deneyelim
-                          Alert.alert("Bilgi", "Alt kullanıcı çıkarma özelliği yakında eklenecek");
-                        }}
-                      >
-                        <Ionicons name="close-circle" size={20} color="#ef4444" />
-                      </TouchableOpacity>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={styles.emptyText}>Henüz alt kullanıcı bulunmuyor</Text>
-                )}
-              </View>
-            )}
+            {profile?.is_company_authority ? (
+              <ProfileCompanySubUsersSection
+                subUsers={profile.sub_users || []}
+                onRemoveMember={handleRemoveMember}
+                onAllocationsChanged={() => void loadCreditBalance()}
+              />
+            ) : null}
             </View>
             ) : null}
           </View>
@@ -2486,7 +2337,7 @@ export default function ProfileScreen() {
               </View>
               <TouchableOpacity
                 style={[styles.button, styles.changePasswordButton]}
-                onPress={() => router.push("legal-hub")}
+                onPress={() => router.push("legal-hub", withProfileReturn({}, "ayarlar"))}
               >
                 <Ionicons name="open-outline" size={18} color="#fff" />
                 <Text style={styles.changePasswordButtonText}>Belgeleri görüntüle</Text>

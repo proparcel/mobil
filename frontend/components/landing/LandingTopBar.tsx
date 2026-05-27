@@ -29,7 +29,7 @@ export function LandingTopBar({ onMenuPress, onNotificationsPress }: Props) {
           <Image
             source={proparcelFavicon}
             style={styles.logoImage}
-            resizeMode="contain"
+            resizeMode="cover"
             accessibilityLabel="ProParcel"
           />
         </View>
@@ -86,8 +86,8 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   logoImage: {
-    width: 34,
-    height: 34,
+    width: '100%',
+    height: '100%',
   },
   logoText: {
     fontSize: 18,

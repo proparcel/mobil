@@ -9,9 +9,13 @@ node_modules
 .metro-assets-test
 
 android
+android/**
 ios
+ios/**
 .kotlin
 .gradle
+**/.gradle/**
+**/*.lock
 
 dist
 web-build
@@ -44,9 +48,6 @@ yarn-error
 .glb
 .gltf
 .bin
-.png
-.jpg
-.jpeg
 .gif
 .webp
 .bmp
@@ -60,6 +61,12 @@ yarn-error
 .gpkg
 .onnx
 
+# Agir medya — assets/images (ikon, favicon, splash) DAHIL kalmali
 assets/models
 assets/temp
 assets/packs
+assets/models/**/*.png
+assets/models/**/*.jpg
+assets/models/**/*.jpeg
+assets/temp/**/*
+assets/packs/**/*

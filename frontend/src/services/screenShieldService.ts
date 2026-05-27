@@ -25,9 +25,17 @@ const CAPTURE_CHANGED = "ScreenShieldCaptureChanged";
 const SCREENSHOT_DETECTED = "ScreenShieldScreenshotDetected";
 
 function getEmitter(): NativeEventEmitter | null {
-  if (ScreenShieldNative && !eventEmitter) {
-    eventEmitter = new NativeEventEmitter(ScreenShieldNative);
+  if (!ScreenShieldNative || eventEmitter) {
+    return eventEmitter;
   }
+  const hasListeners =
+    typeof ScreenShieldNative.addListener === 'function' &&
+    (typeof ScreenShieldNative.removeListeners === 'function' ||
+      typeof ScreenShieldNative.removeListener === 'function');
+  if (!hasListeners) {
+    return null;
+  }
+  eventEmitter = new NativeEventEmitter(ScreenShieldNative);
   return eventEmitter;
 }
 

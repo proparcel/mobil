@@ -1,10 +1,23 @@
 {
   "cli": {
     "version": ">= 16.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      },
+      "env": {
+        "NODE_ENV": "development",
+        "EXPO_PUBLIC_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_AUTH_API_URL": "https://www.proparcel.com",
+        "EXPO_PUBLIC_MODELS_URL": "https://www.proparcel.com"
+      }
+    },
+    "development-simulator": {
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
@@ -25,6 +38,7 @@
       },
       "env": {
         "IOS_STANDALONE": "1",
+        "IOS_ASSOCIATED_DOMAINS": "1",
         "EAS_SKIP_AUTO_FINGERPRINT": "1",
         "EXPO_PUBLIC_API_URL": "https://www.proparcel.com",
         "EXPO_PUBLIC_AUTH_API_URL": "https://www.proparcel.com",
@@ -32,8 +46,21 @@
       }
     },
     "production": {
+      "distribution": "store",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release"
+      },
       "env": {
         "NODE_ENV": "production",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
+        "IOS_STANDALONE": "1",
+        "IOS_ASSOCIATED_DOMAINS": "1",
+        "EAS_SKIP_AUTO_FINGERPRINT": "1",
         "EXPO_PUBLIC_API_URL": "https://www.proparcel.com",
         "EXPO_PUBLIC_AUTH_API_URL": "https://www.proparcel.com",
         "EXPO_PUBLIC_MODELS_URL": "https://www.proparcel.com"
@@ -41,6 +68,11 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "appleTeamId": "8JQ4APVRJ4",
+        "ascAppId": "6758405457"
+      }
+    }
   }
 }

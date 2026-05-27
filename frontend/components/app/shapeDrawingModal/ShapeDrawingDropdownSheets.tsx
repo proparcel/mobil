@@ -63,6 +63,7 @@ type Props = {
   onSelectOwnedModel?: (m: OwnedModel) => void;
   onDeleteOwnedModel?: (m: OwnedModel) => void;
   onModelCatalogRefresh?: () => void;
+  onRequestPurchase?: (m: ModelCatalogFlatItem) => void;
 };
 
 const SHAPE_OPTIONS: Array<{ type: ShapeType; label: string; icon: React.ComponentProps<typeof Ionicons>["name"] }> =
@@ -316,11 +317,25 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
   onSelectOwnedModel,
   onDeleteOwnedModel,
   onModelCatalogRefresh,
+  onRequestPurchase,
 }) => {
   const [modelTab, setModelTab] = useState<"modeller" | "benim" | "galeri">("modeller");
-  const [drawGroupOpen, setDrawGroupOpen] = useState(true);
-  const [measureGroupOpen, setMeasureGroupOpen] = useState(true);
-  const [textGroupOpen, setTextGroupOpen] = useState(true);
+
+  const openPurchase = (m: ModelCatalogFlatItem) => {
+    if (m.id == null || isFreeRole(m.role)) return;
+    onRequestPurchase?.(m);
+  };
+  const [drawGroupOpen, setDrawGroupOpen] = useState(false);
+  const [measureGroupOpen, setMeasureGroupOpen] = useState(false);
+  const [textGroupOpen, setTextGroupOpen] = useState(false);
+
+  useEffect(() => {
+    if (mapToolsOpen) {
+      setDrawGroupOpen(false);
+      setMeasureGroupOpen(false);
+      setTextGroupOpen(false);
+    }
+  }, [mapToolsOpen]);
 
   useEffect(() => {
     if (modelCatalogFlat.length > 0) {
@@ -704,16 +719,15 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
                     const isFree = isFreeRole(m.role);
                     const remainingUses = isFree ? null : rawRemainingUses;
                     const isUsable = isModelUsable(remainingUses);
-                    const isDisabled = !isUsable;
-                    // isAvailable artık tek yerden (modelCatalog) hesaplanır.
                     const isAvailable = m.isAvailable;
+                    const isUsageBlocked = isAvailable && !isUsable;
                     return (
                       <TouchableOpacity
                         key={`${m.groupId}-${m.modelId}`}
                         style={[
                           styles.dropdownMenuItem,
                           isActive && styles.dropdownMenuItemActive,
-                          isDisabled && styles.modelItemDisabled,
+                          isUsageBlocked && styles.modelItemDisabled,
                           { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
                         ]}
                         onLongPress={undefined}
@@ -724,17 +738,28 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
                             flexDirection: "row",
                             alignItems: "center",
                             flex: 1,
-                            opacity: isDisabled ? 0.5 : 1,
+                            opacity: !isAvailable || isUsageBlocked ? 0.65 : 1,
                           }}
                           onPress={async () => {
-                            if (isDisabled) return;
+                            if (!isAvailable) {
+                              if (m.id != null && !isFreeRole(m.role)) {
+                                openPurchase(m);
+                              } else {
+                                Alert.alert(
+                                  "Model Kilitli",
+                                  `"${label}" şu an kullanılamıyor.`
+                                );
+                              }
+                              return;
+                            }
+                            if (isUsageBlocked) return;
                             try {
                               await onSelectModel(m);
                             } catch (error) {
                               console.error("[ShapeDrawingDropdownSheets] Model seçilirken hata:", error);
                             }
                           }}
-                          disabled={isDisabled}
+                          disabled={isUsageBlocked}
                         >
                           <Ionicons
                             name="cube-outline"
@@ -745,7 +770,7 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
                             style={[
                               styles.dropdownMenuItemText,
                               isActive && styles.dropdownMenuItemTextActive,
-                              isDisabled && styles.dropdownMenuItemTextDisabled,
+                              isUsageBlocked && styles.dropdownMenuItemTextDisabled,
                             ]}
                           >
                             {label}
@@ -762,7 +787,12 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
                           {isAvailable ? (
                             <Ionicons name="lock-open-outline" size={16} color="#10b981" />
                           ) : (
-                            <Ionicons name="lock-closed-outline" size={16} color="#94a3b8" />
+                            <TouchableOpacity
+                              onPress={() => openPurchase(m)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Ionicons name="lock-closed-outline" size={16} color="#f59e0b" />
+                            </TouchableOpacity>
                           )}
                         </View>
                       </TouchableOpacity>
@@ -799,6 +829,7 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
               formatModelDisplayName={formatModelDisplayName}
               getRemainingUses={getRemainingUses}
               onPurchaseSuccess={() => onModelCatalogRefresh?.()}
+              onRequestPurchase={onRequestPurchase}
             />
           )}
         </View>
