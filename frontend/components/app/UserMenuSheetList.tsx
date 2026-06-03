@@ -2,14 +2,14 @@
  * Ana sayfa ile aynı menü listesi (sıra, alt menüler, rozetler).
  */
 import React from "react";
-import { View, Text, TouchableOpacity, Image } from "react-native";
+import { View, Text, TouchableOpacity } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons";
 import type { User } from "../../src/types/auth";
 import type { UserProfile } from "../../src/types/auth";
 import type { HomeMenuItem } from "./userMenuItems";
-import { TepeCoinIcon, userMenuSheetStyles } from "./UserMenuSheet";
+import { TepeCreditMenuIcon, userMenuListBottomPadding, userMenuSheetStyles } from "./UserMenuSheet";
 
 type SheetSt = typeof userMenuSheetStyles;
 
@@ -44,17 +44,20 @@ export default function UserMenuSheetList({
   userProfile,
   footerInsetBottom,
 }: UserMenuSheetListProps) {
-  const mainIconColor = (disabled: boolean, id: string) => {
+  const mainIconColor = (disabled: boolean, id: string, highlight?: boolean) => {
     if (disabled) return variant === "dark" ? "#64748b" : "#94a3b8";
     if (id === "cikis") return variant === "dark" ? "#f87171" : "#ef4444";
+    if (highlight || id === "admin-panel") return "#f59e0b";
     return variant === "dark" ? "#e2e8f0" : "#64748b";
   };
   const subIconColor = variant === "dark" ? "#e2e8f0" : "#64748b";
 
+  const listBottomPadding = userMenuListBottomPadding(footerInsetBottom);
+
   return (
     <BottomSheetScrollView
       style={st.scroll}
-      contentContainerStyle={{ flexGrow: 1 }}
+      contentContainerStyle={{ flexGrow: 1, paddingBottom: listBottomPadding }}
       scrollEventThrottle={16}
       nestedScrollEnabled
     >
@@ -69,17 +72,21 @@ export default function UserMenuSheetList({
           >
             <View style={st.iconWrap}>
               {item.icon === "cube" ? (
-                <MaterialCommunityIcons name="cube" size={20} color={mainIconColor(!!item.disabled, item.id)} />
+                <MaterialCommunityIcons name="cube" size={20} color={mainIconColor(!!item.disabled, item.id, item.highlight)} />
               ) : item.icon === "terrain" ? (
-                <MaterialCommunityIcons name="terrain" size={20} color={mainIconColor(!!item.disabled, item.id)} />
+                <MaterialCommunityIcons name="terrain" size={20} color={mainIconColor(!!item.disabled, item.id, item.highlight)} />
               ) : item.icon === "layers" ? (
-                <MaterialCommunityIcons name="layers" size={20} color={mainIconColor(!!item.disabled, item.id)} />
+                <MaterialCommunityIcons name="layers" size={20} color={mainIconColor(!!item.disabled, item.id, item.highlight)} />
               ) : item.icon === "folder" ? (
-                <Ionicons name="folder" size={20} color={mainIconColor(!!item.disabled, item.id)} />
+                <Ionicons name="folder" size={20} color={mainIconColor(!!item.disabled, item.id, item.highlight)} />
               ) : item.id === "kredi-paketleri" ? (
-                <Image source={TepeCoinIcon} style={{ width: 20, height: 20 }} resizeMode="contain" />
+                <TepeCreditMenuIcon size={20} variant={variant} kind="packages" />
               ) : (
-                <Ionicons name={item.icon as any} size={20} color={mainIconColor(!!item.disabled, item.id)} />
+                <Ionicons
+                  name={item.icon as any}
+                  size={20}
+                  color={mainIconColor(!!item.disabled, item.id, item.highlight)}
+                />
               )}
             </View>
             <Text
@@ -87,6 +94,7 @@ export default function UserMenuSheetList({
                 st.itemText,
                 item.disabled && st.itemTextDisabled,
                 item.id === "cikis" && st.itemTextDanger,
+                (item.highlight || item.id === "admin-panel") && { color: "#f59e0b", fontWeight: "700" },
               ]}
             >
               {item.title}
@@ -237,7 +245,6 @@ export default function UserMenuSheetList({
           )}
         </React.Fragment>
       ))}
-      <View style={{ minHeight: 56 + footerInsetBottom }} />
     </BottomSheetScrollView>
   );
 }

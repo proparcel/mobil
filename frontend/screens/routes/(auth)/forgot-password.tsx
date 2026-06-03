@@ -19,6 +19,11 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../../src/hooks/useNavigation";
 import { authService } from "../../../services/authService";
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
+import {
+  INPUT_TEXT_COLOR,
+  securePasswordInputProps,
+  securePasswordInputStyle,
+} from "../../../src/utils/passwordTextInput";
 
 type ResetStep = "email" | "phone" | "otp" | "reset";
 
@@ -327,7 +332,7 @@ export default function ForgotPasswordScreen() {
         {step === "reset" && (
           <View style={styles.form}>
             <TextInput
-              style={styles.input}
+              style={[styles.input, securePasswordInputStyle]}
               placeholder="Yeni şifre"
               placeholderTextColor="#999"
               secureTextEntry
@@ -336,9 +341,12 @@ export default function ForgotPasswordScreen() {
                 setPassword(text);
                 setError("");
               }}
+              autoComplete="password-new"
+              textContentType="newPassword"
+              {...securePasswordInputProps}
             />
             <TextInput
-              style={styles.input}
+              style={[styles.input, securePasswordInputStyle]}
               placeholder="Yeni şifre tekrar"
               placeholderTextColor="#999"
               secureTextEntry
@@ -347,6 +355,9 @@ export default function ForgotPasswordScreen() {
                 setPasswordConfirm(text);
                 setError("");
               }}
+              autoComplete="password-new"
+              textContentType="newPassword"
+              {...securePasswordInputProps}
             />
 
             <TouchableOpacity
@@ -430,6 +441,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 16,
     backgroundColor: "#fafafa",
+    color: INPUT_TEXT_COLOR,
   },
   phoneInputContainer: {
     flexDirection: "row",

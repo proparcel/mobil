@@ -5,11 +5,36 @@ import React, { useMemo } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import type { User, UserProfile } from "../../src/types/auth";
+import { sheetMenuListBottomPadding } from "../../src/utils/sheetSafeArea";
 
-export const TepeCoinIcon = require("../../assets/images/TepeCoin.png");
+const TEPE_CREDIT_ICON_COLORS = {
+  light: "#38bdf8",
+  dark: "#67e8f9",
+} as const;
+
+type TepeCreditMenuIconProps = {
+  size?: number;
+  variant?: "light" | "dark";
+  /** Menü satırı: paket yığını; bakiye rozeti: yumuşak kredi simgesi */
+  kind?: "balance" | "packages";
+};
+
+export function TepeCreditMenuIcon({
+  size = 20,
+  variant = "light",
+  kind = "balance",
+}: TepeCreditMenuIconProps) {
+  const iconName = kind === "packages" ? "layers-outline" : "sparkles-outline";
+  return <Ionicons name={iconName} size={size} color={TEPE_CREDIT_ICON_COLORS[variant]} />;
+}
 
 /** Ana sayfa menüsü ile aynı snap; çift yükseklik için. */
 export const USER_MENU_SHEET_SNAP_POINTS: (string | number)[] = ["70%", "90%"];
+
+/** Menü listesi alt boşluğu — çıkış butonu ve home indicator (iOS). */
+export function userMenuListBottomPadding(safeAreaBottom: number): number {
+  return sheetMenuListBottomPadding(safeAreaBottom);
+}
 
 const COLORS = {
   accentBlue: "#3b82f6",
@@ -165,7 +190,7 @@ export function UserMenuSheetHeader({
       </TouchableOpacity>
       {isAuthenticated && creditBalance !== null ? (
         <TouchableOpacity style={hs.creditBadge} onPress={onPressCredits} activeOpacity={0.7}>
-          <Image source={TepeCoinIcon} style={hs.creditIcon} resizeMode="contain" />
+          <TepeCreditMenuIcon size={18} variant={variant} kind="balance" />
           <Text style={hs.creditText}>{creditBalance.toLocaleString("tr-TR")}</Text>
         </TouchableOpacity>
       ) : null}

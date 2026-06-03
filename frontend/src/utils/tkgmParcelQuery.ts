@@ -1,10 +1,11 @@
 /**
- * Ada/parsel TKGM sorgusu — ana sayfa `handleAdaParselSubmit` ile aynı endpoint.
+ * Ada/parsel TKGM sorgusu — yalnızca doğrudan cbsapi.tkgm.gov.tr (backend tkgm_view yok).
  */
 
 import { authJsonFetch } from "../../services/apiClient";
 import type { AdaParselSubmitPayload } from "../../components/AdaParselForm";
 import { parseAreaM2 } from "./dfaRows";
+import { fetchTkgmByCoords, fetchTkgmByIds, type TkgmError } from "./tkgmApi";
 
 export type TkgmParcelResponse = {
   geometry?: unknown;
@@ -12,31 +13,86 @@ export type TkgmParcelResponse = {
   [key: string]: unknown;
 };
 
-export async function fetchTkgmParcelByAdaParsel(
-  payload: AdaParselSubmitPayload,
-): Promise<{ ok: true; data: TkgmParcelResponse } | { ok: false; error: string }> {
-  const res = await authJsonFetch<TkgmParcelResponse>("/api/tkgm_view/", {
-    method: "POST",
-    json: {
-      mahalleTkgmValue: payload.mahalleTkgmValue,
-      mahalle: payload.mahalle,
-      ada: payload.ada,
-      parsel: payload.parsel,
-      proparcelValue: payload.proparcelValue,
-      map_mode: "2d",
-      is3D: false,
-    },
-  });
+function mapTkgmCatch(error: unknown): string {
+  const err = error as TkgmError;
+  if (err?.type === "TKGM_PARCEL_NOT_FOUND") {
+    return err.message || "Parsel bulunamadı";
+  }
+  if (err?.type === "TKGM_RATE_LIMIT") {
+    return err.message || "Günlük sorgu limiti aşıldı. Lütfen daha sonra tekrar deneyin.";
+  }
+  if (err?.type === "TIMEOUT") {
+    return "TKGM sunucusu yanıt vermedi (zaman aşımı).";
+  }
+  if (err?.type === "CORS_OR_NETWORK_ERROR") {
+    return err.message || "TKGM sunucusuna bağlanılamadı.";
+  }
+  return err?.message || "TKGM sorgusu başarısız";
+}
+
+/** proparcel_value → mahalle TKGM (DB lookup; TKGM API değil) */
+export async function resolveMahalleTkgmForDirectQuery(
+  mahalleTkgmValue: number | null | undefined,
+  proparcelValue: number | null | undefined,
+): Promise<{ ok: true; mahalleTkgmValue: number } | { ok: false; error: string }> {
+  const direct = Number(mahalleTkgmValue);
+  if (Number.isFinite(direct) && direct > 0) {
+    return { ok: true, mahalleTkgmValue: direct };
+  }
+
+  const pv = Number(proparcelValue);
+  if (!Number.isFinite(pv) || pv <= 0) {
+    return { ok: false, error: "Mahalle TKGM kodu bulunamadı." };
+  }
+
+  const res = await authJsonFetch<{ mahalle_tkgm_value?: number | string }>(
+    `/api/proparcel_tkgm_lookup/?proparcel_value=${encodeURIComponent(String(pv))}`,
+    { method: "GET" },
+  );
 
   if (!res.ok) {
-    return { ok: false, error: res.error || "TKGM sorgusu başarısız" };
+    return { ok: false, error: res.error || "Mahalle TKGM eşlemesi alınamadı." };
   }
 
-  if (!res.data?.geometry) {
-    return { ok: false, error: "Parsel bulunamadı veya geometri alınamadı." };
+  const mid = Number(res.data?.mahalle_tkgm_value);
+  if (!Number.isFinite(mid) || mid <= 0) {
+    return { ok: false, error: "Mahalle TKGM eşlemesi bulunamadı." };
   }
 
-  return { ok: true, data: res.data };
+  return { ok: true, mahalleTkgmValue: mid };
+}
+
+export async function fetchTkgmParcelByAdaParsel(
+  payload: Pick<AdaParselSubmitPayload, "mahalleTkgmValue" | "ada" | "parsel">,
+): Promise<{ ok: true; data: TkgmParcelResponse } | { ok: false; error: string }> {
+  try {
+    const data = await fetchTkgmByIds(
+      payload.mahalleTkgmValue,
+      payload.ada,
+      payload.parsel,
+    );
+    if (!data?.geometry) {
+      return { ok: false, error: "Parsel bulunamadı veya geometri alınamadı." };
+    }
+    return { ok: true, data: data as TkgmParcelResponse };
+  } catch (error) {
+    return { ok: false, error: mapTkgmCatch(error) };
+  }
+}
+
+export async function fetchTkgmParcelByCoords(
+  lat: number,
+  lon: number,
+): Promise<{ ok: true; data: TkgmParcelResponse } | { ok: false; error: string }> {
+  try {
+    const data = await fetchTkgmByCoords(lat, lon);
+    if (!data?.geometry) {
+      return { ok: false, error: "Parsel bulunamadı veya geometri alınamadı." };
+    }
+    return { ok: true, data: data as TkgmParcelResponse };
+  } catch (error) {
+    return { ok: false, error: mapTkgmCatch(error) };
+  }
 }
 
 /** Drone / 3D lisans reference_id: mahalleTkgm_ada_parsel */

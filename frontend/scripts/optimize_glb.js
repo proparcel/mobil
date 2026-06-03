@@ -237,6 +237,29 @@ async function main() {
   logMetrics("output", metricsOut);
   const format = (n) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(2)} MB` : `${(n / 1024).toFixed(1)} KB`);
   console.warn(`[optimize_glb] OK ${path.basename(absIn)} -> ${path.basename(absOut)} ${format(metricsIn.byteLength)} -> ${format(metricsOut.byteLength)} (${durationMs} ms) category=${args.category} width=${width} height=${height} ratio=${ratio}`);
+
+  try {
+    const outDoc = await io.read(absOut);
+    const outScenes = outDoc.getRoot().listScenes();
+    if (outScenes.length > 0) {
+      const bbox = getBounds(outScenes[0]);
+      if (bbox && bbox.min != null && bbox.max != null) {
+        const minY = Array.isArray(bbox.min) ? bbox.min[1] : bbox.min.y;
+        const maxY = Array.isArray(bbox.max) ? bbox.max[1] : bbox.max.y;
+        const pivotBelow = needsPivotBelow;
+        console.warn(
+          `[optimize_glb] META ${JSON.stringify({
+            minY: typeof minY === "number" ? minY : null,
+            maxY: typeof maxY === "number" ? maxY : null,
+            pivotBelow,
+            baseTranslationZM: pivotBelow ? 0 : typeof minY === "number" && typeof maxY === "number" ? (maxY - minY) / 2 : null,
+          })}`
+        );
+      }
+    }
+  } catch (e) {
+    console.warn("[optimize_glb] META bounds skip:", e.message);
+  }
 }
 
 main().catch((e) => {

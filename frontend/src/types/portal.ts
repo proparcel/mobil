@@ -69,6 +69,10 @@ export interface PortalQueryListParams {
   city_id?: number;
   town_id?: number;
   quarter_id?: number;
+  /** Ada numarası — tam eşleşme */
+  ada?: string;
+  /** Parsel numarası — tam eşleşme */
+  parsel?: string;
   proparcel_value?: string;
   query_type?: string;
   has_expert?: string;

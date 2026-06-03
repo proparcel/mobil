@@ -12,6 +12,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from './components/app/ErrorBoundary';
+import { AppChromeScaffold } from './components/app/AppChromeScaffold';
 import { AuthProvider } from './screens/contexts/AuthContext';
 import { BadgeCelebrationProvider } from './screens/contexts/BadgeCelebrationContext';
 import { ScreenShieldProvider, useScreenShield } from './screens/contexts/ScreenShieldContext';
@@ -32,6 +33,8 @@ import SalesReportScreen from './screens/routes/sales-report';
 import AiVideoStudioScreen from './screens/routes/ai-video-studio';
 import AiImageAnimationPurchaseScreen from './screens/routes/ai-image-animation-purchase';
 import AiImageAnimationEditorScreen from './screens/routes/ai-image-animation-editor';
+import AiDroneHubScreen from './screens/routes/ai-drone-hub';
+import AiDroneSimpleEditorScreen from './screens/routes/ai-drone-simple-editor';
 import AiDroneVideoInfoScreen from './screens/routes/ai-drone-video-info';
 import AiDroneJobsScreen from './screens/routes/ai-drone-jobs';
 import AiDroneJobDetailScreen from './screens/routes/ai-drone-job-detail';
@@ -45,6 +48,14 @@ import OTPVerifyScreen from './screens/routes/(auth)/otp-verify';
 import ForgotPasswordScreen from './screens/routes/(auth)/forgot-password';
 import CompleteRegistrationScreen from './screens/routes/complete-registration';
 import AdminScreen from './screens/routes/admin';
+import AdminUsersScreen from './screens/routes/admin/users';
+import AdminUserDetailScreen from './screens/routes/admin/user-detail';
+import AdminImageApprovalsScreen from './screens/routes/admin/image-approvals';
+import AdminGraduationApprovalsScreen from './screens/routes/admin/graduation-approvals';
+import AdminHavaleApprovalsScreen from './screens/routes/admin/havale-approvals';
+import AdminHavaleDetailScreen from './screens/routes/admin/havale-detail';
+import AdminSalesApprovalsScreen from './screens/routes/admin/sales-approvals';
+import AdminAiDroneRequestsScreen from './screens/routes/admin/ai-drone-requests';
 import PaymentWebViewScreen from './screens/routes/payment-webview';
 import Son30GunScreen from './screens/routes/son-30-gun';
 import EmlakVitriniScreen from './screens/routes/emlak-vitrini';
@@ -140,6 +151,26 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
     };
   }, []);
 
+  // iOS: StoreKit bağlantısı ve bekleyen işlemler (Android etkilenmez)
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { initializeIAP } = await import("./services/iapService");
+        if (!cancelled) await initializeIAP();
+      } catch (e) {
+        console.warn("[App] IAP init skipped", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      import("./services/iapService")
+        .then(({ teardownIAP }) => teardownIAP())
+        .catch(() => {});
+    };
+  }, []);
+
   return (
     <React.Fragment>
       <NavigationContainer ref={navigationRef} theme={DarkTheme} onReady={() => setNavReady(true)}>
@@ -166,6 +197,8 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="ai-video-studio" component={AiVideoStudioScreen} />
           <Stack.Screen name="ai-image-animation-purchase" component={AiImageAnimationPurchaseScreen} />
           <Stack.Screen name="ai-image-animation-editor" component={AiImageAnimationEditorScreen} />
+          <Stack.Screen name="ai-drone-hub" component={AiDroneHubScreen} />
+          <Stack.Screen name="ai-drone-simple-editor" component={AiDroneSimpleEditorScreen} />
           <Stack.Screen name="ai-drone-video-info" component={AiDroneVideoInfoScreen} />
           <Stack.Screen name="ai-drone-jobs" component={AiDroneJobsScreen} />
           <Stack.Screen name="ai-drone-job-detail" component={AiDroneJobDetailScreen} />
@@ -175,6 +208,14 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="parcel-split" component={ParcelSplitScreen} />
           <Stack.Screen name="complete-registration" component={CompleteRegistrationScreen} />
           <Stack.Screen name="admin" component={AdminScreen} />
+          <Stack.Screen name="admin-users" component={AdminUsersScreen} />
+          <Stack.Screen name="admin-user-detail" component={AdminUserDetailScreen} />
+          <Stack.Screen name="admin-image-approvals" component={AdminImageApprovalsScreen} />
+          <Stack.Screen name="admin-graduation-approvals" component={AdminGraduationApprovalsScreen} />
+          <Stack.Screen name="admin-havale-approvals" component={AdminHavaleApprovalsScreen} />
+          <Stack.Screen name="admin-havale-detail" component={AdminHavaleDetailScreen} />
+          <Stack.Screen name="admin-sales-approvals" component={AdminSalesApprovalsScreen} />
+          <Stack.Screen name="admin-ai-drone-requests" component={AdminAiDroneRequestsScreen} />
           <Stack.Screen name="tepe-coin-purchase" component={TepeCoinPurchaseScreen} />
           <Stack.Screen name="payment-webview" component={PaymentWebViewScreen} />
           <Stack.Screen name="emlak-vitrini" component={EmlakVitriniScreen} />
@@ -241,9 +282,11 @@ export default function App() {
       <ErrorBoundary>
         <GestureHandlerRootView style={{ flex: 1 }}>
           <SafeAreaProvider>
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0b1220' }}>
-              <ActivityIndicator size="large" color="#3b82f6" />
-            </View>
+            <AppChromeScaffold>
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0b1220' }}>
+                <ActivityIndicator size="large" color="#3b82f6" />
+              </View>
+            </AppChromeScaffold>
           </SafeAreaProvider>
         </GestureHandlerRootView>
       </ErrorBoundary>
@@ -256,11 +299,13 @@ export default function App() {
         <BadgeCelebrationProvider>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <SafeAreaProvider>
-              <BottomSheetModalProvider>
-                <ScreenShieldProvider>
-                  <AppWithShield initialRouteName={initialRoute} />
-                </ScreenShieldProvider>
-              </BottomSheetModalProvider>
+              <AppChromeScaffold>
+                <BottomSheetModalProvider>
+                  <ScreenShieldProvider>
+                    <AppWithShield initialRouteName={initialRoute} />
+                  </ScreenShieldProvider>
+                </BottomSheetModalProvider>
+              </AppChromeScaffold>
             </SafeAreaProvider>
           </GestureHandlerRootView>
         </BadgeCelebrationProvider>

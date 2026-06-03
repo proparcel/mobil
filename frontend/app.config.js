@@ -23,10 +23,11 @@ const DEV_CLIENT_PACKAGES = [
 module.exports = {
   name: "ProParcel",
   displayName: "ProParcel",
-  version: "1.0.8",
+  version: "1.0.23",
   expo: {
     name: "ProParcel",
     slug: "frontend",
+    version: "1.0.23",
     scheme: "proparcel",
     icon: "./assets/images/icon.png",
     splash: {
@@ -48,7 +49,7 @@ module.exports = {
     jsEngine: "hermes",
     ios: {
       bundleIdentifier: "com.proparcel.app",
-      buildNumber: "6",
+      buildNumber: "19",
       icon: "./assets/images/icon.png",
       supportsTablet: true,
       ...(process.env.IOS_ASSOCIATED_DOMAINS === "1"
@@ -75,10 +76,16 @@ module.exports = {
     },
     android: {
       package: "com.proparcel.mobile",
+      navigationBar: {
+        enforceContrast: false,
+        backgroundColor: "#1e293b",
+      },
       permissions: [
         "android.permission.READ_CONTACTS",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
       ],
       icon: "./assets/images/icon.png",
       adaptiveIcon: {
@@ -120,6 +127,23 @@ module.exports = {
             useFrameworks: "static",
             deploymentTarget: "15.1",
           },
+          android: {
+            compileSdkVersion: 36,
+            targetSdkVersion: 36,
+          },
+        },
+      ],
+      [
+        "expo-image-picker",
+        {
+          cameraPermission: "Fotoğraf çekme için kamera kullanılır.",
+          photosPermission: "Resim seçme için fotoğraf kütüphanesi kullanılır.",
+        },
+      ],
+      [
+        "expo-av",
+        {
+          microphonePermission: "Ses kaydı için mikrofon kullanılır.",
         },
       ],
       [
@@ -137,6 +161,7 @@ module.exports = {
           RNMapboxMapsDownloadToken: MAPBOX_TOKENS.downloadToken,
         },
       ],
+      "react-native-iap",
     ],
   },
 };

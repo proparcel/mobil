@@ -136,6 +136,53 @@ async function ensureCacheDir(): Promise<void> {
   }
 }
 
+function toFsPath(uriOrPath: string): string {
+  return String(uriOrPath || "").replace(/^file:\/\//, "");
+}
+
+/**
+ * İndirilen .tmp dosyasını kalıcı cache yoluna taşır.
+ * Android'de moveFile bazen EXDEV ile düşer; o zaman copyFile + unlink kullanılır.
+ */
+async function promoteTmpToFinal(fromPath: string, toPath: string): Promise<boolean> {
+  try {
+    const destExists = await RNFS.exists(toPath);
+    if (destExists) await RNFS.unlink(toPath);
+  } catch {
+    // ignore
+  }
+
+  try {
+    await RNFS.moveFile(fromPath, toPath);
+    return true;
+  } catch (moveErr) {
+    console.warn("[modelsCache] moveFile başarısız, copyFile deneniyor:", {
+      from: fromPath.substring(Math.max(0, fromPath.length - 60)),
+      to: toPath.substring(Math.max(0, toPath.length - 60)),
+      error: String((moveErr as any)?.message || moveErr),
+    });
+  }
+
+  try {
+    await RNFS.copyFile(fromPath, toPath);
+    const ok = await RNFS.exists(toPath);
+    if (!ok) return false;
+    try {
+      await RNFS.unlink(fromPath);
+    } catch {
+      // tmp kalabilir; final dosya hazır
+    }
+    return true;
+  } catch (copyErr) {
+    console.error("[modelsCache] copyFile fallback başarısız:", {
+      from: fromPath.substring(Math.max(0, fromPath.length - 60)),
+      to: toPath.substring(Math.max(0, toPath.length - 60)),
+      error: String((copyErr as any)?.message || copyErr),
+    });
+    return false;
+  }
+}
+
 function isRemoteHttpUrl(url: string): boolean {
   const u = String(url || "").trim().toLowerCase();
   return u.startsWith("http://") || u.startsWith("https://");
@@ -571,7 +618,7 @@ export async function ensureCachedModelUri(params: {
   const headers: Record<string, string> = { "ngrok-skip-browser-warning": "true" };
   let lastPercent = -1;
   const tmpUri = `${localUri}.tmp`;
-  const tmpPath = tmpUri.replace("file://", "");
+  const tmpPath = toFsPath(tmpUri);
 
   function delay(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
@@ -770,48 +817,23 @@ export async function ensureCachedModelUri(params: {
     modelId: params?.modelId,
   });
 
-  // Eski final dosyayı sil (varsa)
-  try {
-    const localPath = localUri.replace("file://", "");
-    const exists = await RNFS.exists(localPath);
-    if (exists) {
-      const stat = await RNFS.stat(localPath);
-      console.log("[modelsCache] Eski final dosya siliniyor...", {
-        uri: localUri.substring(0, 80),
-        oldSize: stat && typeof stat.size === "number" ? stat.size : null,
-      });
-      await RNFS.unlink(localPath);
-    }
-  } catch (e) {
-    console.warn("[modelsCache] Eski final dosya silinirken hata (devam ediyoruz):", {
-      uri: localUri.substring(0, 80),
-      error: String((e as any)?.message || e),
-    });
-  }
-
-  // Atomic move: tmp -> final
-  try {
-    const fromPath = uri.replace("file://", "");
-    const toPath = localUri.replace("file://", "");
-    await RNFS.moveFile(fromPath, toPath);
-    console.log("[modelsCache] ✅ Atomic move başarılı");
-  } catch (e) {
-    const errMsg = String((e as any)?.message || e);
-    console.error("[modelsCache] Atomic move başarısız:", {
+  const fromPath = toFsPath(uri);
+  const toPath = toFsPath(localUri);
+  const promoted = await promoteTmpToFinal(fromPath, toPath);
+  if (!promoted) {
+    console.error("[modelsCache] Atomic move başarısız (move + copy):", {
       from: uri.substring(0, 80),
       to: localUri.substring(0, 80),
-      error: errMsg,
     });
-    // move başarısızsa tmp'yi olduğu gibi kullan (en azından çalışsın)
-    if (__DEV__) {
-      console.warn("[modelsCache] move tmp->final failed (using tmp)", {
-        from: uri,
-        to: localUri,
-        err: errMsg,
-      });
+    // Son çare: tmp dosyası hâlâ varsa onu kullan (Mapbox file:// ile yükleyebilir)
+    try {
+      if (await RNFS.exists(fromPath)) return uri;
+    } catch {
+      // ignore
     }
-    return uri;
+    throw new Error("Model indirildi ama cache dosyası yazılamadı (atomic move/copy)");
   }
+  console.log("[modelsCache] ✅ Atomic move başarılı");
 
   // DETAYLI KONTROL 3: Final dosya doğrulama (atomic write sonrası)
   console.log("[modelsCache] ⚠️ Atomic write sonrası final dosya doğrulanıyor...", {

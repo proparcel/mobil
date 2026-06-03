@@ -18,16 +18,24 @@ import {
   Modal,
   RefreshControl,
   FlatList,
+  BackHandler,
+  KeyboardAvoidingView,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
 import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
-import { StatusBar } from "react-native";
+import { AppStatusBar } from "../../components/app/AppStatusBar";
+import { getKeyboardAvoidingBehavior, useKeyboardHeight } from "../../src/keyboard";
+import {
+  securePasswordInputProps,
+  securePasswordInputStyle,
+} from "../../src/utils/passwordTextInput";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../contexts/AuthContext";
 import { authService } from "../../services/authService";
 import { companyService } from "../../services/companyService";
 import { creditService } from "../../services/creditService";
-import type { UserProfile, CompanyProfile, CompanyMembershipRequest, UserExpertiseArea, ProviderCoverageDistrict } from "../../src/types/auth";
+import type { UserProfile, UserExpertiseArea, ProviderCoverageDistrict, RegistrationCompanyItem } from "../../src/types/auth";
 import { launchImageLibrary } from "react-native-image-picker";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect, useRoute } from "@react-navigation/native";
@@ -80,6 +88,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const route = useRoute();
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
   const { user, logout, isAuthenticated } = useAuth();
 
   // State
@@ -135,10 +144,12 @@ export default function ProfileScreen() {
   const [covCityId, setCovCityId] = useState<number | null>(null);
   const [covCityName, setCovCityName] = useState("");
 
-  // Firma işlemleri state (bireysel için)
-  const [vergiNo, setVergiNo] = useState("");
-  const [searchingCompany, setSearchingCompany] = useState(false);
-  const [foundCompany, setFoundCompany] = useState<CompanyProfile | null>(null);
+  // Firma işlemleri state (bireysel / danışman için)
+  const [companySearch, setCompanySearch] = useState("");
+  const [companyOptions, setCompanyOptions] = useState<RegistrationCompanyItem[]>([]);
+  const [selectedCompany, setSelectedCompany] = useState<RegistrationCompanyItem | null>(null);
+  const [loadingCompanies, setLoadingCompanies] = useState(false);
+  const [companySearchError, setCompanySearchError] = useState("");
   const [sendingRequest, setSendingRequest] = useState(false);
 
   // Şifre değiştirme state
@@ -313,6 +324,38 @@ export default function ProfileScreen() {
 
   /** Eski ad — pull-to-refresh / focus çağrıları (Metro önbelleği uyumu) */
   const loadUsageData = loadCreditBalance;
+
+  useEffect(() => {
+    if (profile?.company_relation) {
+      setCompanyOptions([]);
+      setSelectedCompany(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        setLoadingCompanies(true);
+        setCompanySearchError("");
+        const res = await companyService.listCompaniesForRegistration(companySearch, 20);
+        if (cancelled) return;
+        setCompanyOptions(res.data || []);
+        if (!res.success) {
+          setCompanySearchError(res.message || "Firma listesi alınamadı.");
+        }
+      } catch {
+        if (cancelled) return;
+        setCompanySearchError("Firma listesi yüklenirken hata oluştu.");
+      } finally {
+        if (!cancelled) setLoadingCompanies(false);
+      }
+    }, companySearch.trim() ? 400 : 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [companySearch, profile?.company_relation]);
 
   const quarterLabelByValue = useMemo(() => {
     const map = new Map<number, string>();
@@ -642,8 +685,6 @@ export default function ProfileScreen() {
       company_license_no: profile?.company_license_no || "",
       office_no: profile?.office_no || "",
       spk_tc_no: profile?.spk_tc_no || "",
-      vergi_no: profile?.vergi_no || "",
-      vergi_dairesi: profile?.vergi_dairesi || "",
       emlak_yetki_belge_no: emlakYetkiBelgeNo,
     });
 
@@ -875,42 +916,25 @@ export default function ProfileScreen() {
   };
 
   /**
-   * Firma ara (bireysel için)
+   * Firma bağlantı isteği gönder
    */
-  const handleSearchCompany = async () => {
-    if (!vergiNo.trim()) {
-      Alert.alert("Hata", "Lütfen vergi numarası girin");
+  const handleRequestMembership = async () => {
+    if (!selectedCompany?.company_profile_id) {
+      Alert.alert("Hata", "Lütfen listeden firma seçin");
       return;
     }
 
-    setSearchingCompany(true);
-    setFoundCompany(null);
-
-    const response = await companyService.searchCompanyByVergiNo(vergiNo);
-
-    if (response.success && response.data) {
-      setFoundCompany(response.data.company);
-    } else {
-      Alert.alert("Hata", response.message || "Firma bulunamadı");
-    }
-
-    setSearchingCompany(false);
-  };
-
-  /**
-   * Firma bağlantı isteği gönder (bireysel için)
-   */
-  const handleRequestMembership = async () => {
-    if (!foundCompany) return;
-
     setSendingRequest(true);
 
-    const response = await companyService.requestCompanyMembership(vergiNo);
+    const response = await companyService.requestCompanyMembership(
+      selectedCompany.company_profile_id,
+    );
 
     if (response.success) {
       Alert.alert("Başarılı", "Firma bağlantı isteği gönderildi");
-      setVergiNo("");
-      setFoundCompany(null);
+      setCompanySearch("");
+      setSelectedCompany(null);
+      setCompanyOptions([]);
       await loadProfile();
     } else {
       Alert.alert("Hata", response.message || "İstek gönderilemedi");
@@ -920,7 +944,7 @@ export default function ProfileScreen() {
   };
 
   /**
-   * Firmadan çık (bireysel için)
+   * Firmadan çık
    */
   const handleLeaveCompany = async () => {
     Alert.alert(
@@ -1071,6 +1095,35 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleHeaderBack = useCallback(() => {
+    if (profileMenuOpen) {
+      setProfileMenuOpen(false);
+      return;
+    }
+    if (profileSection !== "genel") {
+      setProfileSection("genel");
+      return;
+    }
+    router.back();
+  }, [profileMenuOpen, profileSection, router]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        if (profileMenuOpen) {
+          setProfileMenuOpen(false);
+          return true;
+        }
+        if (profileSection !== "genel") {
+          setProfileSection("genel");
+          return true;
+        }
+        return false;
+      });
+      return () => sub.remove();
+    }, [profileMenuOpen, profileSection]),
+  );
+
   // Giriş yapılmamışsa
   if (!isAuthenticated) {
     return null;
@@ -1080,11 +1133,11 @@ export default function ProfileScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
-        <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
+        <AppStatusBar />
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.headerBtn}
-            onPress={() => router.back()}
+            onPress={handleHeaderBack}
             accessibilityLabel="Geri"
           >
             <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -1119,12 +1172,12 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
+      <AppStatusBar />
       {/* Header: sadece geri + başlık */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBtn}
-          onPress={() => router.back()}
+          onPress={handleHeaderBack}
           accessibilityLabel="Geri"
         >
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -1379,7 +1432,7 @@ export default function ProfileScreen() {
             loading={mineListingsLoading}
             onOpenEditor={openListingEditor}
             onDeactivate={onDeactivateListingPress}
-            onOpenIlanIslemleri={() => router.push("ilan-islemleri")}
+            onOpenIlanIslemleri={() => router.push("ilan-islemleri", withProfileReturn({}, "ilanlar"))}
           />
         ) : null}
 
@@ -1761,20 +1814,6 @@ export default function ProfileScreen() {
                     {profile.company_relation.company_name}
                   </Text>
                 </View>
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Vergi No</Text>
-                  <Text style={styles.infoValue}>
-                    {profile.company_relation.vergi_no}
-                  </Text>
-                </View>
-                {profile.company_relation.vergi_dairesi && (
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Vergi Dairesi</Text>
-                    <Text style={styles.infoValue}>
-                      {profile.company_relation.vergi_dairesi}
-                    </Text>
-                  </View>
-                )}
                 <TouchableOpacity
                   style={styles.leaveButton}
                   onPress={handleLeaveCompany}
@@ -1793,39 +1832,69 @@ export default function ProfileScreen() {
                   <Text style={styles.cardTitle}>Firma Kaydı</Text>
                 </View>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Vergi Numarası</Text>
+                  <Text style={styles.label}>Firma Ara</Text>
                   <TextInput
                     style={styles.input}
-                    value={vergiNo}
-                    onChangeText={setVergiNo}
-                    placeholder="10 haneli vergi numarası"
-                    keyboardType="numeric"
-                    maxLength={10}
+                    value={companySearch}
+                    onChangeText={(text) => {
+                      setCompanySearch(text);
+                      setCompanySearchError("");
+                      if (selectedCompany && text !== selectedCompany.company_name) {
+                        setSelectedCompany(null);
+                      }
+                    }}
+                    placeholder="Firma adı ile arayın"
+                    autoCapitalize="words"
+                    autoCorrect={false}
                   />
                 </View>
-                <TouchableOpacity
-                  style={[styles.button, styles.searchButton]}
-                  onPress={handleSearchCompany}
-                  disabled={searchingCompany}
-                >
-                  {searchingCompany ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="search" size={18} color="#fff" />
-                      <Text style={styles.searchButtonText}>Firma Bul</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
 
-                {foundCompany && (
+                {loadingCompanies ? (
+                  <View style={styles.companyPickerStatus}>
+                    <ActivityIndicator color="#3b82f6" />
+                    <Text style={styles.cardHint}>Firma listesi yükleniyor...</Text>
+                  </View>
+                ) : null}
+
+                {companySearchError ? (
+                  <Text style={styles.fieldError}>{companySearchError}</Text>
+                ) : null}
+
+                {!loadingCompanies && companyOptions.length > 0 ? (
+                  <View style={styles.companyOptionsList}>
+                    {companyOptions.map((company) => {
+                      const isSelected =
+                        selectedCompany?.company_profile_id === company.company_profile_id;
+                      return (
+                        <TouchableOpacity
+                          key={company.company_profile_id}
+                          style={[
+                            styles.companyOptionItem,
+                            isSelected && styles.companyOptionItemSelected,
+                          ]}
+                          onPress={() => setSelectedCompany(company)}
+                        >
+                          <Text style={styles.companyOptionTitle}>{company.company_name}</Text>
+                          {company.corporate_type ? (
+                            <Text style={styles.companyOptionMeta}>
+                              {company.corporate_type.toUpperCase()}
+                            </Text>
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ) : null}
+
+                {!loadingCompanies && !companySearchError && companyOptions.length === 0 ? (
+                  <Text style={styles.cardHint}>Firma adı yazarak listeden seçin.</Text>
+                ) : null}
+
+                {selectedCompany ? (
                   <View style={styles.foundCompanyCard}>
-                    <Text style={styles.foundCompanyTitle}>Firma Bulundu</Text>
+                    <Text style={styles.foundCompanyTitle}>Seçilen Firma</Text>
                     <Text style={styles.foundCompanyName}>
-                      {foundCompany.company_name}
-                    </Text>
-                    <Text style={styles.foundCompanyVergi}>
-                      Vergi No: {foundCompany.vergi_no}
+                      {selectedCompany.company_name}
                     </Text>
                     <TouchableOpacity
                       style={[styles.button, styles.requestButton]}
@@ -1844,7 +1913,7 @@ export default function ProfileScreen() {
                       )}
                     </TouchableOpacity>
                   </View>
-                )}
+                ) : null}
               </View>
             )}
 
@@ -1859,7 +1928,7 @@ export default function ProfileScreen() {
                   <View key={request.id} style={styles.requestItem}>
                     <View style={styles.requestItemContent}>
                       <Text style={styles.requestItemTitle}>
-                        Vergi No: {request.company_vergi_no}
+                        {request.company_name || "Firma isteği"}
                       </Text>
                       <Text style={styles.requestItemDate}>
                         {new Date(request.requested_at).toLocaleDateString("tr-TR", {
@@ -1952,18 +2021,6 @@ export default function ProfileScreen() {
                 <Text style={styles.infoLabel}>Firma Adı</Text>
                 <Text style={styles.infoValue}>{profile?.company_name || "-"}</Text>
               </View>
-              {profile?.vergi_no && (
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Vergi No</Text>
-                  <Text style={styles.infoValue}>{profile.vergi_no}</Text>
-                </View>
-              )}
-              {profile?.vergi_dairesi && (
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Vergi Dairesi</Text>
-                  <Text style={styles.infoValue}>{profile.vergi_dairesi}</Text>
-                </View>
-              )}
               {profile?.emlak_yetki_belge_no && (
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Emlak Yetki Belge No</Text>
@@ -2187,24 +2244,12 @@ export default function ProfileScreen() {
                 <Text style={styles.cardTitle}>Firma bilgileri</Text>
               </View>
               <Text style={styles.cardHint}>
-                Firma adı, vergi ve yetki bilgileri web profilinizde düzenlenir.
+                Firma adı ve yetki bilgileri web profilinizde düzenlenir.
               </Text>
               {profile?.company_name ? (
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Firma adı</Text>
                   <Text style={styles.infoValue}>{profile.company_name}</Text>
-                </View>
-              ) : null}
-              {profile?.vergi_no ? (
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Vergi no</Text>
-                  <Text style={styles.infoValue}>{profile.vergi_no}</Text>
-                </View>
-              ) : null}
-              {profile?.vergi_dairesi ? (
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Vergi dairesi</Text>
-                  <Text style={styles.infoValue}>{profile.vergi_dairesi}</Text>
                 </View>
               ) : null}
               {profile?.emlak_yetki_belge_no ? (
@@ -2231,7 +2276,7 @@ export default function ProfileScreen() {
                   </View>
                 ) : null;
               })()}
-              {!profile?.company_name && !profile?.vergi_no ? (
+              {!profile?.company_name ? (
                 <Text style={styles.emptySmallText}>
                   Henüz firma kaydı görünmüyor. Web üzerinden firma bilgilerinizi tamamlayın.
                 </Text>
@@ -2407,21 +2452,27 @@ export default function ProfileScreen() {
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Yeni Şifre</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, securePasswordInputStyle]}
                     placeholder="En az 8 karakter"
                     secureTextEntry
                     value={newPassword}
                     onChangeText={setNewPassword}
+                    autoComplete="password-new"
+                    textContentType="newPassword"
+                    {...securePasswordInputProps}
                   />
                 </View>
                 <View style={styles.inputGroup}>
                   <Text style={styles.label}>Yeni Şifre (Tekrar)</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, securePasswordInputStyle]}
                     placeholder="Yeni şifrenizi tekrar girin"
                     secureTextEntry
                     value={newPasswordConfirm}
                     onChangeText={setNewPasswordConfirm}
+                    autoComplete="password-new"
+                    textContentType="newPassword"
+                    {...securePasswordInputProps}
                   />
                 </View>
               </>
@@ -2513,12 +2564,15 @@ export default function ProfileScreen() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Şifre</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, securePasswordInputStyle]}
                 placeholder="Şifreniz"
                 secureTextEntry
                 value={deletePassword}
                 onChangeText={setDeletePassword}
                 editable={deleteStep === "password"}
+                autoComplete="password"
+                textContentType="password"
+                {...securePasswordInputProps}
               />
             </View>
             {deleteStep === "otp" && (
@@ -2680,26 +2734,6 @@ export default function ProfileScreen() {
                   maxLength={7}
                 />
               </View>
-              {profile?.vergi_no && (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Vergi No (Değiştirilemez)</Text>
-                  <TextInput
-                    style={[styles.input, styles.inputDisabled]}
-                    value={profile.vergi_no}
-                    editable={false}
-                  />
-                </View>
-              )}
-              {profile?.vergi_dairesi && (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Vergi Dairesi (Değiştirilemez)</Text>
-                  <TextInput
-                    style={[styles.input, styles.inputDisabled]}
-                    value={profile.vergi_dairesi}
-                    editable={false}
-                  />
-                </View>
-              )}
             </ScrollView>
             <View style={styles.modalButtons}>
               <TouchableOpacity
@@ -2731,8 +2765,11 @@ export default function ProfileScreen() {
         animationType="fade"
         onRequestClose={() => setExpertisePickerMode(null)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, styles.pickerModalContent]}>
+        <KeyboardAvoidingView
+          style={styles.pickerModalOverlay}
+          behavior={getKeyboardAvoidingBehavior("modal")}
+        >
+          <View style={[styles.pickerSheet, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 12) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {expertisePickerMode === "city" && "İl seçin"}
@@ -2772,6 +2809,10 @@ export default function ProfileScreen() {
             </View>
 
             <FlatList
+              style={styles.pickerList}
+              contentContainerStyle={
+                keyboardHeight > 0 ? { paddingBottom: keyboardHeight } : undefined
+              }
               data={expertiseListData as any[]}
               keyExtractor={(item: any) => String(item?.Id ?? item?.quarter_value ?? Math.random())}
               renderItem={({ item }: any) => {
@@ -2817,7 +2858,7 @@ export default function ProfileScreen() {
               }}
             />
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Provider coverage seçici modalı */}
@@ -2827,8 +2868,11 @@ export default function ProfileScreen() {
         animationType="fade"
         onRequestClose={() => setCoveragePickerMode(null)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, styles.pickerModalContent]}>
+        <KeyboardAvoidingView
+          style={styles.pickerModalOverlay}
+          behavior={getKeyboardAvoidingBehavior("modal")}
+        >
+          <View style={[styles.pickerSheet, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 12) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {coveragePickerMode === "city" && "İl seçin"}
@@ -2863,6 +2907,10 @@ export default function ProfileScreen() {
             </View>
 
             <FlatList
+              style={styles.pickerList}
+              contentContainerStyle={
+                keyboardHeight > 0 ? { paddingBottom: keyboardHeight } : undefined
+              }
               data={coverageListData as any[]}
               keyExtractor={(item: any) => String(item?.Id ?? Math.random())}
               renderItem={({ item }: any) => {
@@ -2900,7 +2948,7 @@ export default function ProfileScreen() {
               keyboardShouldPersistTaps="handled"
             />
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -3677,6 +3725,24 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
+  },
+  pickerSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    padding: 24,
+    width: "100%",
+    height: "75%",
+    maxHeight: "85%",
+  },
+  pickerList: {
+    flex: 1,
+    minHeight: 0,
+  },
   pickerModalContent: {
     maxHeight: "70%",
   },
@@ -3817,6 +3883,47 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+  // Firma listesi (bağlantı isteği)
+  companyPickerStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  fieldError: {
+    color: "#ef4444",
+    fontSize: 13,
+    marginTop: 8,
+  },
+  companyOptionsList: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  companyOptionItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+    backgroundColor: "#fff",
+  },
+  companyOptionItemSelected: {
+    backgroundColor: "#eff6ff",
+    borderLeftWidth: 3,
+    borderLeftColor: "#3b82f6",
+  },
+  companyOptionTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#1e293b",
+  },
+  companyOptionMeta: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 2,
+  },
   // Found Company
   foundCompanyCard: {
     marginTop: 16,
@@ -3837,11 +3944,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1e293b",
     marginBottom: 4,
-  },
-  foundCompanyVergi: {
-    fontSize: 14,
-    color: "#64748b",
-    marginBottom: 12,
   },
   // Request Items
   requestItem: {

@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
-  StatusBar,
   Dimensions,
   TouchableWithoutFeedback,
   Alert,
@@ -19,17 +18,23 @@ import {
   UIManager,
   DeviceEventEmitter,
   AppState,
+  InteractionManager,
 } from 'react-native';
+import { AppStatusBar } from '../../components/app/AppStatusBar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Linking } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { proparcelFavicon } from '../../components/landing/proparcelBrandAssets';
 import { MapFloatingCreditBadge } from '../../components/app/MapFloatingCreditBadge';
 import { useRouter, useLocalSearchParams } from '../../src/hooks/useNavigation';
-import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/native';
-import Svg, { Rect } from 'react-native-svg';
-import { getCombinedImageDimensions } from '../../src/utils/screenshotManager';
+import { useFocusEffect, useRoute, useNavigation, useIsFocused } from '@react-navigation/native';
+import Svg, { Polyline, Rect } from 'react-native-svg';
+import { cleanupTempFiles, getCombinedImageDimensions } from '../../src/utils/screenshotManager';
+import { startPreviewSnapPrewarm } from '../../src/utils/shareCaptureFlow';
+import { buildCameraFingerprint, type PreviewSnapCacheEntry } from '../../src/utils/captureSnapCache';
 import { parseTurkishPrice, formatTurkishPrice } from '../../src/utils/priceParser';
 import MyQueriesModal, { type SavedQueryItem } from '../../components/app/MyQueriesModal';
 import ParcelSplitProjectsModal from '../../components/app/ParcelSplitProjectsModal';
@@ -42,8 +47,18 @@ import {
 } from '../../components/app/UserMenuSheet';
 import UserMenuSheetList from '../../components/app/UserMenuSheetList';
 import { getMenuItems } from '../../components/app/userMenuItems';
+import { isAppAdminUser } from '../../src/utils/adminAccess';
 import { SavedQuery, upsertSavedQuery } from '../../src/utils/savedQueries';
 import { persistTkgmResponseToMyQueries } from '../../src/utils/persistSimpleQuery';
+import {
+  fitParcelInViewIfNeeded,
+  normalizeGeometryCoordinates as normalizeParcelGeometry,
+  zoomMapToParcelGeometry,
+} from '../../src/utils/parcelUtils';
+import {
+  DEFAULT_MAP_OVERLAY_VIEWPORT,
+  type MapOverlayViewport,
+} from '../../src/maps/drawing/mapOverlayViewport';
 import {
   createParcelFillLayer,
   createParcelStrokeLayer,
@@ -51,8 +66,15 @@ import {
 import { ParcelPatternLayer } from '../../components/map/ParcelPatternLayer';
 import { ParcelLabelLayer } from '../../components/map/ParcelLabelLayer';
 import { HomeMapToolsSheet } from '../../components/app/HomeMapToolsSheet';
+import HomeVoiceQueryOrb from '../../components/app/HomeVoiceQueryOrb';
+import { MapHoldZoomLayer } from '../../components/app/MapHoldZoomLayer';
+import { MapToolsZoomSpeedBar } from '../../components/app/MapToolsZoomSpeedBar';
 import { ParcelPolygonDesignSheet } from '../../components/app/ParcelPolygonDesignSheet';
 import type { ParcelPolygonDesignConfig } from '../../src/constants/parcelPolygonDesign';
+import {
+  loadSavedParcelPolygonDesign,
+  saveParcelPolygonDesign,
+} from '../../src/utils/parcelPolygonDesignStorage';
 import { putReportMemory } from '../../src/utils/reportMemory';
 import { buildDfaRowsFromValuationSteps, parseAreaM2 } from '../../src/utils/dfaRows';
 import type { ReportPayload, ReportLocationHeader } from '../../src/types/reportPayload';
@@ -73,7 +95,10 @@ import {
   PORTAL_RECENT_QUERIES_CHANGED,
   type PortalRecentQueriesChangedPayload,
 } from '../../src/constants/portalEvents';
-import { fetchTkgmByCoordsWithFallback } from '../../src/utils/tkgmApi';
+import { fetchTkgmByCoords, fetchTkgmByIds } from '../../src/utils/tkgmApi';
+import {
+  resolveMahalleTkgmForDirectQuery,
+} from '../../src/utils/tkgmParcelQuery';
 // Conditional Video import (kutlama.mp4 background)
 let Video: any = null;
 try {
@@ -91,7 +116,16 @@ const hasNativeVideoView =
   !!(UIManager as any)?.getViewManagerConfig?.('ReactExoplayerView');
 
 import ParcelModal from '../../components/ParcelModal';
-import ParcelSearchModal from '../../components/ParcelSearchModal';
+import ParcelSearchModal, { type ParcelSearchTabKey } from '../../components/ParcelSearchModal';
+import {
+  smartQueryPayloadToFormSeed,
+  type SmartQueryParcelPayload,
+} from '../../src/utils/smartQueryResolve';
+import {
+  canUseSmartQuery,
+  promptSmartQueryUpgrade,
+} from '../../src/utils/customerFeatureGates';
+import type { SidebarSavedQuery } from '../../src/utils/sidebarSavedQueries';
 import ProModeThreeLoader from '../../components/ProModeThreeLoader';
 import PropertyTypeSelectionModal, { type ShareParcelSelection } from '../../components/PropertyTypeSelectionModal';
 import WelcomeBottomSheet from '../../components/WelcomeBottomSheet';
@@ -106,26 +140,29 @@ import ShareModal from '../../components/ShareModal';
 import StreetViewModal from '../../components/StreetViewModal';
 // 3D model görüntüleyici kaldırıldı - native Mapbox'a geçildi
 import ShapeDrawingModal from '../../components/app/ShapeDrawingModal';
-import { DrawingToolbox } from '../../components/app/shapeDrawingModal/DrawingToolbox';
-import { FreehandDrawOverlay } from '../../components/app/shapeDrawingModal/FreehandDrawOverlay';
-import { ScreenShapesOverlay } from '../../components/app/shapeDrawingModal/ScreenShapesOverlay';
-import { TextBoxMapOverlay } from '../../components/app/shapeDrawingModal/TextBoxMapOverlay';
 import { patchTextBoxShape } from '../../src/maps/drawing/textBoxLayout';
-import { ModeInfoBar } from '../../components/app/shapeDrawingModal/ModeInfoBar';
-import { ShapesLayer } from '../../src/maps/drawing/ShapesLayer';
-import { createPenFreehandShape } from '../../src/maps/drawing/ShapeDrawingManager';
-import type { ShapeProperties, ShapeType } from '../../src/maps/drawing/types';
-import { useShapeDrawingHandlers } from '../../components/app/shapeDrawingModal/useShapeDrawingHandlers';
+import type { ShapeType } from '../../src/maps/drawing/types';
+import { trySelectShapeAtLngLat } from '../../src/maps/drawing/shapePickAtLngLat';
+import { shapeNeedsOverlayRelayout } from '../../src/maps/drawing/overlayShapePolicy';
+import { useShapeDrawingSession } from '../../components/app/shapeDrawingModal/useShapeDrawingSession';
+import { useMeasurementSession } from '../../components/app/mapTools/useMeasurementSession';
+import { tryHitMeasurementGroupAtLngLat } from '../../components/app/shapeDrawingModal/measurementMapHit';
+import { MeasurementEditSheet } from '../../components/app/shapeDrawingModal/MeasurementEditSheet';
+import { activateMeasurementTool, activateShapeTool } from '../../components/app/mapTools/mapToolActions';
+import { isMapPlacementToolActive } from '../../components/app/mapTools/mapInteractionLock';
+import { ShapeDrawingMapLayers, ShapeDrawingUiOverlays } from '../../components/app/shapeDrawingModal/ShapeDrawingOverlays';
 import { TextBoxEditModal } from '../../components/app/TextBoxEditModal';
 import { ErrorBoundary } from '../../components/app/ErrorBoundary';
 import { ParcelModalContent } from '../../components/ParcelModalContent';
 import { ProParcelResponse, TkgmViewResponse, ParcelResponse, GeoJSONGeometry } from '../../src/types/parcelResponse';
 import { apply3DMode, updateCamRefFromCameraChanged } from '../../src/utils/threeDMode';
+import { HomeIndexMap3DLayers } from '../../components/map/HomeIndexMap3DLayers';
 import {
   TURKEY_MAP_CENTER,
   TURKEY_MAP_ZOOM,
   USER_BOOTSTRAP_ZOOM,
   USER_MENU_LOCATION_ZOOM,
+  HOME_PREFERRED_CITY_ANIM_MS,
   requestAppLocationPermission,
   hasAppLocationPermission,
   getCurrentCoordinates,
@@ -135,13 +172,16 @@ import {
 import {
   ADMIN_BOUNDARY_STYLES,
   loadLocationBoundaryForSelection,
+  getCityMapCameraFromId,
   type AdminBoundaryLevel,
   type LocationHierarchySelection,
 } from '../../src/utils/locationHierarchyMap';
+import { resolveHomeMapCityId } from '../../src/utils/homeMapPreferredCity';
 import type { SimpleQueryDeepLinkPayload } from '../../src/utils/deepLinkRouter';
 import type { GeoJsonGeometry } from '../../services/locationBoundaryApi';
 import { extractNitelikText, generatePropertyTypeTitle } from '../../src/utils/propertyTypeUtils';
 import { createShareHandler } from '../../src/utils/handlers/shareHandler';
+import { resolveParcelShareMessageUrlForShare } from '../../src/utils/parcelShareLink';
 import { useScreenshotListener } from '../../src/utils/useScreenshotListener';
 import { CombinedScreenshotContainer } from '../../components/app/CombinedScreenshotContainer';
 import { getFirstStreetViewPoint } from '../../src/utils/streetViewHelper';
@@ -216,10 +256,6 @@ import { createListingDraft } from "../../services/listingService";
 // Shape drawing moved to ShapeDrawingModal component
 import {
   MeasurementMode,
-  MeasurementFeature,
-  calculateArea,
-  createRulerFeatures,
-  createAreaFeatures,
   getCentroid,
   getCoordinateDistance
 } from '../../src/utils/measurementManager';
@@ -229,17 +265,15 @@ import {
   createEdgeMeasurementFeatures
 } from '../../src/utils/edgeMeasurementsManager';
 
+function isValidMeasureColorHex(v: unknown): v is string {
+  return typeof v === 'string' && v.startsWith('#') && /^#[0-9A-Fa-f]{6}$/i.test(v);
+}
+
 // Conditional Mapbox import
 let Mapbox: any = null;
-let RasterDemSource: any = null;
-let Terrain: any = null;
-let SkyLayer: any = null;
 try {
   const mapboxModule = require('@rnmapbox/maps');
   Mapbox = mapboxModule.default || mapboxModule;
-  if (mapboxModule.RasterDemSource) RasterDemSource = mapboxModule.RasterDemSource;
-  if (mapboxModule.Terrain) Terrain = mapboxModule.Terrain;
-  if (mapboxModule.SkyLayer) SkyLayer = mapboxModule.SkyLayer;
   if (Mapbox && Mapbox.setAccessToken) {
     try {
       const { MAPBOX_ACCESS_TOKEN } = require('../../config/mapbox');
@@ -254,6 +288,50 @@ try {
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+/** Alt toolbar (20) + sorgu şeridi (~42) + pill bar (~44) + üst boşluk (20) */
+const HOME_MAP_3D_CONTROLS_BOTTOM = 114;
+const THREE_D_CONTROLS_PANEL_HEIGHT = 110;
+/** Kapatma çizgisi + boşluk + yön paneli + boşluk + pitch paneli */
+const THREE_D_CONTROLS_SLIDE_WIDTH = 228;
+/** Zoom paneli: padding + iki buton + border */
+const ZOOM_CONTROLS_PANEL_HEIGHT = 80;
+/** B/P kare butonları (üstte absolute; merkezleme yüksekliğine dahil değil) */
+const ZOOM_QUERY_BUTTONS_GAP = 4;
+/** Kapatma tutamağı + zoom paneli */
+const ZOOM_CONTROLS_SLIDE_WIDTH = 76;
+const PANEL_COLLAPSE_COLOR = '#5897fb';
+
+function PanelCollapseChevrons() {
+  return (
+    <Svg width={22} height={28} viewBox="0 0 22 28">
+      <Polyline
+        points="3,6 9,14 3,22"
+        fill="none"
+        stroke={PANEL_COLLAPSE_COLOR}
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Polyline
+        points="11,6 17,14 11,22"
+        fill="none"
+        stroke={PANEL_COLLAPSE_COLOR}
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** Açık panelde yalnızca içeri (sağa) bakan çift chevron (sadece çizgi) */
+function PanelCollapseHandle() {
+  return (
+    <View style={styles.panelCollapseHandle}>
+      <PanelCollapseChevrons />
+    </View>
+  );
+}
 
 interface ParcelData {
   geometry?: GeoJSONGeometry | null;
@@ -267,11 +345,14 @@ interface SimpleModeParcel extends ParcelData {
 
 export default function Index() {
   const insets = useSafeAreaInsets();
+  const isScreenFocused = useIsFocused();
   const router = useRouter();
   const { isAuthenticated, isLoading: isAuthLoading, user, logout } = useAuth();
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuSheetIndex, setMenuSheetIndex] = useState(0);
   const [activeScreen, setActiveScreen] = useState<string | null>(null);
+  const [parcelSearchInitialTab, setParcelSearchInitialTab] = useState<ParcelSearchTabKey>('parcel');
+  const [incomingParcelFormSeed, setIncomingParcelFormSeed] = useState<SidebarSavedQuery | null>(null);
   const [isProMode, setIsProMode] = useState(false);
 
   // Not: Basit/Pro mod sadece işlevsel; tema aynı kalır. Sadece bazı border'lar basit modda beyaz.
@@ -335,6 +416,68 @@ export default function Index() {
   } | null>(null);
   const hierarchyMapReqRef = useRef(0);
   const [isLoadingParcel, setIsLoadingParcel] = useState(false);
+  /** Overlay hangi sorgu modu için — isProMode ile karışmasın (async setState gecikmesi) */
+  const [parcelLoadUiMode, setParcelLoadUiMode] = useState<'simple' | 'pro' | null>(null);
+  const parcelQueryLoadSeqRef = useRef(0);
+  const parcelQueryLoadSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const beginParcelQueryLoad = useCallback((mode: 'simple' | 'pro'): number => {
+    parcelQueryLoadSeqRef.current += 1;
+    const seq = parcelQueryLoadSeqRef.current;
+    setParcelLoadUiMode(mode);
+    setIsLoadingParcel(true);
+    if (parcelQueryLoadSafetyTimerRef.current) {
+      clearTimeout(parcelQueryLoadSafetyTimerRef.current);
+    }
+    parcelQueryLoadSafetyTimerRef.current = setTimeout(() => {
+      if (seq !== parcelQueryLoadSeqRef.current) return;
+      setIsLoadingParcel(false);
+      setParcelLoadUiMode(null);
+    }, 60_000);
+    return seq;
+  }, []);
+
+  const endParcelQueryLoad = useCallback((seq: number) => {
+    if (seq !== parcelQueryLoadSeqRef.current) return;
+    if (parcelQueryLoadSafetyTimerRef.current) {
+      clearTimeout(parcelQueryLoadSafetyTimerRef.current);
+      parcelQueryLoadSafetyTimerRef.current = null;
+    }
+    setIsLoadingParcel(false);
+    setParcelLoadUiMode(null);
+  }, []);
+
+  const waitForSheetDismiss = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        InteractionManager.runAfterInteractions(() => resolve());
+      }),
+    [],
+  );
+
+  const startProAnalysisLoad = useCallback(async (): Promise<number> => {
+    proAnalysisLoadingRef.current = true;
+    await waitForSheetDismiss();
+    return beginParcelQueryLoad('pro');
+  }, [beginParcelQueryLoad, waitForSheetDismiss]);
+
+  const finishProAnalysisLoad = useCallback((seq: number) => {
+    proAnalysisLoadingRef.current = false;
+    endParcelQueryLoad(seq);
+  }, [endParcelQueryLoad]);
+
+  const isParcelQueryLoadStale = useCallback(
+    (seq: number) => seq !== parcelQueryLoadSeqRef.current,
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (parcelQueryLoadSafetyTimerRef.current) {
+        clearTimeout(parcelQueryLoadSafetyTimerRef.current);
+      }
+    };
+  }, []);
   const [parcelModalVisible, setParcelModalVisible] = useState(false);
   const [myQueriesVisible, setMyQueriesVisible] = useState(false);
   const [parcelSplitProjectsVisible, setParcelSplitProjectsVisible] = useState(false);
@@ -366,9 +509,10 @@ export default function Index() {
 
   const addParcelToSimpleMode = useCallback((parcel: ParcelData): void => {
     if (!parcel.geometry) return;
-    
+
     const newParcel: SimpleModeParcel = {
       ...parcel,
+      geometry: normalizeParcelGeometry(parcel.geometry),
       id: generateParcelId(),
     };
     
@@ -390,6 +534,7 @@ export default function Index() {
   const [mustakilEvEstimateModalVisible, setMustakilEvEstimateModalVisible] = useState(false);
   const [konutDaireModalVisible, setKonutDaireModalVisible] = useState(false);
   const isTransitioningToSubModalRef = useRef(false); // Villa/Fabrika modalına geçiş sırasında pendingTkgmData'yı korumak için
+  const proAnalysisLoadingRef = useRef(false); // Tip seçimi sonrası analiz yüklenirken onClose state temizlemesin
   const [proQueryConfirmVisible, setProQueryConfirmVisible] = useState(false);
   
   // PropertyTypeModal visible değişikliklerini logla
@@ -410,6 +555,10 @@ export default function Index() {
   const [shareModalVisible, setShareModalVisible] = useState(false);
   const [isProcessingShare, setIsProcessingShare] = useState(false);
   const [capturedMapUri, setCapturedMapUri] = useState<string | null>(null);
+  const previewSnapCacheRef = useRef<PreviewSnapCacheEntry | null>(null);
+  const previewPrewarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewPrewarmInFlightRef = useRef<Promise<void> | null>(null);
+  const screenshotPreviewModeRef = useRef(false);
 
   const applyShareSelectionToRequest = useCallback((
     requestBody: any,
@@ -441,71 +590,83 @@ export default function Index() {
   const [screenshotPriceOverride, setScreenshotPriceOverride] = useState<{ totalPrice?: number | null; unitPrice?: number | null } | null>(null);
   const [screenshotPricePanelVisible, setScreenshotPricePanelVisible] = useState(false);
   const shareCoinContextRef = useRef<{ awardCoin: boolean; priceText?: string }>({ awardCoin: true });
+  const prefetchedShareLinkRef = useRef<Promise<string | null> | null>(null);
   const [priceWarningVisible, setPriceWarningVisible] = useState(false);
+  const [multiParcelPriceWarningVisible, setMultiParcelPriceWarningVisible] = useState(false);
   
   const [streetViewModalVisible, setStreetViewModalVisible] = useState(false);
   // cesiumModalVisible kaldırıldı - native Mapbox'a geçildi
-  
-  // Measurement state
-  const [measurementMode, setMeasurementMode] = useState<MeasurementMode>(null);
-  const [rulerPoints, setRulerPoints] = useState<[number, number][]>([]);
-  const [areaPoints, setAreaPoints] = useState<[number, number][]>([]);
-  const [measurementFeatures, setMeasurementFeatures] = useState<MeasurementFeature[]>([]);
-  const [dynamicLineFeature, setDynamicLineFeature] = useState<MeasurementFeature | null>(null);
-  const [currentTouchPoint, setCurrentTouchPoint] = useState<[number, number] | null>(null);
-  /** Ölçüm/işaret modunda ShapeSource onPress dokunuşu tüketmesin; MapView onPress → handleMeasurementPress çalışsın */
-  const isMeasurementPlacementActive = measurementMode !== null;
-  
-  // Annotation state (İğne, Metin, Ok)
-  const [annotationFeatures, setAnnotationFeatures] = useState<any[]>([]);
-  const [arrowFirstPoint, setArrowFirstPoint] = useState<[number, number] | null>(null);
-  const annotationIdRef = useRef(0);
-  const [textInputModalVisible, setTextInputModalVisible] = useState(false);
-  const [textInputCoords, setTextInputCoords] = useState<[number, number] | null>(null);
-  const [textInputValue, setTextInputValue] = useState('');
-  
-  // Shape drawing moved to ShapeDrawingModal component
-  
+
+  const measurement = useMeasurementSession({
+    defaultRulerColor: '#3b82f6',
+    defaultAreaColor: '#fbbf24',
+  });
+  const [selectedMeasurementGroupId, setSelectedMeasurementGroupId] = useState<string | null>(null);
+  const [measurementEditPanelVisible, setMeasurementEditPanelVisible] = useState(false);
+  const [measurementEditPanelMinimized, setMeasurementEditPanelMinimized] = useState(true);
+
+  const mapToolLockRef = useRef({
+    measurementActive: false,
+    shapeDrawingMode: null as import('../../src/maps/drawing/types').ShapeType | null,
+    freehandActive: false,
+    parcelSelectMode: false,
+  });
+
   // Menus & 3D state
   const [shapeDrawingModalVisible, setShapeDrawingModalVisible] = useState(false);
   const [homeMapToolsSheetOpen, setHomeMapToolsSheetOpen] = useState(false);
   const [homeParcelDesignSheetOpen, setHomeParcelDesignSheetOpen] = useState(false);
   /** Onaylanmış parsel poligon stili; null = varsayılan tema */
   const [homeParcelPolygonDesign, setHomeParcelPolygonDesign] = useState<ParcelPolygonDesignConfig | null>(null);
-  const [rulerQuickMenuVisible, setRulerQuickMenuVisible] = useState(false);
-  const [homeRulerColor, setHomeRulerColor] = useState('#3b82f6');
-  const [homeAreaColor, setHomeAreaColor] = useState('#fbbf24');
-  const [homeAnnotationColor, setHomeAnnotationColor] = useState('#3b82f6');
-  /** Ana harita çizim şekilleri (web Araç Takımı / 3D editör olmadan) */
-  const [homeMapSketchShapes, setHomeMapSketchShapes] = useState<ShapeProperties[]>([]);
-  const [homeMapShapeDrawingMode, setHomeMapShapeDrawingMode] = useState<ShapeType | null>(null);
-  const [homeShapeDrawingPoints, setHomeShapeDrawingPoints] = useState<[number, number][]>([]);
-  const [homeMapDrawSurface, setHomeMapDrawSurface] = useState<'map' | 'screen'>('map');
-  const [homeMapSelectedShapeId, setHomeMapSelectedShapeId] = useState<string | null>(null);
-  const [homeMapSketchOutlineColor, setHomeMapSketchOutlineColor] = useState('#3b82f6');
-  const [homeMapSketchFillColor, setHomeMapSketchFillColor] = useState('rgba(59, 130, 246, 0.45)');
-  const [homeMapSketchOutlineWidth, setHomeMapSketchOutlineWidth] = useState(4);
-  const [homeTextBoxEditVisible, setHomeTextBoxEditVisible] = useState(false);
-  const [homeTextBoxEditShapeId, setHomeTextBoxEditShapeId] = useState<string | null>(null);
-  const [homeTextBoxEditInitialText, setHomeTextBoxEditInitialText] = useState('');
-  const [homeTextBoxLayoutTick, setHomeTextBoxLayoutTick] = useState(0);
-  const bumpHomeTextBoxLayout = useCallback(() => {
-    setHomeTextBoxLayoutTick((t) => t + 1);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const saved = await loadSavedParcelPolygonDesign();
+      if (!cancelled && saved) {
+        setHomeParcelPolygonDesign(saved);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleConfirmParcelPolygonDesign = useCallback((cfg: ParcelPolygonDesignConfig) => {
+    setHomeParcelPolygonDesign(cfg);
+    void saveParcelPolygonDesign(cfg);
   }, []);
   const [showEdgeMeasurements, setShowEdgeMeasurements] = useState(false);
   const [locationMenuVisible, setLocationMenuVisible] = useState(false);
   const [show3DSlider, setShow3DSlider] = useState(false);
   const [pitchValue, setPitchValue] = useState(0);
-  const [zoomControlsVisible, setZoomControlsVisible] = useState(false);
+  const threeDPanelAnim = useRef(new Animated.Value(0)).current;
+  const zoomPanelAnim = useRef(new Animated.Value(0)).current;
+  const zoomQueryButtonsOpacity = useRef(new Animated.Value(1)).current;
+  const [holdMapToolsActive, setHoldMapToolsActive] = useState(false);
+  const holdMapToolsActiveRef = useRef(false);
+  const [plusZoomMapScrollLocked, setPlusZoomMapScrollLocked] = useState(false);
+  const [plusZoomUiDirection, setPlusZoomUiDirection] = useState<1 | -1 | null>(null);
+  const [plusZoomSpeedT, setPlusZoomSpeedT] = useState(0);
+  const holdMapToolsPlusCenterRef = useRef<[number, number] | null>(null);
+  const mapPlusCenterRef = useRef<[number, number] | null>(null);
+  const pendingOpenHoldToolsRef = useRef(false);
+  const plusZoomAnchorGeoRef = useRef<[number, number] | null>(null);
+  const plusZoomDirectionRef = useRef<1 | -1 | null>(null);
+  const plusZoomTouchAnchorYRef = useRef(0);
+  const plusZoomSpeedMultRef = useRef(1);
+  const plusZoomHoldingRef = useRef(false);
+  const PLUS_TOOLS_ZOOM_STEP = 0.06;
+  const PLUS_TOOLS_ZOOM_INTERVAL_MS = 48;
+  const PLUS_ZOOM_SPEED_SLOP_PX = 8;
+  const PLUS_ZOOM_SPEED_RAMP_PX = 72;
+  const PLUS_ZOOM_SPEED_MAX_MULT = 3.2;
   const [edgeMeasurementFeatures, setEdgeMeasurementFeatures] = useState<EdgeMeasurementFeature[]>([]);
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [showUserLocation, setShowUserLocation] = useState(false);
   const [infoModeActive, setInfoModeActive] = useState(false);
-  /** Bilgi alt menüsünde görsel seçim — yalnızca kullanıcı ProMod/BasitMod'a basınca set edilir */
+  /** Alt sorgu çubuğu: Pro / Basit seçimi */
   const [queryModeChoice, setQueryModeChoice] = useState<'pro' | 'simple' | null>(null);
-  const [infoMenuVisible, setInfoMenuVisible] = useState(false);
-  const [infoButtonLayout, setInfoButtonLayout] = useState<{ x: number; width: number } | null>(null);
-  const [infoMenuWidth, setInfoMenuWidth] = useState(160);
   const [simpleModeEdgeMeasureData, setSimpleModeEdgeMeasureData] = useState<EdgeMeasureData | null>(null);
 
   // Bottom pill bar submenu positioning (anchor each submenu above its button)
@@ -513,7 +674,6 @@ export default function Index() {
   const [rulerButtonLayout, setRulerButtonLayout] = useState<{ x: number; width: number } | null>(null);
   const [locationButtonLayout, setLocationButtonLayout] = useState<{ x: number; width: number } | null>(null);
   const [locationMenuWidth, setLocationMenuWidth] = useState(180);
-  const [rulerQuickMenuWidth, setRulerQuickMenuWidth] = useState(140);
 
   const getSubMenuLeft = (button: { x: number; width: number } | null, menuWidth: number) => {
     // 8px padding from screen edges
@@ -525,6 +685,26 @@ export default function Index() {
   };
   
   const mapRef = useRef<any>(null);
+  const homeMapViewportRef = useRef<MapOverlayViewport>(DEFAULT_MAP_OVERLAY_VIEWPORT);
+  const suppressNextMapPressRef = useRef(false);
+
+  const drawing = useShapeDrawingSession({
+    mapRef,
+    defaultOutlineColor: '#3b82f6',
+    defaultFillColor: 'rgba(59, 130, 246, 0.45)',
+    defaultOutlineWidth: 4,
+    isShapeTapBlocked: () => isMapPlacementToolActive(mapToolLockRef.current),
+    closeModeAfterPenCommit: false,
+  });
+
+  mapToolLockRef.current = {
+    measurementActive: measurement.isActive,
+    shapeDrawingMode: drawing.shapeDrawingMode,
+    freehandActive: drawing.freehandActive,
+    parcelSelectMode: false,
+  };
+  const isMapInteractionLocked = isMapPlacementToolActive(mapToolLockRef.current);
+
   const cameraRef = useRef<any>(null);
   const isProgrammaticMoveRef = useRef(false);
   const programmaticTimerRef = useRef<any>(null);
@@ -538,10 +718,93 @@ export default function Index() {
     pitch: 0,
     heading: 0,
   });
+  const [parcelPatternLayoutTick, setParcelPatternLayoutTick] = useState(0);
+  const parcelPatternRelayoutPendingRef = useRef(false);
+  const parcelPatternVisibleRef = useRef(false);
+
+  useEffect(() => {
+    const hasPattern =
+      homeParcelPolygonDesign?.patternId != null &&
+      homeParcelPolygonDesign.patternId !== 'none';
+    const hasGeometry =
+      (isProMode && !!parcelData?.geometry) ||
+      (!isProMode && simpleModeParcels.some((p) => !!p.geometry));
+    parcelPatternVisibleRef.current = hasPattern && hasGeometry;
+  }, [
+    homeParcelPolygonDesign?.patternId,
+    isProMode,
+    parcelData?.geometry,
+    simpleModeParcels,
+  ]);
+
+  /** Kamera hareketi — rAF ile tek karede bir projeksiyon (sonsuz setState döngüsünü önler). */
+  const bumpParcelPatternLayout = useCallback(() => {
+    if (!parcelPatternVisibleRef.current) return;
+    if (parcelPatternRelayoutPendingRef.current) return;
+    parcelPatternRelayoutPendingRef.current = true;
+    requestAnimationFrame(() => {
+      parcelPatternRelayoutPendingRef.current = false;
+      setParcelPatternLayoutTick((t) => t + 1);
+    });
+  }, []);
   const mapReadyRef = useRef({ didFinishLoadingMap: false, didFinishLoadingStyle: false, isIdle: false });
   const mapTurkeyAppliedRef = useRef(false);
+
+  useEffect(() => {
+    screenshotPreviewModeRef.current = screenshotPreviewMode;
+  }, [screenshotPreviewMode]);
+
+  const getCameraFingerprint = useCallback(
+    () =>
+      buildCameraFingerprint({
+        center: camRef.current.center,
+        zoom: camRef.current.zoom,
+        pitch: camRef.current.pitch,
+        heading: camRef.current.heading,
+      }),
+    [],
+  );
+
+  const runPreviewSnapPrewarm = useCallback(
+    (debounceMs = 0) => {
+      const params = {
+        mapRef,
+        mapReadyRef,
+        dimensions: getCombinedImageDimensions(),
+        mapViewport: drawing.mapOverlayViewport,
+        shapes: drawing.shapes,
+        bumpOverlayLayout: drawing.bumpTextBoxLayoutOnCamera,
+        getCameraFingerprint,
+        previewSnapCacheRef,
+        previewPrewarmInFlightRef,
+      };
+      if (debounceMs <= 0) {
+        startPreviewSnapPrewarm(params);
+        return;
+      }
+      if (previewPrewarmTimerRef.current) clearTimeout(previewPrewarmTimerRef.current);
+      previewPrewarmTimerRef.current = setTimeout(() => {
+        startPreviewSnapPrewarm(params);
+      }, debounceMs);
+    },
+    [
+      drawing.mapOverlayViewport,
+      drawing.shapes,
+      drawing.bumpTextBoxLayoutOnCamera,
+      getCameraFingerprint,
+    ],
+  );
+
+  useEffect(() => {
+    if (!screenshotPreviewMode) return;
+    runPreviewSnapPrewarm(0);
+    return () => {
+      if (previewPrewarmTimerRef.current) clearTimeout(previewPrewarmTimerRef.current);
+    };
+  }, [screenshotPreviewMode, runPreviewSnapPrewarm]);
+
   const locationBootstrapRef = useRef(false);
-  const permissionLaunchRequestedRef = useRef(false);
+  const homeLaunchBootstrapRef = useRef(false);
   /** Pro sorgu bitince harita görüntüsü yükle + son 30 gün detayına git (rapor ekranına değil). */
   const finishProQueryNavigation = useCallback(
     async (
@@ -571,6 +834,7 @@ export default function Index() {
 
       // Loader haritayı kapatır — static map / snapshot için
       setIsLoadingParcel(false);
+      setParcelLoadUiMode(null);
       await new Promise((r) => setTimeout(r, 200));
 
       const identifiers = extractProQueryIdentifiers(data);
@@ -627,198 +891,98 @@ export default function Index() {
   );
   const isSharingRef = useRef(false);
   const menuItemClickedRef = useRef(false);
-  /** Alt menü satırına (cetvel listesi, Bilgi→ProMod/BasitMod vb.) basıldıktan sonra Mapbox’un ürettiği hayalet harita onPress’ini bir kez yut */
-  const ignoreNextMapPressRef = useRef(false);
+  /** Alt menü satırına basıldıktan sonra Mapbox’un ürettiği hayalet harita onPress’ini kısa süre yut (sonraki gerçek tıklamayı engelleme) */
+  const ghostMapPressUntilRef = useRef(0);
+  const GHOST_MAP_PRESS_SUPPRESS_MS = 400;
   const suppressGhostMapPress = useCallback(() => {
-    ignoreNextMapPressRef.current = true;
+    ghostMapPressUntilRef.current = Date.now() + GHOST_MAP_PRESS_SUPPRESS_MS;
   }, []);
-  const rulerLongPressTriggeredRef = useRef(false);
   const intervalRef = useRef<any>(null);
   const zoomIntervalRef = useRef<any>(null);
   const pitchIntervalRef = useRef<any>(null);
 
   // Ölçüm çizimlerini temizle (Silgi davranışı)
   const clearMeasurementDrawings = useCallback(() => {
-    setMeasurementFeatures([]);
-    setMeasurementMode(null);
-    setRulerPoints([]);
-    setAreaPoints([]);
-    setDynamicLineFeature(null);
-    setCurrentTouchPoint(null);
-    setArrowFirstPoint(null);
-  }, []);
+    measurement.clearMeasurements();
+    setSelectedMeasurementGroupId(null);
+  }, [measurement.clearMeasurements]);
 
-  const clearAnnotations = useCallback(() => {
-    setAnnotationFeatures([]);
-    setArrowFirstPoint(null);
-  }, []);
+  const handleMeasurementGroupPress = useCallback(
+    (groupId: string) => {
+      setSelectedMeasurementGroupId((prev) => (prev === groupId ? null : groupId));
+      drawing.clearShapeSelection();
+      setHomeMapToolsSheetOpen(false);
+    },
+    [drawing.clearShapeSelection]
+  );
 
-  // Ölçüm + kenar ölçüleri + annotation dahil her şeyi temizle
+  const handleDeleteSelectedMeasurement = useCallback(() => {
+    const gid = selectedMeasurementGroupId;
+    if (!gid) return;
+    Alert.alert(
+      'Ölçümü sil',
+      'Seçili mesafe veya alan ölçümünü haritadan kaldırmak istiyor musunuz?',
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: () => {
+            measurement.setMeasurementFeatures((prev) =>
+              prev.filter((f) => f.properties?.measurementGroupId !== gid)
+            );
+            setSelectedMeasurementGroupId(null);
+          },
+        },
+      ]
+    );
+  }, [selectedMeasurementGroupId, measurement.setMeasurementFeatures]);
+
+  useEffect(() => {
+    if (measurement.isActive) {
+      setSelectedMeasurementGroupId(null);
+    }
+  }, [measurement.isActive]);
+
+  useEffect(() => {
+    if (selectedMeasurementGroupId) {
+      setMeasurementEditPanelVisible(true);
+      setMeasurementEditPanelMinimized(true);
+    } else {
+      setMeasurementEditPanelVisible(false);
+      setMeasurementEditPanelMinimized(true);
+    }
+  }, [selectedMeasurementGroupId]);
+
   const clearAllMeasurementLayers = useCallback(() => {
     clearMeasurementDrawings();
-    clearAnnotations();
     setShowEdgeMeasurements(false);
     setSimpleModeEdgeMeasureData(null);
     setEdgeMeasurementFeatures([]);
-    setHomeMapSketchShapes([]);
-    setHomeMapShapeDrawingMode(null);
-    setHomeShapeDrawingPoints([]);
-    setHomeMapSelectedShapeId(null);
-  }, [clearMeasurementDrawings, clearAnnotations]);
+    drawing.clearAllShapes();
+  }, [clearMeasurementDrawings, drawing]);
 
   const handleHomeMapSheetSetMode = useCallback((m: MeasurementMode) => {
-    setHomeMapShapeDrawingMode(null);
-    setHomeShapeDrawingPoints([]);
-    setHomeMapSelectedShapeId(null);
-    setArrowFirstPoint(null);
-    if (m !== measurementMode) {
-      setRulerPoints([]);
-      setAreaPoints([]);
-      setMeasurementFeatures((prev) => prev.filter((f) => !f.properties.isTemporary));
-    }
-    setMeasurementMode(m);
-  }, [measurementMode]);
+    activateMeasurementTool(drawing, measurement, m);
+  }, [drawing, measurement]);
 
   const handleCloseHomeMapToolbox = useCallback(() => {
-    setMeasurementMode(null);
-    setRulerPoints([]);
-    setAreaPoints([]);
-    setArrowFirstPoint(null);
-    setMeasurementFeatures((prev) => prev.filter((f) => !f.properties.isTemporary));
-  }, []);
+    measurement.closeMeasurementMode();
+    drawing.exitDrawToolMode();
+  }, [measurement.closeMeasurementMode, drawing.exitDrawToolMode]);
 
-  const finishPendingHomeMapMeasurement = useCallback(() => {
-    if (measurementMode === 'area') {
-      if (areaPoints.length >= 3) {
-        setMeasurementFeatures((prev) => [
-          ...prev.filter((f) => !f.properties.isTemporary),
-          ...createAreaFeatures(areaPoints, calculateArea(areaPoints), false, homeAreaColor),
-        ]);
-        setAreaPoints([]);
-      } else {
-        setAreaPoints([]);
-        setMeasurementFeatures((prev) => prev.filter((f) => !f.properties.isTemporary));
-      }
-      return;
+  const handleHomeMapToolsSheetDismiss = useCallback(() => {
+    setHomeMapToolsSheetOpen(false);
+    if (drawing.shapeDrawingMode === 'marker') {
+      drawing.exitDrawToolMode();
     }
-    if (measurementMode === 'ruler' && rulerPoints.length === 1) {
-      setRulerPoints([]);
-      setMeasurementFeatures((prev) => prev.filter((f) => !f.properties.isTemporary));
-      return;
-    }
-    if (measurementMode === 'arrow' && arrowFirstPoint) {
-      setArrowFirstPoint(null);
-    }
-  }, [measurementMode, areaPoints, rulerPoints.length, arrowFirstPoint, homeAreaColor]);
-
-  const homeMapSelectedShape = useMemo(
-    () => homeMapSketchShapes.find((s) => s.id === homeMapSelectedShapeId) ?? null,
-    [homeMapSketchShapes, homeMapSelectedShapeId]
-  );
-
-  useEffect(() => {
-    if (homeMapSketchShapes.some((s) => s.type === "textbox")) bumpHomeTextBoxLayout();
-  }, [homeMapSketchShapes, bumpHomeTextBoxLayout]);
-
-  const handleHomeDrawingToolboxClose = useCallback(() => {
-    if (homeMapSelectedShapeId) {
-      setHomeMapSelectedShapeId(null);
-      return;
-    }
-    setHomeMapShapeDrawingMode(null);
-    setHomeShapeDrawingPoints([]);
-  }, [homeMapSelectedShapeId]);
-
-  const handleHomeSketchCommitMap = useCallback(
-    (coords: [number, number][]) => {
-      const mode = homeMapShapeDrawingMode;
-      if (mode !== "pen") return;
-      const shape = createPenFreehandShape(
-        coords,
-        mode,
-        { outlineColor: homeMapSketchOutlineColor, outlineWidth: homeMapSketchOutlineWidth },
-        false
-      );
-      setHomeMapSketchShapes((prev) => [...prev, shape]);
-      setHomeMapShapeDrawingMode(null);
-    },
-    [homeMapShapeDrawingMode, homeMapSketchOutlineColor, homeMapSketchOutlineWidth]
-  );
-
-  const handleHomeSketchCommitScreen = useCallback(
-    (norm: [number, number][]) => {
-      const mode = homeMapShapeDrawingMode;
-      if (mode !== "pen") return;
-      const shape = createPenFreehandShape(
-        norm,
-        mode,
-        { outlineColor: homeMapSketchOutlineColor, outlineWidth: homeMapSketchOutlineWidth },
-        true
-      );
-      setHomeMapSketchShapes((prev) => [...prev, shape]);
-      setHomeMapShapeDrawingMode(null);
-    },
-    [homeMapShapeDrawingMode, homeMapSketchOutlineColor, homeMapSketchOutlineWidth]
-  );
-
-  const toggleHomeMapSketchTool = useCallback(() => {
-    suppressGhostMapPress();
-    menuItemClickedRef.current = true;
-    setHomeMapSelectedShapeId(null);
-    setHomeShapeDrawingPoints([]);
-    setHomeMapShapeDrawingMode((prev) => (prev === "pen" ? null : "pen"));
-    setRulerQuickMenuVisible(false);
-    setMeasurementMode(null);
-    setRulerPoints([]);
-    setAreaPoints([]);
-    setArrowFirstPoint(null);
-    setMeasurementFeatures((prev) => prev.filter((f) => !f.properties.isTemporary));
-  }, [suppressGhostMapPress]);
-
-  const clearHomeMapSketchDrawings = useCallback(() => {
-    suppressGhostMapPress();
-    menuItemClickedRef.current = true;
-    setHomeMapSketchShapes([]);
-    setHomeMapShapeDrawingMode(null);
-    setHomeShapeDrawingPoints([]);
-    setHomeMapSelectedShapeId(null);
-    setRulerQuickMenuVisible(false);
-  }, [suppressGhostMapPress]);
-
-  const homeDrawOptionsMemo = useMemo(
-    () => ({
-      outlineColor: homeMapSketchOutlineColor,
-      fillColor: homeMapSketchFillColor,
-      outlineWidth: homeMapSketchOutlineWidth,
-      fillOpacity: 0.45 as const,
-    }),
-    [homeMapSketchOutlineColor, homeMapSketchFillColor, homeMapSketchOutlineWidth]
-  );
-
-  const { handleShapeDrawingPress, openTextBoxEditor, finalizePolygonOrLine } = useShapeDrawingHandlers({
-    shapeDrawingMode: homeMapShapeDrawingMode,
-    shapeDrawingPoints: homeShapeDrawingPoints,
-    setShapeDrawingPoints: setHomeShapeDrawingPoints,
-    setShapeDrawingMode: setHomeMapShapeDrawingMode,
-    shapes: homeMapSketchShapes,
-    setShapes: setHomeMapSketchShapes,
-    setTextBoxEditVisible: setHomeTextBoxEditVisible,
-    setTextBoxEditShapeId: setHomeTextBoxEditShapeId,
-    setTextBoxEditInitialText: setHomeTextBoxEditInitialText,
-    drawOptions: homeDrawOptionsMemo,
-  });
+  }, [drawing]);
 
   const handleHomeMapSheetSelectShape = useCallback((next: ShapeType | null) => {
-    setHomeMapShapeDrawingMode(next);
-    setHomeShapeDrawingPoints([]);
-    setHomeMapSelectedShapeId(null);
-    setMeasurementMode(null);
-    setRulerPoints([]);
-    setAreaPoints([]);
-    setArrowFirstPoint(null);
-    setMeasurementFeatures((prev) => prev.filter((f) => !f.properties.isTemporary));
-    setHomeMapToolsSheetOpen(false);
-  }, []);
+    activateShapeTool(drawing, measurement, next, {
+      onAfterActivate: () => setHomeMapToolsSheetOpen(false),
+    });
+  }, [drawing, measurement]);
 
   const hasParcelForHisseliHome = useMemo(() => {
     const targetParcel = isProMode ? parcelData : (selectedParcelForModal || (simpleModeParcels.length > 0 ? simpleModeParcels[simpleModeParcels.length - 1] : null));
@@ -929,8 +1093,25 @@ export default function Index() {
   }, [isAuthenticated, isAuthLoading, refreshNotificationsUnread, refreshExpertBadges]);
 
   // --- Handlers ---
+  const openParcelSearchModal = useCallback((tab: ParcelSearchTabKey = 'parcel') => {
+    setParcelSearchInitialTab(tab);
+    setActiveScreen('ada-parsel');
+  }, []);
+
+  const handleHomeVoiceQueryResolved = useCallback(
+    (payload: SmartQueryParcelPayload) => {
+      setIncomingParcelFormSeed(smartQueryPayloadToFormSeed(payload));
+      openParcelSearchModal('parcel');
+    },
+    [openParcelSearchModal]
+  );
+
   const handleSearchToggle = useCallback(() => {
-    setActiveScreen(prev => prev === 'ada-parsel' ? null : 'ada-parsel');
+    setActiveScreen(prev => {
+      if (prev === 'ada-parsel') return null;
+      return 'ada-parsel';
+    });
+    setParcelSearchInitialTab('parcel');
   }, []);
 
   const openIlanVer = useCallback(async () => {
@@ -999,6 +1180,37 @@ export default function Index() {
       setMyQueriesVisible(true);
       return;
     }
+    if (itemId === 'cikis') {
+      // Onay diyaloğu menü kapanmadan gösterilmeli; aksi halde Android'de Activity bağlı değilken Alert çöküyor.
+      Alert.alert(
+        'Çıkış Yap',
+        'Çıkış yapmak istediğinize emin misiniz?',
+        [
+          { text: 'İptal', style: 'cancel' },
+          {
+            text: 'Çıkış Yap',
+            style: 'destructive',
+            onPress: async () => {
+              menuItemClickedRef.current = true;
+              setMenuVisible(false);
+              setSubmenuOpenId(null);
+              setUzmanGorusuOpen(false);
+              setMenuSheetIndex(0);
+              try {
+                await logout();
+                console.log('[Index] Logout successful');
+              } catch (error) {
+                console.error('[Index] Logout error:', error);
+                InteractionManager.runAfterInteractions(() => {
+                  Alert.alert('Hata', 'Çıkış yapılırken bir hata oluştu.');
+                });
+              }
+            },
+          },
+        ]
+      );
+      return;
+    }
     menuItemClickedRef.current = true;
     setMenuVisible(false);
     setSubmenuOpenId(null);
@@ -1064,7 +1276,7 @@ export default function Index() {
       }
       router.push('ai-image-animation-purchase');
     } else if (itemId === 'ai-drone-video') {
-      router.push('ai-drone-video-info');
+      router.push('ai-drone-hub');
     } else if (itemId === 'ai-drone-jobs') {
       if (!isAuthenticated) {
         Alert.alert('Giriş gerekli', 'İşlerinizi görmek için giriş yapın.', [
@@ -1086,30 +1298,6 @@ export default function Index() {
         path: '/portal/ilan/mesajlar/',
         title: 'Mesajlar',
       });
-    } else if (itemId === 'cikis') {
-      // Çıkış yap
-      Alert.alert(
-        'Çıkış Yap',
-        'Çıkış yapmak istediğinize emin misiniz?',
-        [
-          { text: 'İptal', style: 'cancel' },
-          {
-            text: 'Çıkış Yap',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await logout();
-                setSubmenuOpenId(null);
-                setMenuSheetIndex(0);
-                console.log('[Index] Logout successful');
-              } catch (error) {
-                console.error('[Index] Logout error:', error);
-                Alert.alert('Hata', 'Çıkış yapılırken bir hata oluştu.');
-              }
-            },
-          },
-        ]
-      );
     } else {
       console.log('[Index] Unknown menu item:', itemId);
     }
@@ -1142,6 +1330,16 @@ export default function Index() {
   }, [activeParcelData]);
 
   const hasActiveParcel = Boolean(activeParcelData?.geometry);
+
+  const streetViewParcel = useMemo(() => {
+    if (isProMode) return parcelData;
+    return selectedParcelForModal || (simpleModeParcels.length > 0 ? simpleModeParcels[simpleModeParcels.length - 1] : null);
+  }, [isProMode, parcelData, selectedParcelForModal, simpleModeParcels]);
+
+  const streetViewPoint = useMemo(() => {
+    if (!streetViewParcel?.geometry) return null;
+    return getFirstStreetViewPoint(streetViewParcel.geometry, streetViewParcel.analysisData);
+  }, [streetViewParcel]);
 
   // Redirect-after-login: giriş/kayıt sonrası model editöre dön (hasActiveParcel tanımından sonra)
   useFocusEffect(
@@ -1201,7 +1399,12 @@ export default function Index() {
     );
   }, [isAuthenticated, hasActiveParcel, router]);
 
-  const isSimpleLoading = !isProMode && isLoadingParcel;
+  const isSimpleLoading = isLoadingParcel && parcelLoadUiMode === 'simple';
+  const showProModeLoader =
+    isLoadingParcel &&
+    parcelLoadUiMode === 'pro' &&
+    !proQueryConfirmVisible &&
+    !propertyTypeModalVisible;
   const visibleParcelCount = useMemo(() => {
     if (isProMode) return parcelData?.geometry ? 1 : 0;
     return (simpleModeParcels || []).filter((p) => Boolean(p?.geometry)).length;
@@ -1315,11 +1518,11 @@ export default function Index() {
   );
 
   const handleToggleScreenshotPricePanel = useCallback(() => {
-    if (!hasActiveParcel) return;
     if (hasMultipleVisibleParcels) {
-      Alert.alert('Uyarı', 'Fiyat girebilmek için ekranda yalnızca bir parsel olması gerekir.');
+      setMultiParcelPriceWarningVisible(true);
       return;
     }
+    if (!hasActiveParcel) return;
     setScreenshotPricePanelVisible((v) => !v);
   }, [hasActiveParcel, hasMultipleVisibleParcels]);
 
@@ -1395,8 +1598,24 @@ export default function Index() {
       setCapturedModalUri,
       setShareModalVisible,
       parcelDesign: homeParcelPolygonDesign,
+      mapViewport: drawing.mapOverlayViewport,
+      shapes: drawing.shapes,
+      bumpOverlayLayout: drawing.bumpTextBoxLayoutOnCamera,
+      prefetchedShareLinkRef,
+      previewSnapCacheRef,
+      previewPrewarmInFlightRef,
+      getCameraFingerprint,
+      hasActiveParcel,
     }),
-    [activeParcelData, homeParcelPolygonDesign]
+    [
+      activeParcelData,
+      homeParcelPolygonDesign,
+      drawing.mapOverlayViewport,
+      drawing.shapes,
+      drawing.bumpTextBoxLayoutOnCamera,
+      getCameraFingerprint,
+      hasActiveParcel,
+    ]
   );
 
   const handleCameraPress = useCallback(() => {
@@ -1404,8 +1623,18 @@ export default function Index() {
     setScreenshotTotalPriceInput('');
     setScreenshotPriceOverride(null);
     setScreenshotPricePanelVisible(false);
+    if (previewSnapCacheRef.current) {
+      void cleanupTempFiles([previewSnapCacheRef.current.mapUri]);
+      previewSnapCacheRef.current = null;
+    }
+    if (activeParcelData) {
+      prefetchedShareLinkRef.current = resolveParcelShareMessageUrlForShare(activeParcelData);
+    } else {
+      prefetchedShareLinkRef.current = null;
+    }
     setScreenshotPreviewMode(true);
-  }, []);
+    runPreviewSnapPrewarm(0);
+  }, [activeParcelData, runPreviewSnapPrewarm]);
 
   const handleConfirmScreenshot = useCallback(async () => {
     // Giriş yapmamış kullanıcılar için Coin Kazan modalı açılmaz, direkt paylaş
@@ -1484,9 +1713,11 @@ export default function Index() {
       });
     }
 
-    // Override state'in render'a yansıması için 1-2 frame bekle (ViewShot doğru fiyatı çeksin)
-    await new Promise(res => requestAnimationFrame(() => res(null)));
-    await new Promise(res => requestAnimationFrame(() => res(null)));
+    // Fiyat şablonu değiştiyse ViewShot'un güncel metni alması için kısa frame bekle
+    if (hasTotal) {
+      await new Promise(res => requestAnimationFrame(() => res(null)));
+      await new Promise(res => requestAnimationFrame(() => res(null)));
+    }
 
     setIsProcessingShare(true);
     try {
@@ -1515,6 +1746,10 @@ export default function Index() {
     setScreenshotPriceOverride(null);
     setScreenshotTotalPriceInput('');
     setScreenshotPricePanelVisible(false);
+    if (previewSnapCacheRef.current) {
+      void cleanupTempFiles([previewSnapCacheRef.current.mapUri]);
+      previewSnapCacheRef.current = null;
+    }
   }, []);
 
   useScreenshotListener({ activeScreen, parcelData: activeParcelData, parcelModalVisible, setShareModalVisible });
@@ -1568,6 +1803,39 @@ export default function Index() {
     return { center: [(minLon + maxLon) / 2, (minLat + maxLat) / 2] as [number, number], zoom: 16 };
   };
 
+  const maybeFitSimpleQueryParcel = useCallback(
+    (geometry: any) => {
+      setTimeout(() => {
+        void fitParcelInViewIfNeeded({
+          mapRef,
+          cameraRef,
+          camRef,
+          geometry,
+          viewport: homeMapViewportRef.current,
+          currentZoom: camRef.current.zoom ?? 4,
+          currentPitch: camRef.current.pitch ?? 0,
+          animationDuration: 900,
+          isProgrammaticMoveRef,
+          programmaticTimerRef,
+        });
+      }, 150);
+    },
+    [],
+  );
+
+  const zoomToParcelOnMap = useCallback((geometry: any) => {
+    setTimeout(() => {
+      zoomMapToParcelGeometry({
+        cameraRef,
+        camRef,
+        geometry,
+        animationDuration: 900,
+        isProgrammaticMoveRef,
+        programmaticTimerRef,
+      });
+    }, 150);
+  }, []);
+
   /** 3D Tasarımlarım listesinden parsel seçildiğinde TKGM ile yükle ve 3D editörü aç */
   const handleOpenParcelFrom3dDesignList = useCallback(
     async (entry: Parcel3dEntry) => {
@@ -1590,34 +1858,20 @@ export default function Index() {
 
       setIsLoadingParcel(true);
       try {
-        const backendUrl = (API_URL || "").replace(/\/$/, "");
-        const body: Record<string, unknown> = {
-          ada: String(entry.ada).trim(),
-          parsel: String(entry.parsel).trim(),
-          map_mode: "2d",
-          is3D: is3DMode,
-        };
-        if (mahalleTkgmValue != null) {
-          body.mahalleTkgmValue = mahalleTkgmValue;
-        } else if (proparcelValue != null) {
-          body.proparcel_value = proparcelValue;
+        const mahalleResolved = await resolveMahalleTkgmForDirectQuery(
+          mahalleTkgmValue,
+          proparcelValue,
+        );
+        if (!mahalleResolved.ok) {
+          Alert.alert("Mahalle bilgisi eksik", mahalleResolved.error);
+          return;
         }
 
-        const response = await fetchWithAuth(`${backendUrl}/api/tkgm_view/`, {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        if (!response.ok) {
-          let msg = `HTTP ${response.status}`;
-          try {
-            const j = await response.json();
-            if (j?.error) msg = String(j.error);
-          } catch {
-            /* ignore */
-          }
-          throw new Error(msg);
-        }
-        const data = await response.json();
+        const data = await fetchTkgmByIds(
+          mahalleResolved.mahalleTkgmValue,
+          String(entry.ada).trim(),
+          String(entry.parsel).trim(),
+        );
         if (!data.geometry) {
           Alert.alert("Bilgi", "Parsel bulunamadı.");
           return;
@@ -1662,12 +1916,16 @@ export default function Index() {
         }
         if (settings && cameraRef.current) {
           setTimeout(() => {
-            cameraRef.current?.setCamera?.({
-              centerCoordinate: settings.center,
-              zoomLevel: settings.zoom,
-              pitch: camRef.current.pitch,
-              animationDuration: 900,
-            });
+            if (isProMode) {
+              cameraRef.current?.setCamera?.({
+                centerCoordinate: settings.center,
+                zoomLevel: settings.zoom,
+                pitch: camRef.current.pitch,
+                animationDuration: 900,
+              });
+            } else {
+              maybeFitSimpleQueryParcel(normalizedGeom);
+            }
           }, 100);
         }
         setShapeDrawingModalVisible(true);
@@ -1678,7 +1936,7 @@ export default function Index() {
         setIsLoadingParcel(false);
       }
     },
-    [isProMode, is3DMode, cameraRef, camRef]
+    [isProMode, is3DMode, cameraRef, camRef, maybeFitSimpleQueryParcel]
   );
 
   // Parsel label helper fonksiyonları
@@ -1740,122 +1998,129 @@ export default function Index() {
     return '';
   };
 
-  const handleAdaParselSubmit = useCallback(async (payload: any) => {
-    if (isLoadingParcel) return;
-    setIsLoadingParcel(true);
+  const handleAdaParselSubmit = useCallback(async (payload: any, options?: { forcePro?: boolean; zoomToParcel?: boolean }) => {
+    setActiveScreen(null);
+    const runAsPro = isProMode || options?.forcePro === true;
+    if (options?.forcePro) {
+      setIsProMode(true);
+      setQueryModeChoice('pro');
+    }
+    const loadSeq = beginParcelQueryLoad(runAsPro ? 'pro' : 'simple');
     // Yeni parsel sorgulanacağı için kenar ölçülerini kapat
     setShowEdgeMeasurements(false);
-    
+
     // Pro modda parcelData temizle, basit modda array'e ekleyeceğiz
-    if (isProMode) {
+    if (runAsPro) {
       setParcelData(null);
     } else {
-      // Basit modda da edge measure data'yı temizle
       setSimpleModeEdgeMeasureData(null);
     }
-    const backendUrl = (API_URL || '').replace(/\/$/, '');
-    
     try {
-      if (isProMode) {
-        console.log('[handleAdaParselSubmit] PRO MOD: Başlangıç, isProMode:', isProMode);
+      if (runAsPro) {
+        console.log('[handleAdaParselSubmit] PRO MOD: Başlangıç, runAsPro:', runAsPro);
         // Pro mod: Önce TKGM sorgusu yap, parseli çiz, sonra onay al (property type modal onaydan sonra açılacak)
-        console.log('[handleAdaParselSubmit] PRO MOD: TKGM sorgusu başlatılıyor...');
-        const tkgmResponse = await fetchWithAuth(`${backendUrl}/api/tkgm_view/`, {
-          method: 'POST',
-          body: JSON.stringify({ ...payload, map_mode: '2d', is3D: is3DMode })
-        });
-        
-        if (!tkgmResponse.ok) {
-          console.error('[handleAdaParselSubmit] PRO MOD: TKGM sorgusu başarısız, status:', tkgmResponse.status);
-          throw new Error(`HTTP ${tkgmResponse.status}`);
-        }
-        const tkgmData = await tkgmResponse.json();
+        console.log('[handleAdaParselSubmit] PRO MOD: TKGM sorgusu başlatılıyor (doğrudan TKGM)...');
+        const tkgmData = await fetchTkgmByIds(
+          payload.mahalleTkgmValue,
+          payload.ada,
+          payload.parsel,
+        );
         console.log('[handleAdaParselSubmit] PRO MOD: TKGM sorgusu tamamlandı, geometry var mı:', !!tkgmData.geometry);
         
         if (!tkgmData.geometry) {
           console.warn('[handleAdaParselSubmit] PRO MOD: Geometry yok, işlem sonlandırılıyor');
-          setIsLoadingParcel(false);
           return;
         }
+        if (isParcelQueryLoadStale(loadSeq)) return;
 
         // Parseli haritada çiz (kullanıcı onaylamadan önce parseli görsün) — TKGM raw [lat,lon] → normalize
         try {
           const normalizedTkgmGeomAda = normalizeGeometryCoordinates(tkgmData.geometry);
           setParcelData({ geometry: normalizedTkgmGeomAda, properties: tkgmData.properties || {}, analysisData: null });
-          const s = calculateBoundsAndCamera(normalizedTkgmGeomAda);
-          if (s && cameraRef.current) {
-            setTimeout(() => {
-              try {
-                cameraRef.current?.setCamera?.({
-                  centerCoordinate: s.center,
-                  zoomLevel: s.zoom,
-                  pitch: camRef.current.pitch,
-                  animationDuration: 900,
-                });
-              } catch (_) {}
-            }, 100);
+          if (options?.zoomToParcel) {
+            zoomToParcelOnMap(normalizedTkgmGeomAda);
+          } else {
+            const s = calculateBoundsAndCamera(normalizedTkgmGeomAda);
+            if (s && cameraRef.current) {
+              setTimeout(() => {
+                try {
+                  cameraRef.current?.setCamera?.({
+                    centerCoordinate: s.center,
+                    zoomLevel: s.zoom,
+                    pitch: camRef.current.pitch,
+                    animationDuration: 900,
+                  });
+                } catch (_) {}
+              }, 100);
+            }
           }
-          // Formu kapat
           setActiveScreen(null);
         } catch (_) {}
 
-        try {
-          await persistTkgmResponseToMyQueries(tkgmData, !!isAuthenticated, "pro", payload);
-        } catch (saveErr) {
-          console.warn("[handleAdaParselSubmit] PRO MOD: Sorgularım kaydı başarısız:", saveErr);
-        }
+        void persistTkgmResponseToMyQueries(tkgmData, !!isAuthenticated, 'pro', payload).catch((saveErr) => {
+          console.warn('[handleAdaParselSubmit] PRO MOD: Sorgularım kaydı başarısız:', saveErr);
+        });
 
-        // Nitelik metnini çıkar (property type modal başlığı onaydan sonra kullanılacak)
         const nitelikText = extractNitelikText(tkgmData);
         const { title, suggestedType } = generatePropertyTypeTitle(nitelikText);
-        
+
         setPendingTkgmData(tkgmData);
-        setPendingCoordinates(null); // Ada/Parsel sorgusunda koordinat yok
+        setPendingCoordinates(null);
         setPendingShareData(null);
         setPropertyTypeModalTitle(title);
         setPropertyTypeModalSuggested(suggestedType);
-        console.log('[handleAdaParselSubmit] PRO MOD: Overlay kapatılıyor ve onay modal açılıyor');
-        // Overlay kapat ve onay modal'ı aç
-        setIsLoadingParcel(false);
         setProQueryConfirmVisible(true);
-        console.log('[handleAdaParselSubmit] PRO MOD: setIsLoadingParcel(false) ve setProQueryConfirmVisible(true) çağrıldı');
       } else {
-        console.log('[handleAdaParselSubmit] BASIT MOD: Başlangıç, isProMode:', isProMode);
+        console.log('[handleAdaParselSubmit] BASIT MOD: Başlangıç, runAsPro:', runAsPro);
         // Basit mod: Direkt TKGM sorgusu ve array'e ekle
         // Yeni parsel sorgulanacağı için kenar ölçülerini kapat
         setShowEdgeMeasurements(false);
         setSimpleModeEdgeMeasureData(null);
         
-        const response = await fetchWithAuth(`${backendUrl}/api/tkgm_view/`, {
-          method: 'POST',
-          body: JSON.stringify({ ...payload, map_mode: '2d', is3D: is3DMode })
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        if (!data.geometry) {
-          setIsLoadingParcel(false);
-          return;
-        }
-        
-        const newParcel: ParcelData = { geometry: data.geometry, properties: data.properties || {}, analysisData: null };
-        // Basit modda array'e ekle (30 limit kontrolü addParcelToSimpleMode içinde)
-        addParcelToSimpleMode(newParcel);
+        const data = await fetchTkgmByIds(
+          payload.mahalleTkgmValue,
+          payload.ada,
+          payload.parsel
+        );
+        if (!data.geometry) return;
+        if (isParcelQueryLoadStale(loadSeq)) return;
 
-        // Web sidebar Sorgularım: basit sorguyu kayıtlı listeye ekle
-        try {
-          await persistTkgmResponseToMyQueries(data, !!isAuthenticated, "simple", payload);
-        } catch (saveErr) {
-          console.warn('[handleAdaParselSubmit] BASIT MOD: Sorgularım kaydı başarısız:', saveErr);
+        const normalizedGeom = normalizeParcelGeometry(data.geometry);
+        addParcelToSimpleMode({
+          geometry: normalizedGeom,
+          properties: data.properties || {},
+          analysisData: null,
+        });
+
+        if (options?.zoomToParcel) {
+          zoomToParcelOnMap(normalizedGeom);
+        } else {
+          maybeFitSimpleQueryParcel(normalizedGeom);
         }
-        
-        const settings = calculateBoundsAndCamera(data.geometry);
-        if (settings && cameraRef.current) setTimeout(() => cameraRef.current.setCamera({ centerCoordinate: settings.center, zoomLevel: settings.zoom, pitch: camRef.current.pitch, animationDuration: 900 }), 100);
         setActiveScreen(null);
-        setIsLoadingParcel(false);
+
+        void persistTkgmResponseToMyQueries(data, !!isAuthenticated, 'simple', payload).catch((saveErr) => {
+          console.warn('[handleAdaParselSubmit] BASIT MOD: Sorgularım kaydı başarısız:', saveErr);
+        });
       }
     } catch (error: any) {
       console.error('[handleAdaParselSubmit] Sorgu hatası:', error);
-      setIsLoadingParcel(false);
+      if (error?.type === 'TKGM_PARCEL_NOT_FOUND') {
+        Alert.alert('Parsel Bulunamadı', error.message || 'Parsel bulunamadı.', [{ text: 'Tamam' }]);
+        return;
+      }
+      if (error?.type === 'TKGM_RATE_LIMIT') {
+        Alert.alert(
+          'Günlük Sorgu Limiti',
+          error.message || 'TKGM günlük sorgu limiti aşıldı. Lütfen daha sonra tekrar deneyin.',
+          [{ text: 'Tamam' }]
+        );
+        return;
+      }
+      if (error?.type === 'TIMEOUT' || error?.type === 'CORS_OR_NETWORK_ERROR') {
+        Alert.alert('Bağlantı Hatası', error.message || 'TKGM sunucusuna bağlanılamadı.', [{ text: 'Tamam' }]);
+        return;
+      }
       if (error instanceof QueryLimitError) {
         Alert.alert(
           'Günlük Sorgu Limiti',
@@ -1870,12 +2135,25 @@ export default function Index() {
       } else {
         Alert.alert(
           'Bağlantı Hatası',
-          'Backend sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.',
+          'Parsel sorgusu tamamlanamadı. Lütfen internet bağlantınızı kontrol edin.',
           [{ text: 'Tamam' }]
         );
       }
+    } finally {
+      endParcelQueryLoad(loadSeq);
     }
-  }, [isProMode, is3DMode, isAuthenticated, router, addParcelToSimpleMode]);
+  }, [
+    isProMode,
+    is3DMode,
+    isAuthenticated,
+    router,
+    addParcelToSimpleMode,
+    maybeFitSimpleQueryParcel,
+    zoomToParcelOnMap,
+    beginParcelQueryLoad,
+    endParcelQueryLoad,
+    isParcelQueryLoadStale,
+  ]);
 
   /** Web sidebar "Sorgularım" — kayıtlı sorguyu basit modda haritada yeniden çalıştır */
   const openMyQueriesSheet = useCallback(() => {
@@ -1949,13 +2227,19 @@ export default function Index() {
 
   const toggleMode = () => setIsProMode(prev => !prev);
   const applyMapCamera = useCallback(
-    (center: [number, number], zoom: number, animated = true) => {
+    (
+      center: [number, number],
+      zoom: number,
+      animated = true,
+      animationDurationMs = 800,
+    ) => {
       if (!cameraRef.current?.setCamera) return false;
       isProgrammaticMoveRef.current = true;
       if (programmaticTimerRef.current) clearTimeout(programmaticTimerRef.current);
       const pitch = camRef.current.pitch || 0;
       const heading = camRef.current.heading || 0;
       camRef.current = { center, zoom, pitch, heading };
+      const duration = animated ? animationDurationMs : 0;
       // defaultSettings güncellemesi Android'de Camera remount → izin sonrası çökme
       try {
         cameraRef.current.setCamera({
@@ -1963,7 +2247,7 @@ export default function Index() {
           zoomLevel: zoom,
           pitch,
           heading,
-          animationDuration: animated ? 800 : 0,
+          animationDuration: duration,
         });
       } catch (camErr) {
         if (__DEV__) console.warn("[Index] setCamera:", camErr);
@@ -1971,7 +2255,7 @@ export default function Index() {
       }
       programmaticTimerRef.current = setTimeout(() => {
         isProgrammaticMoveRef.current = false;
-      }, animated ? 900 : 80);
+      }, animated ? duration + 100 : 80);
       return true;
     },
     [],
@@ -1985,15 +2269,29 @@ export default function Index() {
   );
 
   const applyMapCameraWithRetry = useCallback(
-    async (center: [number, number], zoom: number, animated = true) => {
+    async (
+      center: [number, number],
+      zoom: number,
+      animated = true,
+      animationDurationMs = 800,
+    ) => {
       for (let attempt = 0; attempt < 8; attempt += 1) {
-        if (applyMapCamera(center, zoom, animated)) return true;
+        if (applyMapCamera(center, zoom, animated, animationDurationMs)) return true;
         await new Promise((r) => setTimeout(r, 200));
       }
       return false;
     },
     [applyMapCamera],
   );
+
+  const waitForHomeMapReady = useCallback(async (maxMs = 5000): Promise<boolean> => {
+    const started = Date.now();
+    while (Date.now() - started < maxMs) {
+      if (mapReadyRef.current.didFinishLoadingMap) return true;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    return mapReadyRef.current.didFinishLoadingMap;
+  }, []);
 
   const handleLocationHierarchySelect = useCallback(
     async (sel: LocationHierarchySelection) => {
@@ -2075,22 +2373,66 @@ export default function Index() {
     }
   }, [scheduleFocusUserLocation]);
 
-  const onHomeMapLoaded = useCallback(() => {
-    if (__DEV__) console.log("[Mapbox] Harita yüklendi");
-    if (!mapTurkeyAppliedRef.current) {
+  const focusPreferredCityOnMap = useCallback(
+    async (animated = true): Promise<boolean> => {
+      const cityId = await resolveHomeMapCityId(user);
+      if (!cityId) return false;
+      const cam = getCityMapCameraFromId(cityId);
+      if (!cam) return false;
+      locationBootstrapRef.current = true;
       mapTurkeyAppliedRef.current = true;
-      focusTurkeyOnMap(false);
+      const animMs = animated ? HOME_PREFERRED_CITY_ANIM_MS : 0;
+      return applyMapCameraWithRetry(cam.center, cam.zoom, animated, animMs);
+    },
+    [user, applyMapCameraWithRetry],
+  );
+
+  const onHomeMapLoaded = useCallback(() => {
+    mapReadyRef.current.didFinishLoadingMap = true;
+    mapReadyRef.current.didFinishLoadingStyle = true;
+    if (__DEV__) console.log("[Mapbox] Harita yüklendi");
+    if (mapTurkeyAppliedRef.current) return;
+    if (!isAuthLoading && isAuthenticated) {
+      return;
     }
-  }, [focusTurkeyOnMap]);
+    mapTurkeyAppliedRef.current = true;
+    focusTurkeyOnMap(false);
+  }, [focusTurkeyOnMap, isAuthLoading, isAuthenticated]);
+
+  const onHomeMapIdle = useCallback(() => {
+    mapReadyRef.current.isIdle = true;
+    bumpParcelPatternLayout();
+  }, [bumpParcelPatternLayout]);
 
   useEffect(() => {
-    if (permissionLaunchRequestedRef.current) return;
-    permissionLaunchRequestedRef.current = true;
-    const t = setTimeout(() => {
-      void requestLocationPermissionOnLaunch();
-    }, 1200);
-    return () => clearTimeout(t);
-  }, [requestLocationPermissionOnLaunch]);
+    if (isAuthLoading || homeLaunchBootstrapRef.current) return;
+    homeLaunchBootstrapRef.current = true;
+
+    let gpsTimer: ReturnType<typeof setTimeout> | null = null;
+
+    void (async () => {
+      if (isAuthenticated) {
+        await waitForHomeMapReady();
+        await new Promise((r) => setTimeout(r, 550));
+        const moved = await focusPreferredCityOnMap(true);
+        if (moved) return;
+      }
+      gpsTimer = setTimeout(() => {
+        void requestLocationPermissionOnLaunch();
+      }, 1200);
+    })();
+
+    return () => {
+      if (gpsTimer) clearTimeout(gpsTimer);
+    };
+  }, [
+    isAuthLoading,
+    isAuthenticated,
+    user?.city_id,
+    focusPreferredCityOnMap,
+    waitForHomeMapReady,
+    requestLocationPermissionOnLaunch,
+  ]);
 
   useEffect(() => {
     const fallback = setTimeout(() => {
@@ -2119,12 +2461,23 @@ export default function Index() {
 
   const onCameraChanged = useCallback((e: any) => {
     if (isSharingRef.current) return;
-    updateCamRefFromCameraChanged(e, camRef, isProgrammaticMoveRef);
-    bumpHomeTextBoxLayout();
+    if (!isProgrammaticMoveRef.current) {
+      mapReadyRef.current.isIdle = false;
+    }
+    if (!plusZoomHoldingRef.current) {
+      updateCamRefFromCameraChanged(e, camRef, isProgrammaticMoveRef);
+    }
     if (!isProgrammaticMoveRef.current && is3DMode && show3DSlider) {
       const p = e?.properties?.pitch; if (typeof p === 'number') setPitchValue(prev => Math.abs(prev - p) >= 2 ? p : prev);
     }
-  }, [is3DMode, show3DSlider, bumpHomeTextBoxLayout]);
+    if (shapeNeedsOverlayRelayout(drawing.shapes)) {
+      drawing.bumpTextBoxLayoutOnCamera();
+    }
+    bumpParcelPatternLayout();
+    if (screenshotPreviewModeRef.current) {
+      runPreviewSnapPrewarm(180);
+    }
+  }, [is3DMode, show3DSlider, drawing.shapes, drawing.bumpTextBoxLayoutOnCamera, runPreviewSnapPrewarm, bumpParcelPatternLayout]);
   
   const toggle3DMode = () => {
     const n = !is3DMode; 
@@ -2135,6 +2488,32 @@ export default function Index() {
     });
     setShow3DSlider(n); setPitchValue(n ? (camRef.current.pitch || 75) : 0);
   };
+
+  useEffect(() => {
+    Animated.spring(threeDPanelAnim, {
+      toValue: show3DSlider ? 1 : 0,
+      useNativeDriver: true,
+      tension: 68,
+      friction: 11,
+    }).start();
+  }, [show3DSlider, threeDPanelAnim]);
+
+  useEffect(() => {
+    Animated.spring(zoomPanelAnim, {
+      toValue: holdMapToolsActive ? 1 : 0,
+      useNativeDriver: true,
+      tension: 68,
+      friction: 11,
+    }).start();
+  }, [holdMapToolsActive, zoomPanelAnim]);
+
+  useEffect(() => {
+    Animated.timing(zoomQueryButtonsOpacity, {
+      toValue: plusZoomUiDirection == null ? 1 : 0,
+      duration: 100,
+      useNativeDriver: true,
+    }).start();
+  }, [plusZoomUiDirection, zoomQueryButtonsOpacity]);
   
   const handlePitchChange = (v: number) => {
     const nv = Math.max(0, Math.min(90, Math.round(v))); setPitchValue(nv);
@@ -2160,6 +2539,7 @@ export default function Index() {
   };
 
   const startHeadingChange = (delta: number) => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
     handleHeadingChange(delta);
     intervalRef.current = setInterval(() => { handleHeadingChange(delta); }, 150);
   };
@@ -2167,14 +2547,287 @@ export default function Index() {
   const stopHeadingChange = () => { if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
 
   const startZoomChange = (delta: number) => {
-    // Önce bir kez direkt çağır (anında zoom için)
     handleZoomChange(delta);
-    // Sonra interval başlat (basılı tutunca devam etmesi için)
     if (zoomIntervalRef.current) clearInterval(zoomIntervalRef.current);
     zoomIntervalRef.current = setInterval(() => { handleZoomChange(delta); }, 150);
   };
 
   const stopZoomChange = () => { if (zoomIntervalRef.current) { clearInterval(zoomIntervalRef.current); zoomIntervalRef.current = null; } };
+
+  const parseCoordFromView = (res: unknown): [number, number] | null => {
+    if (Array.isArray(res) && res.length >= 2) {
+      const lng = Number(res[0]);
+      const lat = Number(res[1]);
+      if (Number.isFinite(lng) && Number.isFinite(lat)) return [lng, lat];
+    }
+    if (res && typeof res === 'object') {
+      const o = res as Record<string, unknown>;
+      const lng = Number(o.lng ?? o.longitude ?? o[0]);
+      const lat = Number(o.lat ?? o.latitude ?? o[1]);
+      if (Number.isFinite(lng) && Number.isFinite(lat)) return [lng, lat];
+    }
+    return null;
+  };
+
+
+  type HoldZoomDirection = "in" | "out";
+
+  const holdZoomSessionRef = useRef<{
+    active: boolean;
+    direction: HoldZoomDirection | null;
+    geoAnchor: [number, number] | null;
+    zoomCenterX: number;
+    zoomCenterY: number;
+    touchAnchorX: number;
+    touchAnchorY: number;
+    fingerX: number;
+    fingerY: number;
+    preparing: boolean;
+  }>({
+    active: false,
+    direction: null,
+    geoAnchor: null,
+    zoomCenterX: 0,
+    zoomCenterY: 0,
+    touchAnchorX: 0,
+    touchAnchorY: 0,
+    fingerX: 0,
+    fingerY: 0,
+    preparing: false,
+  });
+
+  const HOLD_ZOOM_MIN_ZOOM = 2;
+  const HOLD_ZOOM_MAX_ZOOM = 22;
+
+  const resetHoldMapZoom = useCallback(() => {
+    holdZoomSessionRef.current = {
+      active: false,
+      direction: null,
+      geoAnchor: null,
+      zoomCenterX: 0,
+      zoomCenterY: 0,
+      touchAnchorX: 0,
+      touchAnchorY: 0,
+      fingerX: 0,
+      fingerY: 0,
+      preparing: false,
+    };
+  }, []);
+
+  const refreshPlusZoomAnchor = useCallback(async (): Promise<[number, number] | null> => {
+    const map = mapRef.current;
+    const plus = holdMapToolsPlusCenterRef.current;
+    if (!map?.getCoordinateFromView || !plus) return null;
+
+    try {
+      const anchor = parseCoordFromView(await map.getCoordinateFromView(plus));
+      if (anchor) {
+        plusZoomAnchorGeoRef.current = anchor;
+      }
+      return anchor;
+    } catch (_) {
+      return null;
+    }
+  }, []);
+
+  const applyPlusAnchoredZoomStep = useCallback(
+    (delta: number, anchorBefore: [number, number]) => {
+      const camera = cameraRef.current;
+      const plus = holdMapToolsPlusCenterRef.current;
+      if (!camera?.setCamera || !plus) return;
+
+      const [plusX, plusY] = plus;
+
+      const centerBefore = camRef.current.center as [number, number] | undefined;
+      if (!centerBefore || centerBefore.length < 2) return;
+
+      const currentZoom = camRef.current.zoom || 4;
+      const nextZoom = Math.max(
+        HOLD_ZOOM_MIN_ZOOM,
+        Math.min(HOLD_ZOOM_MAX_ZOOM, currentZoom + delta),
+      );
+      const zoomDiff = nextZoom - currentZoom;
+      if (zoomDiff === 0) return;
+
+      const scale = Math.pow(2, zoomDiff);
+      const centerShift = 1 - 1 / scale;
+      const newCenter: [number, number] = [
+        centerBefore[0] + (anchorBefore[0] - centerBefore[0]) * centerShift,
+        centerBefore[1] + (anchorBefore[1] - centerBefore[1]) * centerShift,
+      ];
+
+      isProgrammaticMoveRef.current = true;
+      camera.setCamera({
+        centerCoordinate: newCenter,
+        zoomLevel: nextZoom,
+        animationDuration: 0,
+      });
+      camRef.current.zoom = nextZoom;
+      camRef.current.center = newCenter;
+      isProgrammaticMoveRef.current = false;
+      holdZoomSessionRef.current.geoAnchor = anchorBefore;
+      holdZoomSessionRef.current.active = true;
+      holdZoomSessionRef.current.zoomCenterX = plusX;
+      holdZoomSessionRef.current.zoomCenterY = plusY;
+    },
+    [],
+  );
+
+  const updatePlusZoomSpeedFromTouch = useCallback((pageY: number) => {
+    const direction = plusZoomDirectionRef.current;
+    const anchorY = plusZoomTouchAnchorYRef.current;
+    if (direction == null || !Number.isFinite(anchorY)) return;
+
+    let boostT = 0;
+    if (direction > 0) {
+      const upPx = anchorY - pageY;
+      boostT = Math.min(1, Math.max(0, (upPx - PLUS_ZOOM_SPEED_SLOP_PX) / PLUS_ZOOM_SPEED_RAMP_PX));
+    } else {
+      const downPx = pageY - anchorY;
+      boostT = Math.min(1, Math.max(0, (downPx - PLUS_ZOOM_SPEED_SLOP_PX) / PLUS_ZOOM_SPEED_RAMP_PX));
+    }
+
+    plusZoomSpeedMultRef.current = 1 + boostT * (PLUS_ZOOM_SPEED_MAX_MULT - 1);
+    setPlusZoomSpeedT(boostT);
+  }, []);
+
+  const getPlusZoomDelta = useCallback(() => {
+    const direction = plusZoomDirectionRef.current ?? 1;
+    return direction * PLUS_TOOLS_ZOOM_STEP * plusZoomSpeedMultRef.current;
+  }, []);
+
+  const stopMapToolsZoomChange = useCallback(() => {
+    plusZoomHoldingRef.current = false;
+    plusZoomDirectionRef.current = null;
+    plusZoomSpeedMultRef.current = 1;
+    plusZoomAnchorGeoRef.current = null;
+    setPlusZoomUiDirection(null);
+    setPlusZoomSpeedT(0);
+    setPlusZoomMapScrollLocked(false);
+    stopZoomChange();
+  }, []);
+
+  const startMapToolsZoomChange = useCallback(
+    (direction: number, touchPageY: number) => {
+      if (!holdMapToolsActiveRef.current) return;
+      if (zoomIntervalRef.current) clearInterval(zoomIntervalRef.current);
+
+      plusZoomHoldingRef.current = true;
+      setPlusZoomMapScrollLocked(true);
+      setPlusZoomUiDirection(direction > 0 ? 1 : -1);
+      setPlusZoomSpeedT(0);
+      plusZoomDirectionRef.current = direction > 0 ? 1 : -1;
+      plusZoomTouchAnchorYRef.current = touchPageY;
+      plusZoomSpeedMultRef.current = 1;
+      plusZoomAnchorGeoRef.current = null;
+
+      void refreshPlusZoomAnchor().then((anchor) => {
+        if (!anchor || !plusZoomHoldingRef.current || plusZoomDirectionRef.current == null) return;
+
+        const lockedAnchor = anchor;
+        const tick = () => {
+          if (!plusZoomHoldingRef.current || plusZoomDirectionRef.current == null) return;
+          applyPlusAnchoredZoomStep(getPlusZoomDelta(), lockedAnchor);
+        };
+
+        tick();
+        zoomIntervalRef.current = setInterval(tick, PLUS_TOOLS_ZOOM_INTERVAL_MS);
+      });
+    },
+    [applyPlusAnchoredZoomStep, getPlusZoomDelta, refreshPlusZoomAnchor],
+  );
+
+  const mapToolsZoomInGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(0)
+        .shouldCancelWhenOutside(false)
+        .onBegin((event) => {
+          runOnJS(startMapToolsZoomChange)(1, event.absoluteY);
+        })
+        .onUpdate((event) => {
+          runOnJS(updatePlusZoomSpeedFromTouch)(event.absoluteY);
+        })
+        .onFinalize(() => {
+          runOnJS(stopMapToolsZoomChange)();
+        }),
+    [startMapToolsZoomChange, stopMapToolsZoomChange, updatePlusZoomSpeedFromTouch],
+  );
+
+  const mapToolsZoomOutGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(0)
+        .shouldCancelWhenOutside(false)
+        .onBegin((event) => {
+          runOnJS(startMapToolsZoomChange)(-1, event.absoluteY);
+        })
+        .onUpdate((event) => {
+          runOnJS(updatePlusZoomSpeedFromTouch)(event.absoluteY);
+        })
+        .onFinalize(() => {
+          runOnJS(stopMapToolsZoomChange)();
+        }),
+    [startMapToolsZoomChange, stopMapToolsZoomChange, updatePlusZoomSpeedFromTouch],
+  );
+
+  const activateHoldMapTools = useCallback(
+    (zoomCenterX: number, zoomCenterY: number) => {
+      holdMapToolsActiveRef.current = true;
+      holdMapToolsPlusCenterRef.current = [zoomCenterX, zoomCenterY];
+      setHoldMapToolsActive(true);
+
+      holdZoomSessionRef.current = {
+        active: true,
+        direction: null,
+        geoAnchor: null,
+        zoomCenterX,
+        zoomCenterY,
+        touchAnchorX: 0,
+        touchAnchorY: 0,
+        fingerX: 0,
+        fingerY: 0,
+        preparing: false,
+      };
+    },
+    [],
+  );
+
+  const closeHoldMapTools = useCallback(() => {
+    holdMapToolsActiveRef.current = false;
+    stopMapToolsZoomChange();
+    resetHoldMapZoom();
+    holdMapToolsPlusCenterRef.current = null;
+    setHoldMapToolsActive(false);
+  }, [resetHoldMapZoom, stopMapToolsZoomChange]);
+
+  const handleMapPlusCenterReady = useCallback(
+    (x: number, y: number) => {
+      mapPlusCenterRef.current = [x, y];
+      if (pendingOpenHoldToolsRef.current) {
+        pendingOpenHoldToolsRef.current = false;
+        activateHoldMapTools(x, y);
+      }
+    },
+    [activateHoldMapTools],
+  );
+
+  const openHoldMapTools = useCallback(() => {
+    const center = mapPlusCenterRef.current;
+    if (center) {
+      activateHoldMapTools(center[0], center[1]);
+      return;
+    }
+    pendingOpenHoldToolsRef.current = true;
+  }, [activateHoldMapTools]);
+
+  useFocusEffect(
+    useCallback(() => () => {
+      stopZoomChange();
+      stopHeadingChange();
+      closeHoldMapTools();
+    }, [closeHoldMapTools]),
+  );
 
   const startPitchChange = (delta: number) => {
     // Önce bir kez direkt çağır (anında tepki için)
@@ -2200,7 +2853,7 @@ export default function Index() {
   const getButtonActiveStyle = (buttonId: 'ruler' | 'location' | '3d') => {
     switch (buttonId) {
       case 'ruler':
-        return (homeMapToolsSheetOpen || rulerQuickMenuVisible || homeMapShapeDrawingMode !== null || measurementMode === 'ruler' || measurementMode === 'area' || measurementMode === 'pin' || measurementMode === 'text' || measurementMode === 'arrow') ? styles.pillButtonActive : null;
+        return (homeMapToolsSheetOpen || drawing.shapeDrawingMode !== null || measurement.isActive) ? styles.pillButtonActive : null;
       case 'location':
         return locationMenuVisible ? styles.pillButtonActive : null;
       case '3d':
@@ -2219,117 +2872,204 @@ export default function Index() {
     return inside;
   };
 
-  const finishAreaMeasurement = () => {
-    if (areaPoints.length >= 3) {
-      setMeasurementFeatures(prev => [...prev.filter(f => !f.properties.isTemporary), ...createAreaFeatures(areaPoints, calculateArea(areaPoints), false, homeAreaColor)]);
-      setAreaPoints([]);
-    }
-  };
+  const executeParcelQueryAtLngLat = useCallback(
+    async (c: [number, number], queryMode: 'simple' | 'pro') => {
+      const useProMode = queryMode === 'pro';
+      console.log('[executeParcelQueryAtLngLat] Başlangıç, queryMode:', queryMode, 'koordinat:', c);
 
-  const handleMeasurementPress = (e: any) => {
-    let c: [number, number] | null = e?.geometry?.coordinates || e?.coordinates || (e?.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null);
-    if (!c) return;
-    if (measurementMode === 'ruler') {
-      if (rulerPoints.length === 0) {
-        setRulerPoints([c]);
-        setMeasurementFeatures(prev => [...prev.filter(f => !f.properties.isTemporary), { type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: { measurementType: 'ruler', isTemporary: true, measureColor: homeRulerColor } }]);
+      if (useProMode) {
+        setIsProMode(true);
+        setQueryModeChoice('pro');
       } else {
-        setMeasurementFeatures(prev => [...prev.filter(f => !f.properties.isTemporary), ...createRulerFeatures([...rulerPoints, c], undefined, homeRulerColor)]);
-        setRulerPoints([]);
+        setIsProMode(false);
+        setQueryModeChoice('simple');
       }
-    } else if (measurementMode === 'area') {
-      const np = [...areaPoints, c];
-      setAreaPoints(np);
-      const newFeatures = createAreaFeatures(np, undefined, true, homeAreaColor);
-      setMeasurementFeatures(prev => [...prev.filter(f => !f.properties.isTemporary), ...newFeatures]);
-    } else if (measurementMode === 'pin') {
-      const id = 'pin-' + (++annotationIdRef.current);
-      setAnnotationFeatures(prev => [...prev, {
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: c },
-        properties: { id, annotationType: 'pin', color: homeAnnotationColor }
-      }]);
-    } else if (measurementMode === 'text') {
-      setTextInputCoords(c);
-      setTextInputValue('');
-      setTextInputModalVisible(true);
-    } else if (measurementMode === 'arrow') {
-      if (!arrowFirstPoint) {
-        setArrowFirstPoint(c);
-      } else {
-        const id = 'arrow-' + (++annotationIdRef.current);
-        const color = homeAnnotationColor;
-        const toRad = Math.PI / 180;
-        const toDeg = 180 / Math.PI;
-        const dLon = (c[0] - arrowFirstPoint[0]) * toRad;
-        const lat1 = arrowFirstPoint[1] * toRad;
-        const lat2 = c[1] * toRad;
-        const y = Math.sin(dLon) * Math.cos(lat2);
-        const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-        const bearing = ((Math.atan2(y, x) * toDeg) + 360) % 360;
-        const headLen = 0.00015;
-        const leftAngle = (bearing - 150) * toRad;
-        const rightAngle = (bearing + 150) * toRad;
-        const headLeft: [number, number] = [c[0] + headLen * Math.sin(leftAngle), c[1] + headLen * Math.cos(leftAngle)];
-        const headRight: [number, number] = [c[0] + headLen * Math.sin(rightAngle), c[1] + headLen * Math.cos(rightAngle)];
-        setAnnotationFeatures(prev => [
-          ...prev,
-          { type: 'Feature', geometry: { type: 'LineString', coordinates: [arrowFirstPoint, c] }, properties: { id, annotationType: 'arrow', color } },
-          { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[c, headLeft, headRight, c]] }, properties: { id: id + '-head', annotationType: 'arrowHead', color } }
-        ]);
-        setArrowFirstPoint(null);
-      }
-    }
-  };
 
-  const confirmTextAnnotation = () => {
-    if (textInputCoords && textInputValue.trim()) {
-      const id = 'text-' + (++annotationIdRef.current);
-      setAnnotationFeatures(prev => [...prev, {
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: textInputCoords },
-        properties: { id, annotationType: 'text', label: textInputValue.trim(), color: homeAnnotationColor }
-      }]);
-    }
-    setTextInputModalVisible(false);
-    setTextInputCoords(null);
-    setTextInputValue('');
-  };
+      const loadSeq = beginParcelQueryLoad(useProMode ? 'pro' : 'simple');
+      if (useProMode) {
+        console.log('[executeParcelQueryAtLngLat] PRO MOD: parcelData temizleniyor');
+        setParcelData(null);
+      }
+
+      const backendUrl = (API_URL || '').replace(/\/$/, '');
+
+      try {
+        console.log('[executeParcelQueryAtLngLat] TKGM sorgusu başlatılıyor, queryMode:', queryMode);
+
+        let data;
+        try {
+          data = await fetchTkgmByCoords(c[1], c[0]);
+        } catch (error: any) {
+          if (error.type === 'TKGM_PARCEL_NOT_FOUND') {
+            console.log('[executeParcelQueryAtLngLat] Parsel bulunamadı');
+            return;
+          }
+
+          console.error('[executeParcelQueryAtLngLat] TKGM sorgusu başarısız:', error);
+          throw error;
+        }
+        console.log('[executeParcelQueryAtLngLat] TKGM sorgusu tamamlandı, geometry var mı:', !!data.geometry, 'queryMode:', queryMode);
+
+        if (!data.geometry) {
+          console.warn('[executeParcelQueryAtLngLat] Geometry yok, işlem sonlandırılıyor');
+          return;
+        }
+        if (isParcelQueryLoadStale(loadSeq)) return;
+
+        if (useProMode) {
+          console.log('[executeParcelQueryAtLngLat] PRO MOD: Pro mod akışı başlatılıyor');
+          const nitelikText = extractNitelikText(data);
+          const { title, suggestedType } = generatePropertyTypeTitle(nitelikText);
+
+          try {
+            const normalizedTkgmGeom = normalizeGeometryCoordinates(data.geometry);
+            console.log('[executeParcelQueryAtLngLat] TKGM geometry normalized, first coord:', JSON.stringify(normalizedTkgmGeom?.coordinates?.[0]?.[0] ?? normalizedTkgmGeom?.coordinates?.[0]?.[0]?.[0]).slice(0, 40));
+            setParcelData({ geometry: normalizedTkgmGeom, properties: data.properties || {}, analysisData: null });
+            const s = calculateBoundsAndCamera(normalizedTkgmGeom);
+            if (s) cameraRef.current?.setCamera?.({ centerCoordinate: s.center, zoomLevel: s.zoom, pitch: camRef.current.pitch, animationDuration: 900 });
+          } catch (_) {}
+
+          setPendingTkgmData(data);
+          setPendingCoordinates(c);
+          setPendingShareData(null);
+          setPropertyTypeModalTitle(title);
+          setPropertyTypeModalSuggested(suggestedType);
+          setInfoModeActive(false);
+          void persistTkgmResponseToMyQueries(data, !!isAuthenticated, 'pro').catch((saveErr) => {
+            console.warn('[executeParcelQueryAtLngLat] PRO MOD: Sorgularım kaydı başarısız:', saveErr);
+          });
+          setProQueryConfirmVisible(true);
+        } else {
+          console.log('[executeParcelQueryAtLngLat] BASIT MOD: Basit mod akışı, array\'e ekleniyor');
+          const normalizedGeom = normalizeParcelGeometry(data.geometry);
+          addParcelToSimpleMode({
+            geometry: normalizedGeom,
+            properties: data.properties || {},
+            analysisData: null,
+          });
+          maybeFitSimpleQueryParcel(normalizedGeom);
+
+          void persistTkgmResponseToMyQueries(data, !!isAuthenticated, 'simple').catch((saveErr) => {
+            console.warn('[executeParcelQueryAtLngLat] BASIT MOD: Sorgularım kaydı başarısız:', saveErr);
+          });
+        }
+      } catch (error: any) {
+        console.error('[executeParcelQueryAtLngLat] TKGM sorgu hatası:', error);
+        if (error instanceof QueryLimitError) {
+          Alert.alert(
+            'Günlük Sorgu Limiti',
+            `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
+            isAuthenticated
+              ? [{ text: 'Tamam' }]
+              : [
+                  { text: 'Kapat', style: 'cancel' },
+                  { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) },
+                ],
+          );
+        } else {
+          Alert.alert(
+            'Bağlantı Hatası',
+            'Backend sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.',
+            [{ text: 'Tamam' }],
+          );
+        }
+      } finally {
+        endParcelQueryLoad(loadSeq);
+      }
+    },
+    [
+      addParcelToSimpleMode,
+      isAuthenticated,
+      router,
+      maybeFitSimpleQueryParcel,
+      beginParcelQueryLoad,
+      endParcelQueryLoad,
+      isParcelQueryLoadStale,
+    ],
+  );
+
+  const runMapQueryAtPlusCenter = useCallback(
+    async (queryMode: 'simple' | 'pro') => {
+      if (drawing.freehandActive || measurement.isActive) return;
+
+      ghostMapPressUntilRef.current = Date.now() + 400;
+
+      let c = await refreshPlusZoomAnchor();
+      if (!c) {
+        const map = mapRef.current;
+        const plus = holdMapToolsPlusCenterRef.current ?? mapPlusCenterRef.current;
+        if (map?.getCoordinateFromView && plus) {
+          try {
+            c = parseCoordFromView(await map.getCoordinateFromView(plus));
+          } catch (_) {}
+        }
+      }
+      if (!c) return;
+
+      await executeParcelQueryAtLngLat(c, queryMode);
+    },
+    [drawing.freehandActive, executeParcelQueryAtLngLat, measurement.isActive, refreshPlusZoomAnchor],
+  );
 
   const handleMapPress = async (e: any) => {
-    // Alt menü satırından sonra gelen hayalet harita onPress'ini yut
-    if (ignoreNextMapPressRef.current) {
-      ignoreNextMapPressRef.current = false;
+    if (suppressNextMapPressRef.current) {
+      suppressNextMapPressRef.current = false;
       return;
     }
-    if (homeMapShapeDrawingMode === 'pen') {
+    // Alt menü satırından hemen sonra gelen hayalet harita onPress'ini yut
+    if (Date.now() < ghostMapPressUntilRef.current) {
       return;
     }
-    // Ölçüm aktifken önce nokta ekle
-    if (measurementMode) {
-      handleMeasurementPress(e);
+    if (drawing.freehandActive) {
       return;
     }
-    if (locationMenuVisible || homeMapToolsSheetOpen || rulerQuickMenuVisible || infoMenuVisible || show3DSlider || isLoadingParcel || activeScreen !== null) {
+    if (measurement.isActive) {
+      measurement.handleMeasurementPress(e);
+      return;
+    }
+    if (locationMenuVisible || homeMapToolsSheetOpen || show3DSlider || activeScreen !== null) {
       menuItemClickedRef.current = false;
       setHomeMapToolsSheetOpen(false);
-      setRulerQuickMenuVisible(false);
       setLocationMenuVisible(false);
-      setInfoMenuVisible(false);
       setShow3DSlider(false);
-      setZoomControlsVisible(false);
+      if (holdMapToolsActive) {
+        closeHoldMapTools();
+      }
       return;
-    }
-    if (zoomControlsVisible) {
-      setZoomControlsVisible(false);
     }
     
     let c: [number, number] | null = e?.geometry?.coordinates || e?.coordinates || (e?.lngLat ? [e.lngLat.lng, e.lngLat.lat] : null);
     if (!c) return;
 
-    if (homeMapShapeDrawingMode && homeMapShapeDrawingMode !== 'pen') {
-      handleShapeDrawingPress({ geometry: { coordinates: c } });
+    if (drawing.shapeDrawingMode) {
+      drawing.handleShapeDrawingPress(e);
       return;
+    }
+
+    if (
+      !measurement.isActive &&
+      measurement.measurementFeatures.length > 0
+    ) {
+      const groupId = await tryHitMeasurementGroupAtLngLat(mapRef, c, measurement.measurementFeatures);
+      if (groupId) {
+        handleMeasurementGroupPress(groupId);
+        return;
+      }
+    }
+
+    if (drawing.shapes.length > 0) {
+      const hitId = await trySelectShapeAtLngLat(
+        mapRef,
+        c,
+        drawing.shapes,
+        undefined,
+        drawing.mapOverlayViewport
+      );
+      if (hitId) {
+        setSelectedMeasurementGroupId(null);
+        drawing.handleShapeTap(hitId);
+        return;
+      }
     }
     
     // Info mode kontrolü: Basit modda info mode aktif değilse parsel sorgusu yapma
@@ -2379,129 +3119,78 @@ export default function Index() {
     }
     
     console.log('[handleMapPress] Başlangıç, isProMode:', isProMode, 'koordinat:', c);
-    setIsLoadingParcel(true);
-    // Pro modda parcelData temizle, basit modda array'e ekleyeceğiz
-    if (isProMode) {
-      console.log('[handleMapPress] PRO MOD: parcelData temizleniyor');
-      setParcelData(null);
-    }
-    
-    const backendUrl = (API_URL || '').replace(/\/$/, '');
-    
-    try {
-      console.log('[handleMapPress] TKGM sorgusu başlatılıyor, isProMode:', isProMode);
-      
-      // Direkt TKGM API çağrısı (fallback ile)
-      let data;
-      try {
-        data = await fetchTkgmByCoordsWithFallback(c[1], c[0], backendUrl);
-      } catch (error: any) {
-        // Özel durum: TKGM "Parsel Bulunamadı"
-        if (error.type === 'TKGM_PARCEL_NOT_FOUND') {
-          console.log('[handleMapPress] Parsel bulunamadı');
-          setIsLoadingParcel(false);
-          return;
-        }
-        
-        // Diğer hatalar
-        console.error('[handleMapPress] TKGM sorgusu başarısız:', error);
-        throw error;
-      }
-      console.log('[handleMapPress] TKGM sorgusu tamamlandı, geometry var mı:', !!data.geometry, 'isProMode:', isProMode);
-      
-      if (!data.geometry) {
-        console.warn('[handleMapPress] Geometry yok, işlem sonlandırılıyor');
-        setIsLoadingParcel(false);
-        return;
-      }
-
-      if (isProMode) {
-        console.log('[handleMapPress] PRO MOD: Pro mod akışı başlatılıyor');
-        // Pro mod: Önce parseli çiz + onay al, sonra property type modal aç
-        const nitelikText = extractNitelikText(data);
-        const { title, suggestedType } = generatePropertyTypeTitle(nitelikText);
-
-        // Parseli haritada çiz — TKGM geometrisi [lat,lon] olabilir, normalize et
-        try {
-          const normalizedTkgmGeom = normalizeGeometryCoordinates(data.geometry);
-          console.log('[handleMapPress] TKGM geometry normalized, first coord:', JSON.stringify(normalizedTkgmGeom?.coordinates?.[0]?.[0] ?? normalizedTkgmGeom?.coordinates?.[0]?.[0]?.[0]).slice(0, 40));
-          setParcelData({ geometry: normalizedTkgmGeom, properties: data.properties || {}, analysisData: null });
-          const s = calculateBoundsAndCamera(normalizedTkgmGeom);
-          if (s) cameraRef.current?.setCamera?.({ centerCoordinate: s.center, zoomLevel: s.zoom, pitch: camRef.current.pitch, animationDuration: 900 });
-        } catch (_) {}
-        
-        setPendingTkgmData(data);
-        setPendingCoordinates(c);
-        setPendingShareData(null);
-        setPropertyTypeModalTitle(title);
-        setPropertyTypeModalSuggested(suggestedType);
-        setInfoModeActive(false); // Parsel seçildi, info mode'u pasif yap
-        try {
-          await persistTkgmResponseToMyQueries(data, !!isAuthenticated, "pro");
-        } catch (saveErr) {
-          console.warn("[handleMapPress] PRO MOD: Sorgularım kaydı başarısız:", saveErr);
-        }
-        console.log('[handleMapPress] PRO MOD: Overlay kapatılıyor ve onay modal açılıyor');
-        // Overlay kapat ve onay modal'ı aç
-        setIsLoadingParcel(false);
-        setProQueryConfirmVisible(true);
-        console.log('[handleMapPress] PRO MOD: setIsLoadingParcel(false) ve setProQueryConfirmVisible(true) çağrıldı');
-      } else {
-        console.log('[handleMapPress] BASIT MOD: Basit mod akışı, array\'e ekleniyor');
-        // Basit mod: Array'e ekle
-        const newParcel: ParcelData = { geometry: data.geometry, properties: data.properties || {}, analysisData: null };
-        addParcelToSimpleMode(newParcel);
-
-        try {
-          await persistTkgmResponseToMyQueries(data, !!isAuthenticated, "simple");
-        } catch (saveErr) {
-          console.warn("[handleMapPress] BASIT MOD: Sorgularım kaydı başarısız:", saveErr);
-        }
-        
-        const s = calculateBoundsAndCamera(data.geometry);
-        if (s) cameraRef.current?.setCamera({ centerCoordinate: s.center, zoomLevel: s.zoom, pitch: camRef.current.pitch, animationDuration: 900 });
-        setIsLoadingParcel(false);
-      }
-    } catch (error: any) {
-      console.error('[handleMapPress] TKGM sorgu hatası:', error);
-      setIsLoadingParcel(false);
-      if (error instanceof QueryLimitError) {
-        Alert.alert(
-          'Günlük Sorgu Limiti',
-          `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
-          isAuthenticated
-            ? [{ text: 'Tamam' }]
-            : [
-                { text: 'Kapat', style: 'cancel' },
-                { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) },
-              ]
-        );
-      } else {
-        Alert.alert(
-          'Bağlantı Hatası',
-          'Backend sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.',
-          [{ text: 'Tamam' }]
-        );
-      }
-    }
+    await executeParcelQueryAtLngLat(c, isProMode ? 'pro' : 'simple');
   };
 
   const handleLocationButtonPress = () => {
     setLocationMenuVisible(!locationMenuVisible);
     if (!locationMenuVisible) {
       setHomeMapToolsSheetOpen(false);
-      setRulerQuickMenuVisible(false);
       setShow3DSlider(false);
     }
   };
 
   const handleStreetViewPress = () => {
-    if (!parcelData || !parcelData.geometry) {
+    suppressGhostMapPress();
+    if (!streetViewParcel?.geometry) {
       Alert.alert('Bilgi', 'Önce bir parsel seçin veya sorgulayın.');
       return;
     }
     setStreetViewModalVisible(true);
   };
+
+  const handleQueryActionSmartQuery = useCallback(() => {
+    suppressGhostMapPress();
+    menuItemClickedRef.current = true;
+    setLocationMenuVisible(false);
+    setHomeMapToolsSheetOpen(false);
+    setShow3DSlider(false);
+    if (!canUseSmartQuery(user)) {
+      promptSmartQueryUpgrade(() => router.push('pricing'));
+      return;
+    }
+    openParcelSearchModal('smart');
+  }, [suppressGhostMapPress, openParcelSearchModal, user, router]);
+
+  const handleQueryActionSimple = () => {
+    suppressGhostMapPress();
+    menuItemClickedRef.current = true;
+    setLocationMenuVisible(false);
+    setHomeMapToolsSheetOpen(false);
+    setShow3DSlider(false);
+    if (queryModeChoice === 'simple' && infoModeActive) {
+      setInfoModeActive(false);
+    } else {
+      setQueryModeChoice('simple');
+      setIsProMode(false);
+      setInfoModeActive(true);
+    }
+  };
+
+  const handleQueryActionPro = () => {
+    if (!isAuthenticated) return;
+    suppressGhostMapPress();
+    menuItemClickedRef.current = true;
+    setLocationMenuVisible(false);
+    setHomeMapToolsSheetOpen(false);
+    setShow3DSlider(false);
+    if (queryModeChoice === 'pro' && infoModeActive) {
+      setInfoModeActive(false);
+    } else {
+      setQueryModeChoice('pro');
+      setIsProMode(true);
+      setInfoModeActive(true);
+    }
+  };
+
+  const handleOpenMyQueriesFromActionBar = useCallback(() => {
+    suppressGhostMapPress();
+    menuItemClickedRef.current = true;
+    setLocationMenuVisible(false);
+    setHomeMapToolsSheetOpen(false);
+    setShow3DSlider(false);
+    openMyQueriesSheet();
+  }, [suppressGhostMapPress, openMyQueriesSheet]);
 
   const fetchEdgeMeasuresForSimpleMode = useCallback(async (targetParcel?: SimpleModeParcel | null) => {
     const parcelToUse = targetParcel || selectedParcelForModal;
@@ -2603,11 +3292,7 @@ export default function Index() {
     setSelectedParcelForModal(null);
     
     // Tüm ölçüm çizimlerini temizle
-    setMeasurementFeatures([]);
-    setRulerPoints([]);
-    setAreaPoints([]);
-    setDynamicLineFeature(null);
-    setMeasurementMode(null);
+    measurement.clearMeasurements();
     setEdgeMeasurementFeatures([]);
     setShowEdgeMeasurements(false);
     setSimpleModeEdgeMeasureData(null);
@@ -2628,6 +3313,7 @@ export default function Index() {
   };
 
   const handleParcelLocation = () => {
+    suppressGhostMapPress();
     menuItemClickedRef.current = true;
     setLocationMenuVisible(false);
     
@@ -2718,8 +3404,8 @@ export default function Index() {
     }
 
     console.log('[handlePropertyTypeSelect] Overlay açılıyor ve pro sorgu başlatılıyor');
-    setIsLoadingParcel(true);
     setPropertyTypeModalVisible(false);
+    const loadSeq = await startProAnalysisLoad();
 
     const backendUrl = (API_URL || '').replace(/\/$/, '');
     
@@ -2871,16 +3557,15 @@ export default function Index() {
         Alert.alert(title, message, [{ text: 'Tamam' }]);
       }
     } finally {
-      console.log('[handlePropertyTypeSelect] finally: setIsLoadingParcel(false) çağrılıyor');
-      setIsLoadingParcel(false);
+      console.log('[handlePropertyTypeSelect] finally: finishProAnalysisLoad çağrılıyor');
+      finishProAnalysisLoad(loadSeq);
     }
-  }, [pendingTkgmData, pendingCoordinates, is3DMode, router, isAuthenticated, applyShareSelectionToRequest, clearPendingPropertyTypeState, finishProQueryNavigation]);
+  }, [pendingTkgmData, pendingCoordinates, is3DMode, router, isAuthenticated, applyShareSelectionToRequest, clearPendingPropertyTypeState, finishProQueryNavigation, startProAnalysisLoad, finishProAnalysisLoad]);
 
   const handleShowMyLocation = useCallback(async () => {
     suppressGhostMapPress();
     menuItemClickedRef.current = true;
     setLocationMenuVisible(false);
-    setRulerQuickMenuVisible(false);
     setHomeMapToolsSheetOpen(false);
 
     try {
@@ -2912,12 +3597,12 @@ export default function Index() {
   }, [suppressGhostMapPress, moveMapToUserLocation]);
 
   const handleGetDirections = () => {
+    suppressGhostMapPress();
     menuItemClickedRef.current = true;
     setLocationMenuVisible(false);
-    
-    // Aktif parseli belirle (pro modda parcelData, basit modda selectedParcelForModal)
-    const targetParcel = isProMode ? parcelData : (selectedParcelForModal || null);
-    
+
+    const targetParcel = streetViewParcel;
+
     if (!targetParcel?.geometry) {
       Alert.alert('Hata', 'Yön tarifi almak için önce bir parsel seçmelisiniz.');
       return;
@@ -2978,9 +3663,75 @@ export default function Index() {
     }
   }, [showEdgeMeasurements, parcelData, isProMode, selectedParcelForModal, simpleModeEdgeMeasureData, simpleModeParcels]);
 
+  const holdZoomEnabled = useMemo(
+    () =>
+      !measurement.isActive &&
+      !drawing.freehandActive &&
+      !drawing.shapeDrawingMode &&
+      !isMapInteractionLocked &&
+      !locationMenuVisible &&
+      !homeMapToolsSheetOpen &&
+      !isLoadingParcel &&
+      activeScreen === null &&
+      !screenshotPreviewMode,
+    [
+      measurement.isActive,
+      drawing.freehandActive,
+      drawing.shapeDrawingMode,
+      isMapInteractionLocked,
+      locationMenuVisible,
+      homeMapToolsSheetOpen,
+      isLoadingParcel,
+      activeScreen,
+      screenshotPreviewMode,
+    ],
+  );
+
+  useEffect(() => {
+    if (!holdZoomEnabled && holdMapToolsActive) {
+      closeHoldMapTools();
+    }
+  }, [closeHoldMapTools, holdMapToolsActive, holdZoomEnabled]);
+
+  const homeMapGesturesAllowed = !isMapInteractionLocked && !screenshotPreviewMode;
+  /** 3D yönetim paneli açıkken pitch panelden; parmak pitch pinch zoom ile çakışmasın. */
+  const homeMapFingerPitchEnabled = homeMapGesturesAllowed && !show3DSlider;
+  /** Tek parmak pan — zoom butonu basılıyken kapatılır; scrollEnabled buna bağlanmaz (pinch/rotate kesilmesin). */
+  const homeMapSinglePanEnabled = homeMapGesturesAllowed && !plusZoomMapScrollLocked;
+
+  const homeMapGestureSettings = useMemo(
+    () => ({
+      panEnabled: homeMapSinglePanEnabled,
+      pinchPanEnabled: homeMapGesturesAllowed,
+      pinchZoomEnabled: homeMapGesturesAllowed,
+      rotateEnabled: homeMapGesturesAllowed,
+      pitchEnabled: homeMapFingerPitchEnabled,
+      doubleTapToZoomInEnabled: homeMapGesturesAllowed,
+      doubleTouchToZoomOutEnabled: homeMapGesturesAllowed,
+      quickZoomEnabled: homeMapGesturesAllowed,
+      simultaneousRotateAndPinchZoomEnabled: true,
+    }),
+    [homeMapGesturesAllowed, homeMapSinglePanEnabled, homeMapFingerPitchEnabled],
+  );
+
+  useEffect(() => {
+    if (!holdMapToolsActive) {
+      stopMapToolsZoomChange();
+    }
+  }, [holdMapToolsActive, stopMapToolsZoomChange]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') {
+        stopMapToolsZoomChange();
+      }
+    });
+    return () => sub.remove();
+  }, [stopMapToolsZoomChange]);
+
   return (
     <SafeAreaView testID="main-safe-area" style={styles.container} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
+      <AppStatusBar />
       <View
         testID="header-container"
         style={[
@@ -3058,167 +3809,232 @@ export default function Index() {
         />
         <View testID="home-view" style={styles.homeContainer}>
           <View testID="map-view-container" style={styles.mapContainer}>
-            {(measurementMode || homeMapShapeDrawingMode || homeMapSelectedShapeId) && !shapeDrawingModalVisible ? (
-              <DrawingToolbox
-                visible
-                measurementMode={
-                  measurementMode
-                    ? measurementMode === 'ruler'
-                      ? 'distance'
-                      : measurementMode === 'area'
-                        ? 'area'
-                        : measurementMode === 'pin'
-                          ? 'pin'
-                          : measurementMode === 'text'
-                            ? 'text'
-                            : measurementMode === 'arrow'
-                              ? 'arrow'
-                              : null
-                    : null
-                }
-                shapeDrawingMode={measurementMode ? null : homeMapShapeDrawingMode}
-                outlineColor={homeMapSketchOutlineColor}
-                onOutlineColorChange={(hex) => {
-                  if (homeMapSelectedShapeId) {
-                    setHomeMapSketchShapes((prev) =>
-                      prev.map((s) => (s.id === homeMapSelectedShapeId ? { ...s, outlineColor: hex } : s))
-                    );
-                  } else {
-                    setHomeMapSketchOutlineColor(hex);
-                  }
-                }}
-                outlineWidth={homeMapSketchOutlineWidth}
-                onOutlineWidthChange={(w) => {
-                  if (homeMapSelectedShapeId) {
-                    setHomeMapSketchShapes((prev) =>
-                      prev.map((s) => (s.id === homeMapSelectedShapeId ? { ...s, outlineWidth: w } : s))
-                    );
-                  } else {
-                    setHomeMapSketchOutlineWidth(w);
-                  }
-                }}
-                fillColor={homeMapSketchFillColor}
-                onFillColorChange={(hex) => {
-                  if (homeMapSelectedShapeId) {
-                    setHomeMapSketchShapes((prev) =>
-                      prev.map((s) => (s.id === homeMapSelectedShapeId ? { ...s, fillColor: hex } : s))
-                    );
-                  } else {
-                    setHomeMapSketchFillColor(hex);
-                  }
-                }}
-                rulerColor={homeRulerColor}
-                onRulerColorChange={setHomeRulerColor}
-                areaColor={homeAreaColor}
-                onAreaColorChange={setHomeAreaColor}
-                annotationColor={homeAnnotationColor}
-                onAnnotationColorChange={setHomeAnnotationColor}
-                arrowFirstPoint={arrowFirstPoint}
-                onFinishMeasurement={finishPendingHomeMapMeasurement}
-                onClose={measurementMode ? handleCloseHomeMapToolbox : handleHomeDrawingToolboxClose}
-                topInset={insets.top}
-                selectedShape={!measurementMode ? homeMapSelectedShape : null}
-                onDeleteSelectedShape={
-                  !measurementMode && homeMapSelectedShapeId
-                    ? () => {
-                        setHomeMapSketchShapes((prev) => prev.filter((s) => s.id !== homeMapSelectedShapeId));
-                        setHomeMapSelectedShapeId(null);
-                      }
-                    : undefined
-                }
-                openTextBoxEditor={!measurementMode ? openTextBoxEditor : undefined}
-              />
-            ) : null}
-            {is3DMode && show3DSlider && (
-              <View testID="controls-wrapper" style={[styles.controlsLayoutWrapper, { bottom: 85 + insets.bottom }]} pointerEvents="box-none">
-                <View testID="map-navigation-controls" style={styles.mapControlsPanel} pointerEvents="auto">
-                  <View style={styles.mapControlsRow}>
-                    <View style={styles.mapControlSpacer} />
-                    <TouchableOpacity onPressIn={() => startZoomChange(1.0)} onPressOut={stopZoomChange} style={styles.mapControlButton}><Ionicons name="chevron-up" size={20} color="#3b82f6" /></TouchableOpacity>
-                    <View style={styles.mapControlSpacer} />
-                  </View>
-                  <View style={styles.mapControlsRow}>
-                    <TouchableOpacity onPressIn={() => startHeadingChange(15)} onPressOut={stopHeadingChange} style={styles.mapControlButton}>
-                      <Ionicons name="chevron-back" size={20} color="#3b82f6" />
-                    </TouchableOpacity>
-                    <View style={styles.mapControlSpacer} />
-                    <TouchableOpacity onPressIn={() => startHeadingChange(-15)} onPressOut={stopHeadingChange} style={styles.mapControlButton}>
-                      <Ionicons name="chevron-forward" size={20} color="#3b82f6" />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.mapControlsRow}>
-                    <View style={styles.mapControlSpacer} />
-                    <TouchableOpacity onPressIn={() => startZoomChange(-1.0)} onPressOut={stopZoomChange} style={styles.mapControlButton}><Ionicons name="chevron-down" size={20} color="#3b82f6" /></TouchableOpacity>
-                    <View style={styles.mapControlSpacer} />
-                  </View>
-                </View>
-                <View testID="pitch-controls" style={styles.pitchControlsContainer} pointerEvents="auto">
-                  <TouchableOpacity
-                    onPressIn={() => startPitchChange(5)}
-                    onPressOut={stopPitchChange}
-                    style={styles.pitchButton}
+            {is3DMode && (
+              <View
+                testID="controls-wrapper"
+                style={[styles.controlsLayoutWrapper, { bottom: HOME_MAP_3D_CONTROLS_BOTTOM + insets.bottom }]}
+                pointerEvents="box-none"
+              >
+                <View style={styles.threeDControlsOuter} pointerEvents="box-none">
+                  <Animated.View
+                    pointerEvents={show3DSlider ? 'none' : 'auto'}
+                    style={[
+                      styles.threeDControlTriggerWrap,
+                      {
+                        opacity: threeDPanelAnim.interpolate({
+                          inputRange: [0, 0.45, 1],
+                          outputRange: [1, 0, 0],
+                        }),
+                      },
+                    ]}
                   >
-                    <Ionicons name="add" size={20} color="#3b82f6" />
-                  </TouchableOpacity>
-                  <Text style={styles.pitchValue}>{Math.round(pitchValue)}°</Text>
-                  <TouchableOpacity
-                    onPressIn={() => startPitchChange(-5)}
-                    onPressOut={stopPitchChange}
-                    style={styles.pitchButton}
+                    <TouchableOpacity
+                      style={styles.threeDControlTrigger}
+                      onPress={() => setShow3DSlider(true)}
+                      activeOpacity={0.7}
+                      accessibilityLabel="3D yönetim panelini aç"
+                    >
+                      <View style={styles.zoomControlLineContainer}>
+                        <View style={styles.zoomControlLine} />
+                      </View>
+                    </TouchableOpacity>
+                  </Animated.View>
+                  <Animated.View
+                    pointerEvents={show3DSlider ? 'box-none' : 'none'}
+                    style={[
+                      styles.threeDControlsExpandedRow,
+                      {
+                        opacity: threeDPanelAnim,
+                        transform: [
+                          {
+                            translateX: threeDPanelAnim.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [THREE_D_CONTROLS_SLIDE_WIDTH, 0],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
                   >
-                    <Ionicons name="remove" size={20} color="#3b82f6" />
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.threeDControlCloseHandle}
+                      onPress={() => setShow3DSlider(false)}
+                      activeOpacity={0.7}
+                      accessibilityLabel="3D yönetim panelini kapat"
+                    >
+                      <PanelCollapseHandle />
+                    </TouchableOpacity>
+                    <View testID="map-navigation-controls" style={styles.mapControlsPanel} pointerEvents="auto">
+                      <View style={styles.mapControlsRow}>
+                        <View style={styles.mapControlSpacer} />
+                        <TouchableOpacity onPressIn={() => startZoomChange(1.0)} onPressOut={stopZoomChange} style={styles.mapControlButton}><Ionicons name="chevron-up" size={20} color="#3b82f6" /></TouchableOpacity>
+                        <View style={styles.mapControlSpacer} />
+                      </View>
+                      <View style={styles.mapControlsRow}>
+                        <TouchableOpacity onPressIn={() => startHeadingChange(15)} onPressOut={stopHeadingChange} style={styles.mapControlButton}>
+                          <Ionicons name="chevron-back" size={20} color="#3b82f6" />
+                        </TouchableOpacity>
+                        <View style={styles.mapControlSpacer} />
+                        <TouchableOpacity onPressIn={() => startHeadingChange(-15)} onPressOut={stopHeadingChange} style={styles.mapControlButton}>
+                          <Ionicons name="chevron-forward" size={20} color="#3b82f6" />
+                        </TouchableOpacity>
+                      </View>
+                      <View style={styles.mapControlsRow}>
+                        <View style={styles.mapControlSpacer} />
+                        <TouchableOpacity onPressIn={() => startZoomChange(-1.0)} onPressOut={stopZoomChange} style={styles.mapControlButton}><Ionicons name="chevron-down" size={20} color="#3b82f6" /></TouchableOpacity>
+                        <View style={styles.mapControlSpacer} />
+                      </View>
+                    </View>
+                    <View testID="pitch-controls" style={styles.pitchControlsContainer} pointerEvents="auto">
+                      <TouchableOpacity
+                        onPressIn={() => startPitchChange(5)}
+                        onPressOut={stopPitchChange}
+                        style={styles.pitchButton}
+                      >
+                        <Ionicons name="add" size={20} color="#3b82f6" />
+                      </TouchableOpacity>
+                      <Text style={styles.pitchValue}>{Math.round(pitchValue)}°</Text>
+                      <TouchableOpacity
+                        onPressIn={() => startPitchChange(-5)}
+                        onPressOut={stopPitchChange}
+                        style={styles.pitchButton}
+                      >
+                        <Ionicons name="remove" size={20} color="#3b82f6" />
+                      </TouchableOpacity>
+                    </View>
+                  </Animated.View>
                 </View>
               </View>
             )}
             {/* Zoom Controls */}
-            {!zoomControlsVisible ? (
-              <View style={styles.zoomControlsWrapper} pointerEvents="box-none">
-                <TouchableOpacity
-                  style={styles.zoomControlTrigger}
-                  onPress={() => setZoomControlsVisible(true)}
-                  activeOpacity={0.7}
+            <View style={styles.zoomControlsWrapper} pointerEvents="box-none">
+              <View style={styles.zoomControlsOuter} pointerEvents="box-none">
+                <Animated.View
+                  pointerEvents={holdMapToolsActive ? 'none' : 'auto'}
+                  style={[
+                    styles.zoomControlTriggerWrap,
+                    {
+                      opacity: zoomPanelAnim.interpolate({
+                        inputRange: [0, 0.45, 1],
+                        outputRange: [1, 0, 0],
+                      }),
+                    },
+                  ]}
                 >
-                  <View style={styles.zoomControlLineContainer}>
-                    <View style={styles.zoomControlLine} />
+                  <TouchableOpacity
+                    style={styles.zoomControlTrigger}
+                    onPress={openHoldMapTools}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.zoomControlLineContainer}>
+                      <View style={styles.zoomControlLine} />
+                    </View>
+                  </TouchableOpacity>
+                </Animated.View>
+                <Animated.View
+                  pointerEvents={holdMapToolsActive ? 'box-none' : 'none'}
+                  style={[
+                    styles.zoomControlsExpandedRow,
+                    {
+                      opacity: zoomPanelAnim,
+                      transform: [
+                        {
+                          translateX: zoomPanelAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [ZOOM_CONTROLS_SLIDE_WIDTH, 0],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <TouchableOpacity
+                    style={styles.zoomControlCloseHandle}
+                    onPress={closeHoldMapTools}
+                    activeOpacity={0.7}
+                  >
+                    <PanelCollapseHandle />
+                  </TouchableOpacity>
+                  <View style={styles.zoomControlsStack}>
+                    <Animated.View
+                      style={[
+                        styles.zoomQueryButtonsStack,
+                        {
+                          opacity: zoomQueryButtonsOpacity,
+                        },
+                      ]}
+                      pointerEvents={plusZoomUiDirection == null ? 'auto' : 'none'}
+                    >
+                      <TouchableOpacity
+                        style={styles.zoomQuerySquareButton}
+                        onPress={() => void runMapQueryAtPlusCenter('simple')}
+                        activeOpacity={0.75}
+                        accessibilityLabel="Basit sorgu"
+                      >
+                        <Text style={styles.zoomQuerySquareButtonText}>B</Text>
+                      </TouchableOpacity>
+                      {isAuthenticated ? (
+                        <TouchableOpacity
+                          style={styles.zoomQuerySquareButton}
+                          onPress={() => void runMapQueryAtPlusCenter('pro')}
+                          activeOpacity={0.75}
+                          accessibilityLabel="Pro sorgu"
+                        >
+                          <Text style={styles.zoomQuerySquareButtonText}>P</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </Animated.View>
+                    <View style={styles.zoomControlsPanel} pointerEvents="auto">
+                      <View style={styles.zoomControlButtonWrap}>
+                        <MapToolsZoomSpeedBar
+                          visible={plusZoomUiDirection === 1}
+                          mode="in"
+                          speedT={plusZoomSpeedT}
+                        />
+                        {holdMapToolsActive ? (
+                          <GestureDetector gesture={mapToolsZoomInGesture}>
+                            <View style={[styles.zoomControlButton, { marginBottom: 4 }]}>
+                              <Ionicons name="add" size={18} color="#3b82f6" />
+                            </View>
+                          </GestureDetector>
+                        ) : null}
+                      </View>
+                      <View style={styles.zoomControlButtonWrap}>
+                        <MapToolsZoomSpeedBar
+                          visible={plusZoomUiDirection === -1}
+                          mode="out"
+                          speedT={plusZoomSpeedT}
+                        />
+                        {holdMapToolsActive ? (
+                          <GestureDetector gesture={mapToolsZoomOutGesture}>
+                            <View style={styles.zoomControlButton}>
+                              <Ionicons name="remove" size={18} color="#3b82f6" />
+                            </View>
+                          </GestureDetector>
+                        ) : null}
+                      </View>
+                    </View>
                   </View>
-                </TouchableOpacity>
+                </Animated.View>
               </View>
-            ) : (
-              <View style={styles.zoomControlsWrapper} pointerEvents="auto">
-                <View style={styles.zoomControlAreaProtector} />
-                <TouchableOpacity
-                  style={styles.zoomControlCloseHandle}
-                  onPress={() => setZoomControlsVisible(false)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.zoomControlCloseLineContainer}>
-                    <View style={styles.zoomControlCloseLine} />
-                  </View>
-                </TouchableOpacity>
-                <View style={styles.zoomControlsPanel}>
-                    <TouchableOpacity
-                      style={[styles.zoomControlButton, { marginBottom: 4 }]}
-                      onPressIn={() => startZoomChange(1.0)}
-                      onPressOut={stopZoomChange}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="add" size={18} color="#3b82f6" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.zoomControlButton}
-                      onPressIn={() => startZoomChange(-1.0)}
-                      onPressOut={stopZoomChange}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="remove" size={18} color="#3b82f6" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
+            </View>
             {/* 3D editör açıkken ana haritayı unmount et: iki MapView aynı anda OOM (607MB alloc) yapıyor */}
-            {Mapbox && !shapeDrawingModalVisible ? (
-              <View style={{ flex: 1 }} collapsable={false}>
+            {Mapbox && !shapeDrawingModalVisible && isScreenFocused ? (
+              <View
+                style={{ flex: 1 }}
+                collapsable={false}
+                onLayout={(e) => {
+                  const { width, height } = e.nativeEvent.layout;
+                  if (width > 1 && height > 1) {
+                    const next = { width, height };
+                    homeMapViewportRef.current = next;
+                  }
+                }}
+              >
+              <MapHoldZoomLayer
+                sessionActive={holdMapToolsActive}
+                onZoomCenterReady={handleMapPlusCenterReady}
+              >
               <Mapbox.MapView 
                 key={mapViewKey} 
                 ref={mapRef} 
@@ -3230,19 +4046,24 @@ export default function Index() {
                 // Android: GLSurfaceView (surfaceView=true) dokunuşları RN üstündeki header/alt barın üstüne "alıp"
                 // ilk dokunuşun haritaya gitmesine yol açabiliyor. TextureView (surfaceView=false) normal view hiyerarşisinde kalır.
                 surfaceView={Platform.OS === 'android' ? false : undefined}
-                requestDisallowInterceptTouchEvent={Platform.OS === 'android'} 
+                scrollEnabled={homeMapGesturesAllowed}
+                zoomEnabled={homeMapGesturesAllowed}
+                pitchEnabled={homeMapFingerPitchEnabled}
+                rotateEnabled={homeMapGesturesAllowed}
+                gestureSettings={homeMapGestureSettings}
+                requestDisallowInterceptTouchEvent={false}
                 onPress={handleMapPress} 
                 onLongPress={(e: any) => { 
-                  if (measurementMode === 'area' && areaPoints.length >= 3) {
-                    finishAreaMeasurement();
+                  if (measurement.measurementMode === 'area' && measurement.measurementPoints.length >= 3) {
+                    measurement.finalizeAreaMeasurement();
                     return;
                   }
-                  if (homeMapShapeDrawingMode === 'polygon' && homeShapeDrawingPoints.length >= 3) {
-                    finalizePolygonOrLine('polygon');
+                  if (drawing.shapeDrawingMode === 'polygon' && drawing.shapeDrawingPoints.length >= 3) {
+                    drawing.finalizePolygonOrLine('polygon');
                     return;
                   }
-                  if (homeMapShapeDrawingMode === 'line' && homeShapeDrawingPoints.length >= 2) {
-                    finalizePolygonOrLine('line');
+                  if (drawing.shapeDrawingMode === 'line' && drawing.shapeDrawingPoints.length >= 2) {
+                    drawing.finalizePolygonOrLine('line');
                   }
                 }} 
                 onCameraChanged={onCameraChanged}
@@ -3251,24 +4072,13 @@ export default function Index() {
                 }}
                 onDidFinishLoadingMap={onHomeMapLoaded}
                 onDidFinishLoadingStyle={onHomeMapLoaded}
+                onMapIdle={onHomeMapIdle}
                 onMapLoadingError={(error: any) => {
                   console.error('[Mapbox] Yükleme hatası:', error);
                 }}
               >
                 <Mapbox.Camera ref={cameraRef} defaultSettings={mapDefaultSettings} maxZoomLevel={22} minZoomLevel={2} />
-                {is3DMode && RasterDemSource && Terrain && (<RasterDemSource id="mapbox-dem" url="mapbox://mapbox.mapbox-terrain-dem-v1" tileSize={512} maxZoomLevel={15}><Terrain style={{ exaggeration: 1.2 }} /></RasterDemSource>)}
-                {is3DMode && SkyLayer && (
-                  <SkyLayer
-                    id="sky-layer"
-                    style={{
-                      skyType: 'atmosphere',
-                      skyAtmosphereSun: [0.0, 0.0],
-                      skyAtmosphereSunIntensity: 15.0,
-                      skyAtmosphereColor: 'rgba(135, 206, 235, 1)',
-                      skyAtmosphereHaloColor: 'rgba(255, 223, 186, 0.5)',
-                    }}
-                  />
-                )}
+                {is3DMode ? <HomeIndexMap3DLayers idPrefix="home-index" /> : null}
                 
                 {adminBoundary?.geometry ? (
                   <Mapbox.ShapeSource
@@ -3298,7 +4108,7 @@ export default function Index() {
                       <Mapbox.ShapeSource
                         id="parcelSource"
                         shape={{ type: 'Feature', geometry: parcelData.geometry, properties: parcelData.properties || {} }}
-                        onPress={isMeasurementPlacementActive ? undefined : () => setParcelModalVisible(true)}
+                        onPress={isMapInteractionLocked ? undefined : () => setParcelModalVisible(true)}
                       >
                         {createParcelFillLayer(Mapbox, 'parcel', true, homeParcelPolygonDesign)}
                       </Mapbox.ShapeSource>
@@ -3311,6 +4121,8 @@ export default function Index() {
                           patternId={homeParcelPolygonDesign.patternId}
                           tintColor={homeParcelPolygonDesign.strokeColor}
                           patternSizeScale={homeParcelPolygonDesign.patternSizeScale}
+                          mapRef={mapRef}
+                          layoutTick={parcelPatternLayoutTick}
                         />
                       ) : null}
                       <Mapbox.ShapeSource
@@ -3335,7 +4147,7 @@ export default function Index() {
                         id={`parcelSource-${parcel.id}`}
                         shape={{ type: 'Feature', geometry: parcel.geometry, properties: parcel.properties || {} }}
                         onPress={
-                          isMeasurementPlacementActive
+                          isMapInteractionLocked
                             ? undefined
                             : () => {
                                 if (selectedParcelForModal?.id !== parcel.id) {
@@ -3362,6 +4174,8 @@ export default function Index() {
                           patternId={homeParcelPolygonDesign.patternId}
                           tintColor={homeParcelPolygonDesign.strokeColor}
                           patternSizeScale={homeParcelPolygonDesign.patternSizeScale}
+                          mapRef={mapRef}
+                          layoutTick={parcelPatternLayoutTick}
                         />
                       ) : null}
                       <Mapbox.ShapeSource
@@ -3378,77 +4192,115 @@ export default function Index() {
                     </React.Fragment>
                   );
                 })}
-                {measurementFeatures.map((f, i) => {
+                {measurement.measurementFeatures.map((f, i) => {
                   const isRuler = f.properties.measurementType === 'ruler';
-                  const isArea = f.properties.measurementType === 'area';
                   const hasLabel = f.properties.label && !f.properties.isTemporary;
                   const isLabelOnly = f.properties.isLabelOnly === true;
                   const mc = f.properties.measureColor;
-                  
+                  const measGid = f.properties.measurementGroupId;
+                  const hasMeasGroup = typeof measGid === 'string' && measGid.length > 0;
+                  const isMeasSelected = hasMeasGroup && selectedMeasurementGroupId === measGid;
+                  const pressMeasGroup =
+                    hasMeasGroup && !isMapInteractionLocked
+                      ? () => handleMeasurementGroupPress(String(measGid))
+                      : undefined;
+                  const lineColor = isValidMeasureColorHex(mc)
+                    ? mc
+                    : isRuler
+                      ? isMeasSelected
+                        ? '#93c5fd'
+                        : '#3B82F6'
+                      : isMeasSelected
+                        ? '#fcd34d'
+                        : '#FBBF24';
+                  const fillColor = isValidMeasureColorHex(mc) ? mc : '#FBBF24';
+
                   // Point feature (nokta noktaları)
                   if (f.geometry.type === 'Point' && !hasLabel && !isLabelOnly) {
                     return (
-                      <Mapbox.ShapeSource key={`meas-pt-${i}`} id={`meas-pt-${i}`} shape={f}>
-                        <Mapbox.CircleLayer 
-                          id={`meas-pt-layer-${i}`} 
-                          style={{ 
-                            circleRadius: 6, 
-                            circleColor: isArea ? (mc || '#FBBF24') : (mc || '#3B82F6')
-                          }} 
+                      <Mapbox.ShapeSource
+                        key={`meas-pt-${i}`}
+                        id={`meas-pt-${i}`}
+                        shape={f}
+                        onPress={pressMeasGroup}
+                      >
+                        <Mapbox.CircleLayer
+                          id={`meas-pt-layer-${i}`}
+                          style={{
+                            circleRadius: isMeasSelected ? 9 : 6,
+                            circleColor: lineColor,
+                            circleStrokeWidth: isMeasSelected ? 2 : 0,
+                            circleStrokeColor: '#ffffff',
+                          }}
                         />
                       </Mapbox.ShapeSource>
                     );
                   }
-                  
+
                   // LineString feature (mesafe çizgileri)
                   if (f.geometry.type === 'LineString') {
                     return (
-                      <Mapbox.ShapeSource key={`meas-ln-${i}`} id={`meas-ln-${i}`} shape={f}>
-                        <Mapbox.LineLayer 
-                          id={`meas-ln-layer-${i}`} 
-                          style={{ 
-                            lineColor: isRuler ? (mc || '#3B82F6') : (mc || '#FBBF24'), 
-                            lineWidth: 3 
-                          }} 
+                      <Mapbox.ShapeSource
+                        key={`meas-ln-${i}`}
+                        id={`meas-ln-${i}`}
+                        shape={f}
+                        onPress={pressMeasGroup}
+                      >
+                        <Mapbox.LineLayer
+                          id={`meas-ln-layer-${i}`}
+                          style={{
+                            lineColor,
+                            lineWidth: isMeasSelected ? 5 : 3,
+                          }}
                         />
                       </Mapbox.ShapeSource>
                     );
                   }
-                  
+
                   // Polygon feature (alan polygon'ları)
                   if (f.geometry.type === 'Polygon') {
                     return (
-                      <Mapbox.ShapeSource key={`meas-pg-${i}`} id={`meas-pg-${i}`} shape={f}>
-                        <Mapbox.FillLayer 
-                          id={`meas-pg-fill-${i}`} 
-                          style={{ 
-                            fillColor: mc || '#FBBF24', 
-                            fillOpacity: 0.3 
-                          }} 
+                      <Mapbox.ShapeSource
+                        key={`meas-pg-${i}`}
+                        id={`meas-pg-${i}`}
+                        shape={f}
+                        onPress={pressMeasGroup}
+                      >
+                        <Mapbox.FillLayer
+                          id={`meas-pg-fill-${i}`}
+                          style={{
+                            fillColor,
+                            fillOpacity: isMeasSelected ? 0.42 : 0.3,
+                          }}
                         />
-                        <Mapbox.LineLayer 
-                          id={`meas-pg-stroke-${i}`} 
-                          style={{ 
-                            lineColor: mc || '#FBBF24', 
-                            lineWidth: 2 
-                          }} 
+                        <Mapbox.LineLayer
+                          id={`meas-pg-stroke-${i}`}
+                          style={{
+                            lineColor,
+                            lineWidth: isMeasSelected ? 4 : 2,
+                          }}
                         />
                       </Mapbox.ShapeSource>
                     );
                   }
-                  
+
                   // Label point (sadece label için)
                   if (f.geometry.type === 'Point' && hasLabel && isLabelOnly) {
                     return (
-                      <Mapbox.ShapeSource key={`meas-label-${i}`} id={`meas-label-${i}`} shape={f}>
+                      <Mapbox.ShapeSource
+                        key={`meas-label-${i}`}
+                        id={`meas-label-${i}`}
+                        shape={f}
+                        onPress={pressMeasGroup}
+                      >
                         <Mapbox.SymbolLayer
                           id={`meas-label-layer-${i}`}
                           style={{
                             textField: ['get', 'label'],
-                            textSize: 14,
-                            textColor: '#ffffff',
-                            textHaloColor: '#000000',
-                            textHaloWidth: 2,
+                            textSize: isMeasSelected ? 14 : 13,
+                            textColor: isValidMeasureColorHex(mc) ? mc : isRuler ? '#bfdbfe' : '#fef08a',
+                            textHaloColor: '#020617',
+                            textHaloWidth: isMeasSelected ? 3 : 2.5,
                             textAnchor: 'center',
                             textAllowOverlap: true,
                           }}
@@ -3456,108 +4308,9 @@ export default function Index() {
                       </Mapbox.ShapeSource>
                     );
                   }
-                  
+
                   return null;
                 })}
-                {/* Annotation features: pin, text, arrow */}
-                {annotationFeatures.map((f, i) => {
-                  const aType = f.properties.annotationType;
-                  const removeAnnotation = (id: string) => {
-                    Alert.alert('Sil', 'Bu işareti silmek istiyor musunuz?', [
-                      { text: 'İptal', style: 'cancel' },
-                      { text: 'Sil', style: 'destructive', onPress: () => {
-                        const baseId = id.replace(/-head$/, '');
-                        setAnnotationFeatures(prev => prev.filter(af => af.properties.id !== baseId && af.properties.id !== baseId + '-head'));
-                      }}
-                    ]);
-                  };
-                  if (aType === 'pin') {
-                    return (
-                      <Mapbox.ShapeSource
-                        key={`ann-pin-${i}`}
-                        id={`ann-pin-${i}`}
-                        shape={f}
-                        onPress={isMeasurementPlacementActive ? undefined : () => removeAnnotation(f.properties.id)}
-                      >
-                        <Mapbox.CircleLayer
-                          id={`ann-pin-outer-${i}`}
-                          style={{ circleRadius: 12, circleColor: f.properties.color || '#ef4444', circleOpacity: 0.3 }}
-                        />
-                        <Mapbox.CircleLayer
-                          id={`ann-pin-inner-${i}`}
-                          style={{ circleRadius: 6, circleColor: f.properties.color || '#ef4444', circleStrokeWidth: 2, circleStrokeColor: '#ffffff' }}
-                        />
-                      </Mapbox.ShapeSource>
-                    );
-                  }
-                  if (aType === 'text') {
-                    const txtCol = f.properties.color || '#ffffff';
-                    return (
-                      <Mapbox.ShapeSource
-                        key={`ann-txt-${i}`}
-                        id={`ann-txt-${i}`}
-                        shape={f}
-                        onPress={isMeasurementPlacementActive ? undefined : () => removeAnnotation(f.properties.id)}
-                      >
-                        <Mapbox.SymbolLayer
-                          id={`ann-txt-layer-${i}`}
-                          style={{
-                            textField: f.properties.label || '',
-                            textSize: 14,
-                            textColor: txtCol,
-                            textHaloColor: '#1e293b',
-                            textHaloWidth: 2,
-                            textAnchor: 'center',
-                            textAllowOverlap: true,
-                            textFont: ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-                          }}
-                        />
-                      </Mapbox.ShapeSource>
-                    );
-                  }
-                  if (aType === 'arrow') {
-                    return (
-                      <Mapbox.ShapeSource
-                        key={`ann-arrow-${i}`}
-                        id={`ann-arrow-${i}`}
-                        shape={f}
-                        onPress={isMeasurementPlacementActive ? undefined : () => removeAnnotation(f.properties.id)}
-                      >
-                        <Mapbox.LineLayer
-                          id={`ann-arrow-ln-${i}`}
-                          style={{ lineColor: f.properties.color || '#ef4444', lineWidth: 3 }}
-                        />
-                      </Mapbox.ShapeSource>
-                    );
-                  }
-                  if (aType === 'arrowHead') {
-                    return (
-                      <Mapbox.ShapeSource
-                        key={`ann-arrowh-${i}`}
-                        id={`ann-arrowh-${i}`}
-                        shape={f}
-                        onPress={isMeasurementPlacementActive ? undefined : () => removeAnnotation(f.properties.id)}
-                      >
-                        <Mapbox.FillLayer
-                          id={`ann-arrowh-fill-${i}`}
-                          style={{ fillColor: f.properties.color || '#ef4444', fillOpacity: 1 }}
-                        />
-                      </Mapbox.ShapeSource>
-                    );
-                  }
-                  return null;
-                })}
-                {arrowFirstPoint && (
-                  <Mapbox.ShapeSource
-                    id="ann-arrow-start"
-                    shape={{ type: 'Feature', geometry: { type: 'Point', coordinates: arrowFirstPoint }, properties: {} }}
-                  >
-                    <Mapbox.CircleLayer
-                      id="ann-arrow-start-layer"
-                      style={{ circleRadius: 8, circleColor: homeAnnotationColor, circleOpacity: 0.5, circleStrokeWidth: 2, circleStrokeColor: homeAnnotationColor }}
-                    />
-                  </Mapbox.ShapeSource>
-                )}
                 {showEdgeMeasurements && edgeMeasurementFeatures.map((f, i) => {
                   const color = f.properties.color || '#2563eb';
                   const isBBox = f.properties.kind === 'bbox';
@@ -3596,61 +4349,12 @@ export default function Index() {
                     <Mapbox.CircleLayer id="userLocationCircle" style={{ circleRadius: 8, circleColor: '#3B82F6', circleStrokeWidth: 2, circleStrokeColor: '#ffffff' }} />
                   </Mapbox.ShapeSource>
                 )}
-                {((homeMapShapeDrawingMode === 'line' || homeMapShapeDrawingMode === 'polygon') &&
-                  homeShapeDrawingPoints.length >= 2) ? (
-                  <Mapbox.ShapeSource
-                    id="home-sketch-polyline-preview"
-                    shape={{
-                      type: 'Feature',
-                      geometry: { type: 'LineString', coordinates: homeShapeDrawingPoints },
-                      properties: {},
-                    }}
-                  >
-                    <Mapbox.LineLayer
-                      id="home-sketch-polyline-preview-ln"
-                      style={{
-                        lineColor: '#3b82f6',
-                        lineWidth: 2.5,
-                        lineOpacity: 0.9,
-                        lineDasharray: [1.2, 1.2],
-                      }}
-                    />
-                  </Mapbox.ShapeSource>
-                ) : null}
-                {((homeMapShapeDrawingMode === 'line' || homeMapShapeDrawingMode === 'polygon') &&
-                  homeShapeDrawingPoints.length > 0) ? (
-                  <Mapbox.ShapeSource
-                    id="home-sketch-vertex-points"
-                    shape={{
-                      type: 'FeatureCollection',
-                      features: homeShapeDrawingPoints.map((coord, i) => ({
-                        type: 'Feature' as const,
-                        id: `v-${i}`,
-                        geometry: { type: 'Point' as const, coordinates: coord },
-                        properties: {},
-                      })),
-                    }}
-                  >
-                    <Mapbox.CircleLayer
-                      id="home-sketch-vertex-pt"
-                      style={{
-                        circleRadius: 7,
-                        circleColor: '#3b82f6',
-                        circleStrokeWidth: 2,
-                        circleStrokeColor: '#ffffff',
-                      }}
-                    />
-                  </Mapbox.ShapeSource>
-                ) : null}
-                <ShapesLayer
-                  shapes={homeMapSketchShapes}
-                  selectedShapeId={homeMapSelectedShapeId}
-                  onShapePress={(id) => {
-                    if (homeMapShapeDrawingMode === 'pen') return;
-                    setHomeMapSelectedShapeId((prev) => (prev === id ? null : id));
-                  }}
+                <ShapeDrawingMapLayers
+                  session={drawing}
                   Mapbox={Mapbox}
-                  interactionLocked={isMeasurementPlacementActive || homeMapShapeDrawingMode === 'pen'}
+                  idPrefix="home-sketch"
+                  interactionLocked={isMapInteractionLocked}
+                  onHandlePress={drawing.handleHandlePress}
                 />
                 {/* Parsel etiketleri en üstte — desen gliflerinin üzerinde */}
                 {isProMode &&
@@ -3665,6 +4369,7 @@ export default function Index() {
                         idPrefix="parcel"
                         centroid={centroid}
                         labelText={labelText}
+                        is3DMode={is3DMode}
                       />
                     );
                   })()}
@@ -3681,62 +4386,26 @@ export default function Index() {
                         idPrefix={`parcel-${parcel.id}`}
                         centroid={centroid}
                         labelText={labelText}
+                        is3DMode={is3DMode}
                       />
                     );
                   })}
               </Mapbox.MapView>
-              <ScreenShapesOverlay
-                shapes={homeMapSketchShapes}
-                selectedShapeId={homeMapSelectedShapeId}
-                onShapePress={(id) => {
-                  if (homeMapShapeDrawingMode === 'pen') return;
-                  setHomeMapSelectedShapeId((prev) => (prev === id ? null : id));
-                }}
-              />
-              <TextBoxMapOverlay
-                shapes={homeMapSketchShapes}
-                mapRef={mapRef}
-                layoutTick={homeTextBoxLayoutTick}
-                selectedShapeId={homeMapSelectedShapeId}
-                onShapePress={(id) => {
-                  if (homeMapShapeDrawingMode === 'pen') return;
-                  setHomeMapSelectedShapeId((prev) => (prev === id ? null : id));
-                }}
-                enabled={homeMapShapeDrawingMode !== 'pen' && !measurementMode}
-              />
-              <FreehandDrawOverlay
-                active={homeMapShapeDrawingMode === 'pen'}
-                mode="pen"
-                drawSurface={homeMapDrawSurface}
-                mapRef={mapRef}
-                onCommitMap={handleHomeSketchCommitMap}
-                onCommitScreen={handleHomeSketchCommitScreen}
-                strokePreviewColor={homeMapSketchOutlineColor}
-                strokeWidth={homeMapSketchOutlineWidth}
-              />
-              {homeMapShapeDrawingMode && !measurementMode ? (
-                <View
-                  pointerEvents="box-none"
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    bottom: 88 + insets.bottom,
-                    zIndex: 1240,
-                  }}
-                >
-                  <ModeInfoBar
-                    visible
-                    shapeDrawingMode={homeMapShapeDrawingMode}
-                    measurementMode={null}
-                    parcelSelectMode={false}
-                    resizeMode={false}
-                    rotationMode={false}
-                    drawSurface={homeMapDrawSurface}
-                    onToggleDrawSurface={() => setHomeMapDrawSurface((s) => (s === 'map' ? 'screen' : 'map'))}
-                    showDrawSurfaceToggle={homeMapShapeDrawingMode === 'pen'}
-                  />
-                </View>
+              </MapHoldZoomLayer>
+              {!shapeDrawingModalVisible ? (
+                <ShapeDrawingUiOverlays
+                  session={drawing}
+                  mapRef={mapRef}
+                  insetsBottom={insets.bottom}
+                  insetsTop={insets.top}
+                  mapInteractionLocked={isMapInteractionLocked}
+                  measurementActive={measurement.isActive}
+                  onFinishMeasurement={measurement.finishActiveMeasurement}
+                  measurementFinishLabel={measurement.measurementFinishBarLabel}
+                  finishBarPlacement="top"
+                  finishBarTopOffset={8}
+                  finishBarLabel="Bitir"
+                />
               ) : null}
               </View>
             ) : (
@@ -3877,7 +4546,7 @@ export default function Index() {
                       ]}
                       onPress={handleToggleScreenshotPricePanel}
                       activeOpacity={0.85}
-                      disabled={!hasActiveParcel}
+                      disabled={visibleParcelCount === 0}
                     >
                       <Ionicons name="pricetag" size={18} color="#fff" style={{ marginRight: 6 }} />
                       <Text style={[styles.screenshotPriceActionButtonText, !canOpenPricePanel && styles.screenshotActionDisabledText]}>Fiyat Gir</Text>
@@ -3950,24 +4619,19 @@ export default function Index() {
             )}
           </View>
         </View>
-        <ProModeThreeLoader visible={(() => {
-          const shouldShow = !!(isProMode && isLoadingParcel && !proQueryConfirmVisible && !propertyTypeModalVisible);
-          if (isProMode) {
-            console.log('[ProModeThreeLoader] visible kontrolü:', {
-              isProMode,
-              isLoadingParcel,
-              proQueryConfirmVisible,
-              propertyTypeModalVisible,
-              shouldShow
-            });
-          }
-          return shouldShow;
-        })()} />
         <ParcelSearchModal
           visible={activeScreen === 'ada-parsel'}
+          initialTab={parcelSearchInitialTab}
+          incomingFormSeed={incomingParcelFormSeed}
+          onIncomingFormSeedConsumed={() => setIncomingParcelFormSeed(null)}
           onClose={handleCloseForm}
           onSubmit={handleAdaParselSubmit}
+          onProSubmit={(payload, options) => handleAdaParselSubmit(payload, { forcePro: true, ...options })}
           onHierarchySelect={handleLocationHierarchySelect}
+          onBeforeSavedQueryRun={() => {
+            if (isProMode) setIsProMode(false);
+            setQueryModeChoice('simple');
+          }}
         />
         <MyQueriesModal
           visible={myQueriesVisible}
@@ -3993,99 +4657,13 @@ export default function Index() {
         <>
         <View
           testID="bottom-pill-bar-container"
+          pointerEvents="box-none"
           style={[styles.bottomFloatingContainer, styles.bottomFloatingContainerAndroid, { bottom: 20 + insets.bottom }]}
         >
-          {rulerQuickMenuVisible && (
-            <View
-              style={{ position: 'absolute', bottom: 60, left: getSubMenuLeft(rulerButtonLayout, rulerQuickMenuWidth) }}
-              pointerEvents="auto"
-              onStartShouldSetResponder={() => true}
-            >
-              <View
-                testID="ruler-quick-menu"
-                style={[styles.rulerSubMenu, !isProMode && { borderColor: '#ffffff' }, { minWidth: 200 }]}
-                pointerEvents="auto"
-                onLayout={(e) => {
-                  const w = e?.nativeEvent?.layout?.width;
-                  if (typeof w === 'number' && w > 0) setRulerQuickMenuWidth(w);
-                }}
-              >
-                <TouchableOpacity
-                  testID="ruler-quick-pen-opt"
-                  style={[styles.rulerSubMenuItem, homeMapShapeDrawingMode === 'pen' && styles.rulerSubMenuItemActive]}
-                  onPress={() => toggleHomeMapSketchTool()}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons name="brush-outline" size={18} color={homeMapShapeDrawingMode === 'pen' ? '#3b82f6' : '#fff'} />
-                    <Text style={[styles.rulerSubMenuText, homeMapShapeDrawingMode === 'pen' && { color: '#3b82f6' }]}>Kalem çizimi</Text>
-                  </View>
-                </TouchableOpacity>
-                <View style={[styles.rulerSubMenuDivider, !isProMode && styles.rulerSubMenuDividerSimple]} />
-                <TouchableOpacity
-                  testID="ruler-quick-draw-surface-map"
-                  style={styles.rulerSubMenuItem}
-                  onPress={() => {
-                    suppressGhostMapPress();
-                    menuItemClickedRef.current = true;
-                    setHomeMapDrawSurface('map');
-                    setRulerQuickMenuVisible(false);
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <MaterialCommunityIcons name="map-outline" size={18} color={homeMapDrawSurface === 'map' ? '#3b82f6' : '#fff'} />
-                    <Text style={[styles.rulerSubMenuText, homeMapDrawSurface === 'map' && { color: '#3b82f6' }]}>Haritaya çiz</Text>
-                  </View>
-                </TouchableOpacity>
-                <View style={[styles.rulerSubMenuDivider, !isProMode && styles.rulerSubMenuDividerSimple]} />
-                <TouchableOpacity
-                  testID="ruler-quick-draw-surface-screen"
-                  style={styles.rulerSubMenuItem}
-                  onPress={() => {
-                    suppressGhostMapPress();
-                    menuItemClickedRef.current = true;
-                    setHomeMapDrawSurface('screen');
-                    setRulerQuickMenuVisible(false);
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <MaterialCommunityIcons name="cellphone-screenshot" size={18} color={homeMapDrawSurface === 'screen' ? '#3b82f6' : '#fff'} />
-                    <Text style={[styles.rulerSubMenuText, homeMapDrawSurface === 'screen' && { color: '#3b82f6' }]}>Ekrana çiz</Text>
-                  </View>
-                </TouchableOpacity>
-                <View style={[styles.rulerSubMenuDivider, !isProMode && styles.rulerSubMenuDividerSimple]} />
-                <TouchableOpacity
-                  testID="ruler-quick-clear-sketch-opt"
-                  style={styles.rulerSubMenuItem}
-                  onPress={clearHomeMapSketchDrawings}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <MaterialCommunityIcons name="draw" size={18} color="#f87171" />
-                    <Text style={[styles.rulerSubMenuText, { color: '#f87171' }]}>Çizimleri temizle</Text>
-                  </View>
-                </TouchableOpacity>
-                <View style={[styles.rulerSubMenuDivider, !isProMode && styles.rulerSubMenuDividerSimple]} />
-                <TouchableOpacity
-                  testID="ruler-quick-delete-opt"
-                  style={styles.rulerSubMenuItem}
-                  onPress={() => {
-                    suppressGhostMapPress();
-                    menuItemClickedRef.current = true;
-                    clearMeasurementDrawings();
-                    setRulerQuickMenuVisible(false);
-                    setLocationMenuVisible(false);
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <MaterialCommunityIcons name="trash-can-outline" size={18} color="#fff" />
-                    <Text style={styles.rulerSubMenuText}>Ölçümleri sil</Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
+          <View pointerEvents="box-none" style={styles.bottomMenuColumn}>
           {locationMenuVisible && (
             <View 
-              style={{ position: 'absolute', bottom: 60, left: getSubMenuLeft(locationButtonLayout, locationMenuWidth) }}
+              style={{ position: 'absolute', bottom: 88, left: getSubMenuLeft(locationButtonLayout, locationMenuWidth) }}
               pointerEvents="auto"
               onStartShouldSetResponder={() => true}
             >
@@ -4135,152 +4713,96 @@ export default function Index() {
                     <Text style={styles.locationSubMenuText}>Konumum</Text>
                   </View>
                 </TouchableOpacity>
-                <View style={[styles.locationSubMenuDivider, !isProMode && styles.locationSubMenuDividerSimple]} />
-                <TouchableOpacity 
-                  testID="street-view-opt" 
-                  style={styles.locationSubMenuItem} 
-                  onPress={() => {
-                    menuItemClickedRef.current = true;
-                    setLocationMenuVisible(false);
-                    handleStreetViewPress();
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <MaterialCommunityIcons name="google-street-view" size={18} color="#fff" />
-                    <Text style={styles.locationSubMenuText}>Sokak Görüntüsü</Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-          {infoMenuVisible && (
-            <View 
-              style={{ position: 'absolute', bottom: 60, left: getSubMenuLeft(infoButtonLayout, infoMenuWidth) }}
-              pointerEvents="auto"
-              onStartShouldSetResponder={() => true}
-            >
-              <View
-                testID="info-sub-menu"
-                style={[styles.infoSubMenu, !isProMode && { borderColor: '#ffffff' }]}
-                pointerEvents="auto"
-                onLayout={(e) => {
-                  const w = e?.nativeEvent?.layout?.width;
-                  if (typeof w === 'number' && w > 0) setInfoMenuWidth(w);
-                }}
-              >
-                <TouchableOpacity
-                  testID="pro-mode-opt"
-                  style={[
-                    styles.infoSubMenuItem,
-                    queryModeChoice === 'pro' && styles.infoSubMenuItemActive,
-                    !isAuthenticated && { opacity: 0.4 },
-                  ]}
-                  disabled={!isAuthenticated}
-                  onPress={() => {
-                    suppressGhostMapPress();
-                    menuItemClickedRef.current = true;
-                    if (queryModeChoice === 'pro' && infoModeActive) {
-                      setInfoModeActive(false);
-                    } else {
-                      setQueryModeChoice('pro');
-                      setIsProMode(true);
-                      setInfoModeActive(true);
-                    }
-                    setInfoMenuVisible(false);
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons
-                      name="analytics"
-                      size={18}
-                      color={queryModeChoice === 'pro' ? '#3b82f6' : '#fff'}
-                    />
-                    <Text
-                      style={[
-                        styles.infoSubMenuText,
-                        queryModeChoice === 'pro' && styles.infoSubMenuTextActive,
-                      ]}
-                    >
-                      ProMod
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-                <View style={[styles.infoSubMenuDivider, !isProMode && styles.infoSubMenuDividerSimple]} />
-                <TouchableOpacity
-                  testID="basit-mode-opt"
-                  style={[
-                    styles.infoSubMenuItem,
-                    queryModeChoice === 'simple' && styles.infoSubMenuItemActive,
-                  ]}
-                  onPress={() => {
-                    suppressGhostMapPress();
-                    menuItemClickedRef.current = true;
-                    if (queryModeChoice === 'simple' && infoModeActive) {
-                      setInfoModeActive(false);
-                    } else {
-                      setQueryModeChoice('simple');
-                      setIsProMode(false);
-                      setInfoModeActive(true);
-                    }
-                    setInfoMenuVisible(false);
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons
-                      name="leaf"
-                      size={18}
-                      color={queryModeChoice === 'simple' ? '#3b82f6' : '#fff'}
-                    />
-                    <Text
-                      style={[
-                        styles.infoSubMenuText,
-                        queryModeChoice === 'simple' && styles.infoSubMenuTextActive,
-                      ]}
-                    >
-                      BasitMod
-                    </Text>
-                  </View>
-                </TouchableOpacity>
               </View>
             </View>
           )}
           <View
+            testID="bottom-toolbar-stack"
+            style={[styles.bottomToolbarStack, !isProMode && { borderColor: '#ffffff' }]}
+          >
+            <View testID="query-action-bar" style={styles.queryActionBar}>
+              <TouchableOpacity
+                testID="query-action-smart-query"
+                style={[styles.queryActionItem, styles.queryActionItemWide]}
+                onPress={handleQueryActionSmartQuery}
+              >
+                <Text style={styles.queryActionText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+                  Akıllı Sorgu
+                </Text>
+              </TouchableOpacity>
+              <View style={[styles.queryActionDivider, !isProMode && styles.queryActionDividerSimple]} />
+              <View style={[styles.queryActionItem, styles.queryActionItemSimple]}>
+                <TouchableOpacity
+                  testID="query-action-simple"
+                  style={styles.queryActionSimpleMain}
+                  onPress={handleQueryActionSimple}
+                >
+                  <Text
+                    style={[
+                      styles.queryActionText,
+                      queryModeChoice === 'simple' && infoModeActive && styles.queryActionTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Basit Sorgu
+                  </Text>
+                  {queryModeChoice === 'simple' && infoModeActive ? (
+                    <View style={styles.queryActionUnderline} pointerEvents="none" />
+                  ) : null}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="query-action-my-queries"
+                  style={styles.queryActionMenuIconBtn}
+                  onPress={handleOpenMyQueriesFromActionBar}
+                  accessibilityLabel="Sorgularım"
+                  hitSlop={{ top: 6, bottom: 6, left: 2, right: 4 }}
+                >
+                  <Ionicons name="menu" size={17} color="#fff" />
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.queryActionDivider, !isProMode && styles.queryActionDividerSimple]} />
+              <TouchableOpacity
+                testID="query-action-pro"
+                style={[styles.queryActionItem, !isAuthenticated && { opacity: 0.45 }]}
+                disabled={!isAuthenticated}
+                onPress={handleQueryActionPro}
+              >
+                <Text
+                  style={[
+                    styles.queryActionText,
+                    queryModeChoice === 'pro' && infoModeActive && styles.queryActionTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  Pro Sorgu
+                </Text>
+                {queryModeChoice === 'pro' && infoModeActive ? (
+                  <View style={styles.queryActionUnderline} />
+                ) : null}
+              </TouchableOpacity>
+            </View>
+          <View
             testID="bottom-pill-bar"
-            style={[styles.pillBar, !isProMode && { borderColor: '#ffffff' }]}
+            style={[styles.pillBar, styles.pillBarStacked, !isProMode && { borderColor: '#ffffff' }]}
             onLayout={(e) => {
               const { x, width } = e?.nativeEvent?.layout || {};
               if (typeof x === 'number' && typeof width === 'number') setPillBarLayout({ x, width });
             }}
-          >
+            >
             <TouchableOpacity
               testID="ruler-button"
               onLayout={(e) => {
                 const { x, width } = e?.nativeEvent?.layout || {};
                 if (typeof x === 'number' && typeof width === 'number') setRulerButtonLayout({ x, width });
               }}
-              delayLongPress={320}
-              onLongPress={() => {
-                rulerLongPressTriggeredRef.current = true;
-                setRulerQuickMenuVisible(true);
-                setHomeMapToolsSheetOpen(false);
-                setLocationMenuVisible(false);
-                setInfoMenuVisible(false);
-                setShow3DSlider(false);
-              }}
               onPress={() => {
-                if (rulerLongPressTriggeredRef.current) {
-                  rulerLongPressTriggeredRef.current = false;
-                  return;
-                }
-                setRulerQuickMenuVisible(false);
                 setHomeMapToolsSheetOpen(!homeMapToolsSheetOpen);
                 if (!homeMapToolsSheetOpen) {
                   setLocationMenuVisible(false);
-                  setInfoMenuVisible(false);
                   setShow3DSlider(false);
                 }
               }}
-              style={[styles.pillButton, getButtonActiveStyle('ruler')]}
+              style={[styles.pillButton, styles.pillButtonEven, getButtonActiveStyle('ruler')]}
             >
               <MaterialCommunityIcons
                 name="ruler"
@@ -4288,7 +4810,6 @@ export default function Index() {
                 color="#fff"
               />
             </TouchableOpacity>
-            <View style={[styles.pillDivider, !isProMode && styles.pillDividerSimple]} />
             <TouchableOpacity
               testID="location-tools-button"
               onLayout={(e) => {
@@ -4296,7 +4817,7 @@ export default function Index() {
                 if (typeof x === 'number' && typeof width === 'number') setLocationButtonLayout({ x, width });
               }}
               onPress={handleLocationButtonPress}
-              style={[styles.pillButton, getButtonActiveStyle('location')]}
+              style={[styles.pillButton, styles.pillButtonEven, getButtonActiveStyle('location')]}
             >
               <Ionicons
                 name="locate"
@@ -4304,99 +4825,77 @@ export default function Index() {
                 color="#fff"
               />
             </TouchableOpacity>
-            <View style={[styles.pillDivider, !isProMode && styles.pillDividerSimple]} />
-            <TouchableOpacity testID="refresh-button" onPress={handleRefresh} style={styles.pillButton}>
+            <TouchableOpacity testID="refresh-button" onPress={handleRefresh} style={[styles.pillButton, styles.pillButtonEven]}>
               <Ionicons name="refresh" size={18} color="#fff" />
             </TouchableOpacity>
-            <View style={[styles.pillDivider, !isProMode && styles.pillDividerSimple]} />
             <TouchableOpacity
               testID="3d-building-button"
               disabled={!isAuthenticated}
               onPress={() => {
                 menuItemClickedRef.current = true;
                 setHomeMapToolsSheetOpen(false);
-                setRulerQuickMenuVisible(false);
                 setLocationMenuVisible(false);
-                setInfoMenuVisible(false);
                 setShow3DSlider(false);
                 openModelEditorOrRequireAuth();
               }}
-              style={[styles.pillButton, !isAuthenticated && { opacity: 0.4 }]}
+              style={[styles.pillButton, styles.pillButtonEven, !isAuthenticated && { opacity: 0.4 }]}
             >
               <MaterialCommunityIcons name="home-group" size={18} color="#fff" />
             </TouchableOpacity>
-            <View style={[styles.pillDivider, !isProMode && styles.pillDividerSimple]} />
-            <TouchableOpacity testID="camera-share-button" onPress={handleCameraPress} style={styles.pillButton}>
+            <TouchableOpacity testID="camera-share-button" onPress={handleCameraPress} style={[styles.pillButton, styles.pillButtonEven]}>
               <Ionicons name="camera" size={18} color="#fff" />
             </TouchableOpacity>
-            <View style={[styles.pillDivider, !isProMode && styles.pillDividerSimple]} />
             <TouchableOpacity 
               testID="3d-mode-button" 
               onPress={() => { 
                 menuItemClickedRef.current = true;
                 setHomeMapToolsSheetOpen(false);
-                setRulerQuickMenuVisible(false);
                 setLocationMenuVisible(false);
-                setInfoMenuVisible(false);
                 // "Yön ve açı" paneli açıksa kapat
                 if (show3DSlider) setShow3DSlider(false);
                 // Dağlar: tek tıkla terrain aç/kapat
                 toggle3DMode();
               }} 
-              style={[styles.pillButton, getButtonActiveStyle('3d')]}
+              style={[styles.pillButton, styles.pillButtonEven, getButtonActiveStyle('3d')]}
             >
-              <MaterialCommunityIcons
-                name="terrain"
-                size={18}
-                color="#fff"
-              />
+              <Text style={styles.pillButton3dLabel}>3D</Text>
             </TouchableOpacity>
-            <View style={[styles.pillDivider, !isProMode && styles.pillDividerSimple]} />
-            <TouchableOpacity
-              testID="info-button"
-              onLayout={(e) => {
-                const { x, width } = e?.nativeEvent?.layout || {};
-                if (typeof x === 'number' && typeof width === 'number') setInfoButtonLayout({ x, width });
-              }}
-              onPress={() => {
-                setInfoMenuVisible(!infoMenuVisible);
-                if (!infoMenuVisible) {
-                  setHomeMapToolsSheetOpen(false);
-                  setRulerQuickMenuVisible(false);
-                  setLocationMenuVisible(false);
-                  setShow3DSlider(false);
-                }
-              }}
-              style={[
-                styles.pillButton,
-                (infoModeActive || infoMenuVisible) ? styles.pillButtonActive : null
-              ]}
-            >
-              <Ionicons
-                name="information-circle"
-                size={18}
-                color="#fff"
-              />
-            </TouchableOpacity>
-            <View style={[styles.pillDivider, !isProMode && styles.pillDividerSimple]} />
-            <TouchableOpacity testID="search-button" onPress={() => setActiveScreen('ada-parsel')} style={styles.pillButton}>
+            <TouchableOpacity testID="search-button" onPress={() => openParcelSearchModal('parcel')} style={[styles.pillButton, styles.pillButtonEven]}>
               <Ionicons name="search" size={18} color="#fff" />
             </TouchableOpacity>
           </View>
+          </View>
+          </View>
+        </View>
+        <View
+          pointerEvents="box-none"
+          style={[styles.homeVoiceOrbLayer, { bottom: 62 + insets.bottom }]}
+        >
+          <HomeVoiceQueryOrb
+            onInteraction={() => {
+              suppressGhostMapPress();
+              menuItemClickedRef.current = true;
+              setLocationMenuVisible(false);
+              setHomeMapToolsSheetOpen(false);
+              setShow3DSlider(false);
+            }}
+            onQueryResolved={handleHomeVoiceQueryResolved}
+          />
         </View>
         <HomeMapToolsSheet
           visible={homeMapToolsSheetOpen}
-          onClose={() => setHomeMapToolsSheetOpen(false)}
+          onClose={handleHomeMapToolsSheetDismiss}
           insetsBottom={insets.bottom}
-          measurementMode={measurementMode}
+          measurementMode={measurement.measurementMode}
           onSetMeasurementMode={handleHomeMapSheetSetMode}
-          drawShapeMode={homeMapShapeDrawingMode}
+          drawShapeMode={drawing.shapeDrawingMode}
           onSelectDrawShape={handleHomeMapSheetSelectShape}
+          drawPinVariant={drawing.drawPinVariant}
+          onSelectPinVariant={drawing.setDrawPinVariant}
+          drawArrowVariant={drawing.drawArrowVariant}
+          onSelectArrowVariant={drawing.setDrawArrowVariant}
           onClearSketchShapes={() => {
-            setHomeMapSketchShapes([]);
-            setHomeMapShapeDrawingMode(null);
-            setHomeShapeDrawingPoints([]);
-            setHomeMapSelectedShapeId(null);
+            drawing.clearAllShapes();
           }}
           onHisseliParsellereBol={handleHisseliFromHomeMapSheet}
           onToggleEdgeMeasures={handleHomeMapToggleEdgeMeasures}
@@ -4422,26 +4921,37 @@ export default function Index() {
           onClose={() => setHomeParcelDesignSheetOpen(false)}
           insetsBottom={insets.bottom}
           initialConfig={homeParcelPolygonDesign}
-          onConfirm={(cfg) => setHomeParcelPolygonDesign(cfg)}
+          onConfirm={handleConfirmParcelPolygonDesign}
+        />
+        <MeasurementEditSheet
+          visible={measurementEditPanelVisible}
+          selectedMeasurementGroupId={selectedMeasurementGroupId}
+          measurementFeatures={measurement.measurementFeatures}
+          setMeasurementFeatures={measurement.setMeasurementFeatures}
+          insetsBottom={insets.bottom}
+          minimized={measurementEditPanelMinimized}
+          setMinimized={setMeasurementEditPanelMinimized}
+          onClose={() => setMeasurementEditPanelVisible(false)}
+          onDelete={handleDeleteSelectedMeasurement}
         />
         <TextBoxEditModal
-          visible={homeTextBoxEditVisible}
-          initialText={homeTextBoxEditInitialText}
+          visible={drawing.textBoxEditVisible}
+          initialText={drawing.textBoxEditInitialText}
           onCancel={() => {
-            setHomeTextBoxEditVisible(false);
-            setHomeTextBoxEditShapeId(null);
+            drawing.setTextBoxEditVisible(false);
+            drawing.setTextBoxEditShapeId(null);
           }}
           onSave={(nextText) => {
-            if (!homeTextBoxEditShapeId) return;
-            setHomeMapSketchShapes((prev) =>
+            if (!drawing.textBoxEditShapeId) return;
+            drawing.setShapes((prev) =>
               prev.map((s) =>
-                s.id === homeTextBoxEditShapeId
+                s.id === drawing.textBoxEditShapeId
                   ? patchTextBoxShape(s, { text: String(nextText ?? "") })
                   : s
               )
             );
-            setHomeTextBoxEditVisible(false);
-            setHomeTextBoxEditShapeId(null);
+            drawing.setTextBoxEditVisible(false);
+            drawing.setTextBoxEditShapeId(null);
           }}
         />
         </>
@@ -4458,7 +4968,7 @@ export default function Index() {
         initialIndex={0}
         variant="dark"
       >
-        <View style={{ paddingBottom: insets.bottom }}>
+        <>
           <UserMenuSheetHeader
             variant="dark"
             isAuthenticated={!!isAuthenticated}
@@ -4475,7 +4985,7 @@ export default function Index() {
             }}
           />
           <UserMenuSheetList
-            items={getMenuItems(isProMode, isAuthenticated, user?.is_admin || user?.role === 'admin', user)}
+            items={getMenuItems(isProMode, isAuthenticated, isAppAdminUser(user), user)}
             st={userMenuSheetDarkStyles}
             variant="dark"
             submenuOpenId={submenuOpenId}
@@ -4489,7 +4999,7 @@ export default function Index() {
             userProfile={userProfile}
             footerInsetBottom={insets.bottom}
           />
-        </View>
+        </>
       </AppBottomSheetModal>
 
       {/* İlk Üyelik Hoşgeldin Bottom Sheet */}
@@ -4560,6 +5070,7 @@ export default function Index() {
           console.log('[ProQueryConfirmModal] onConfirm: setProQueryConfirmVisible(false) ve setPropertyTypeModalVisible(true) çağrıldı');
         }}
       />
+      <ProModeThreeLoader visible={showProModeLoader} />
       <PropertyTypeSelectionModal 
         visible={propertyTypeModalVisible} 
         onClose={() => { 
@@ -4569,6 +5080,8 @@ export default function Index() {
           // (BottomSheetModal unmount olunca onDismiss tetiklenir ve burayı çağırır)
           if (isTransitioningToSubModalRef.current) {
             isTransitioningToSubModalRef.current = false;
+          } else if (proAnalysisLoadingRef.current) {
+            // Tip seçimi sonrası pro analiz yüklenirken pending state korunur
           } else {
             clearPendingPropertyTypeState();
           }
@@ -4593,7 +5106,7 @@ export default function Index() {
           // Fabrika parametreleri ile birlikte pro sorguyu calistir
           const propertyType = pendingFactoryPropertyType || 'Fabrika';
           setPendingFactoryPropertyType(null);
-          setIsLoadingParcel(true);
+          const loadSeq = beginParcelQueryLoad('pro');
           const backendUrl = (API_URL || '').replace(/\/$/, '');
           try {
             const requestBody: any = {
@@ -4734,7 +5247,7 @@ export default function Index() {
               Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
-            setIsLoadingParcel(false);
+            endParcelQueryLoad(loadSeq);
           }
         }}
         areaM2={0}
@@ -4751,7 +5264,7 @@ export default function Index() {
           if (!villaParams || !pendingTkgmData) {
             return;
           }
-          setIsLoadingParcel(true);
+          const loadSeq = beginParcelQueryLoad('pro');
           const backendUrl = (API_URL || '').replace(/\/$/, '');
           try {
             const requestBody: any = {
@@ -4894,7 +5407,7 @@ export default function Index() {
               Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
-            setIsLoadingParcel(false);
+            endParcelQueryLoad(loadSeq);
           }
         }}
         areaM2={0}
@@ -4905,7 +5418,7 @@ export default function Index() {
         onResult={async (binaParams) => {
           setBinaEstimateModalVisible(false);
           if (!binaParams || !pendingTkgmData) return;
-          setIsLoadingParcel(true);
+          const loadSeq = beginParcelQueryLoad('pro');
           const backendUrl = (API_URL || '').replace(/\/$/, '');
           try {
             const requestBody: any = {
@@ -5003,7 +5516,7 @@ export default function Index() {
               Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
-            setIsLoadingParcel(false);
+            endParcelQueryLoad(loadSeq);
           }
         }}
         areaM2={0}
@@ -5014,7 +5527,7 @@ export default function Index() {
         onResult={async (mustakilEvParams) => {
           setMustakilEvEstimateModalVisible(false);
           if (!mustakilEvParams || !pendingTkgmData) return;
-          setIsLoadingParcel(true);
+          const loadSeq = beginParcelQueryLoad('pro');
           const backendUrl = (API_URL || '').replace(/\/$/, '');
           try {
             const requestBody: any = {
@@ -5112,7 +5625,7 @@ export default function Index() {
               Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
-            setIsLoadingParcel(false);
+            endParcelQueryLoad(loadSeq);
           }
         }}
         areaM2={0}
@@ -5123,7 +5636,7 @@ export default function Index() {
         onResult={async (konutDaireParams) => {
           setKonutDaireModalVisible(false);
           if (!konutDaireParams || !pendingTkgmData) return;
-          setIsLoadingParcel(true);
+          const loadSeq = beginParcelQueryLoad('pro');
           const backendUrl = (API_URL || '').replace(/\/$/, '');
           try {
             const requestBody: any = {
@@ -5221,50 +5734,10 @@ export default function Index() {
               Alert.alert(title, message, [{ text: 'Tamam' }]);
             }
           } finally {
-            setIsLoadingParcel(false);
+            endParcelQueryLoad(loadSeq);
           }
         }}
       />
-      {/* Metin ekleme modalı */}
-      <Modal
-        visible={textInputModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setTextInputModalVisible(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setTextInputModalVisible(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
-            <TouchableWithoutFeedback onPress={() => {}}>
-              <View style={{ backgroundColor: '#1e293b', borderRadius: 16, padding: 20, width: 280, borderWidth: 1.5, borderColor: '#3b82f6' }}>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 12, textAlign: 'center' }}>Metin Ekle</Text>
-                <TextInput
-                  style={{ backgroundColor: '#0f172a', color: '#fff', borderRadius: 10, padding: 12, fontSize: 14, borderWidth: 1, borderColor: '#334155', minHeight: 60, textAlignVertical: 'top' }}
-                  placeholder="Metin yazın..."
-                  placeholderTextColor="#64748b"
-                  value={textInputValue}
-                  onChangeText={setTextInputValue}
-                  multiline
-                  autoFocus
-                />
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-                  <TouchableOpacity
-                    style={{ flex: 1, backgroundColor: '#334155', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
-                    onPress={() => { setTextInputModalVisible(false); setTextInputCoords(null); setTextInputValue(''); }}
-                  >
-                    <Text style={{ color: '#94a3b8', fontWeight: '600' }}>İptal</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={{ flex: 1, backgroundColor: '#3b82f6', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
-                    onPress={confirmTextAnnotation}
-                  >
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>Ekle</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
 
       <ShareModal visible={shareModalVisible} onClose={() => setShareModalVisible(false)} onShare={handleShare} isProcessing={isProcessingShare} />
 
@@ -5343,6 +5816,57 @@ export default function Index() {
           </View>
         </TouchableWithoutFeedback>
       </Modal>
+
+      {/* Çoklu parsel — fiyat girişi uyarı modalı */}
+      <Modal
+        visible={multiParcelPriceWarningVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMultiParcelPriceWarningVisible(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setMultiParcelPriceWarningVisible(false)}>
+          <View style={styles.priceWarnOverlay}>
+            <TouchableWithoutFeedback onPress={() => {}}>
+              <View style={styles.priceWarnCard}>
+                <View style={styles.priceWarnHeader}>
+                  <View style={styles.priceWarnHeaderLeft} pointerEvents="none">
+                    <Ionicons name="information-circle" size={28} color="#fbbf24" />
+                  </View>
+                  <View style={styles.priceWarnHeaderCenter} pointerEvents="none">
+                    <Text style={styles.priceWarnTitle}>FİYAT GİRİLEMİYOR</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.priceWarnClose}
+                    onPress={() => setMultiParcelPriceWarningVisible(false)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="close" size={18} color="#e2e8f0" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.priceWarnBody}>
+                  <Text style={styles.priceWarnText}>
+                    Haritada birden fazla parsel görünüyor. Fiyat girebilmek için ekranda yalnızca bir parsel olmalıdır.
+                  </Text>
+                  <Text style={[styles.priceWarnText, { marginTop: 10 }]}>
+                    Fiyat girmek istiyorsanız diğer parselleri silip tek bir parsel bırakın; ardından tekrar Fiyat Gir butonuna basabilirsiniz.
+                  </Text>
+                </View>
+
+                <View style={styles.priceWarnButtons}>
+                  <TouchableOpacity
+                    style={[styles.priceWarnBtn, styles.priceWarnBtnPrimary]}
+                    activeOpacity={0.85}
+                    onPress={() => setMultiParcelPriceWarningVisible(false)}
+                  >
+                    <Text style={styles.priceWarnBtnPrimaryText}>Tamam</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
       <ParcelSplitProjectsModal
         visible={parcelSplitProjectsVisible}
         onClose={() => setParcelSplitProjectsVisible(false)}
@@ -5355,12 +5879,15 @@ export default function Index() {
       <StreetViewModal
         visible={streetViewModalVisible}
         onClose={() => setStreetViewModalVisible(false)}
-        streetViewPoint={parcelData ? getFirstStreetViewPoint(parcelData.geometry, parcelData.analysisData) : null}
+        streetViewPoint={streetViewPoint}
       />
       {/* 3D model görüntüleyici kaldırıldı - native Mapbox özellikleri ana ekranda */}
       
       {/* Hidden container for screenshot capture */}
-      <View style={{ position: 'absolute', left: -10000, top: -10000, opacity: 0, pointerEvents: 'none' }}>
+      <View
+        collapsable={false}
+        style={{ position: 'absolute', left: -10000, top: -10000, opacity: 0.01, pointerEvents: 'none' }}
+      >
         <CombinedScreenshotContainer
           ref={combinedContainerRef}
           capturedMapUri={capturedMapUri}
@@ -5455,10 +5982,108 @@ const styles = StyleSheet.create({
   map: { flex: 1 },
   loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   loadingText: { color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 16 },
-  bottomFloatingContainer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 100 },
-  bottomFloatingContainerAndroid: Platform.OS === 'android' ? { elevation: 32 } : {},
-  pillBar: { flexDirection: 'row', backgroundColor: '#1e293b', borderRadius: 30, paddingHorizontal: 6, paddingVertical: 6, alignItems: 'center', borderWidth: 1.5, borderColor: '#3b82f6', elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5 },
-  pillButton: { paddingHorizontal: 8, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+  bottomFloatingContainer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 110 },
+  bottomFloatingContainerAndroid: Platform.OS === 'android' ? { elevation: 24 } : {},
+  homeVoiceOrbLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 90,
+  },
+  bottomMenuColumn: {
+    width: SCREEN_WIDTH - 12,
+    maxWidth: SCREEN_WIDTH - 12,
+    alignItems: 'center',
+  },
+  bottomToolbarStack: {
+    width: SCREEN_WIDTH - 12,
+    maxWidth: SCREEN_WIDTH - 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#3b82f6',
+    overflow: 'hidden',
+    backgroundColor: '#1e293b',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+  },
+  queryActionBar: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(59, 130, 246, 0.35)',
+  },
+  queryActionItem: {
+    flex: 1,
+    minHeight: 32,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  queryActionItemWide: {
+    flex: 1.35,
+    paddingHorizontal: 8,
+  },
+  queryActionItemSimple: {
+    position: 'relative',
+    paddingHorizontal: 2,
+    paddingRight: 24,
+  },
+  queryActionSimpleMain: {
+    flex: 1,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  queryActionMenuIconBtn: {
+    position: 'absolute',
+    right: 2,
+    top: 0,
+    bottom: 0,
+    width: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
+    margin: 0,
+  },
+  queryActionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    width: '100%',
+  },
+  queryActionTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  queryActionUnderline: {
+    position: 'absolute',
+    bottom: 0,
+    left: 10,
+    right: 10,
+    height: 3,
+    backgroundColor: '#3b82f6',
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
+  },
+  queryActionDivider: {
+    width: 1,
+    backgroundColor: 'rgba(59, 130, 246, 0.4)',
+    marginVertical: 4,
+  },
+  queryActionDividerSimple: { backgroundColor: 'rgba(255, 255, 255, 0.25)' },
+  pillBar: { flexDirection: 'row', backgroundColor: '#1e293b', borderRadius: 30, paddingHorizontal: 2, paddingVertical: 2, alignItems: 'center', borderWidth: 1.5, borderColor: '#3b82f6', elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5 },
+  pillBarStacked: { borderWidth: 0, borderRadius: 0, elevation: 0, shadowOpacity: 0, width: '100%' },
+  pillButton: { height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  pillButtonEven: { flex: 1, minWidth: 0 },
+  pillButton3dLabel: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   pillButtonActive: { backgroundColor: '#3b82f6' },
   pillButtonDisabled: { opacity: 0.5 },
   pillButtonText: { color: '#3b82f6', fontSize: 12, fontWeight: 'bold' },
@@ -5486,7 +6111,25 @@ const styles = StyleSheet.create({
   areaFinishButtonContainer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 101 },
   areaFinishButton: { flexDirection: 'row', backgroundColor: '#10b981', borderRadius: 25, paddingHorizontal: 20, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', gap: 8, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5, borderWidth: 2, borderColor: '#059669' },
   areaFinishButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  controlsLayoutWrapper: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', justifyContent: 'flex-end', paddingRight: 20, alignItems: 'flex-end', gap: 12, zIndex: 1000 },
+  controlsLayoutWrapper: {
+    position: 'absolute',
+    right: 0,
+    width: THREE_D_CONTROLS_SLIDE_WIDTH,
+    zIndex: 1000,
+    overflow: 'visible',
+  },
+  threeDControlsOuter: {
+    height: THREE_D_CONTROLS_PANEL_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    position: 'relative',
+    width: THREE_D_CONTROLS_SLIDE_WIDTH,
+    overflow: 'visible',
+  },
+  threeDControlTriggerWrap: { position: 'absolute', right: 0, top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', width: 44 },
+  threeDControlTrigger: { width: 44, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
+  threeDControlsExpandedRow: { position: 'absolute', right: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  threeDControlCloseHandle: { width: 44, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   mapControlsPanel: { backgroundColor: 'rgba(30, 41, 59, 0.78)', borderRadius: 12, padding: 6, borderWidth: 1.5, borderColor: 'rgba(59, 130, 246, 0.9)', elevation: 15, width: 110, height: 110, alignItems: 'center', justifyContent: 'center' },
   mapControlsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4 },
   mapControlButton: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#3b82f6' },
@@ -5494,15 +6137,67 @@ const styles = StyleSheet.create({
   pitchControlsContainer: { backgroundColor: 'rgba(30, 41, 59, 0.78)', borderRadius: 12, padding: 6, borderWidth: 1.5, borderColor: 'rgba(59, 130, 246, 0.9)', elevation: 15, alignItems: 'center', width: 50, height: 110, justifyContent: 'center' },
   pitchButton: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#3b82f6' },
   pitchValue: { color: '#fff', fontSize: 12, fontWeight: '700', marginVertical: 4 },
-  zoomControlsWrapper: { position: 'absolute', right: 0, top: '50%', transform: [{ translateY: -32 }], zIndex: 1000 },
+  zoomControlsWrapper: {
+    position: 'absolute',
+    right: 0,
+    top: '50%',
+    transform: [{ translateY: -ZOOM_CONTROLS_PANEL_HEIGHT / 2 }],
+    zIndex: 1000,
+    overflow: 'visible',
+  },
+  zoomControlsOuter: {
+    height: ZOOM_CONTROLS_PANEL_HEIGHT,
+    width: ZOOM_CONTROLS_SLIDE_WIDTH,
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    overflow: 'visible',
+  },
+  zoomControlTriggerWrap: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 44,
+  },
   zoomControlTrigger: { width: 44, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   zoomControlLineContainer: { width: '100%', height: 40, justifyContent: 'center', alignItems: 'center' },
   zoomControlLine: { width: 3, height: 40, backgroundColor: '#3b82f6', borderRadius: 2 },
-  zoomControlsPanel: { backgroundColor: '#1e293b', borderRadius: 8, padding: 4, borderWidth: 1.5, borderColor: '#3b82f6', elevation: 15, alignItems: 'center', minWidth: 40, zIndex: 1000 },
-  zoomControlAreaProtector: { position: 'absolute', left: -40, right: 0, top: 0, bottom: 0, backgroundColor: 'transparent', zIndex: 999, width: '100%', height: '100%' },
-  zoomControlCloseHandle: { position: 'absolute', left: -32, width: 32, height: 48, justifyContent: 'center', alignItems: 'center', zIndex: 1001 },
-  zoomControlCloseLineContainer: { width: '100%', height: 40, justifyContent: 'center', alignItems: 'center' },
-  zoomControlCloseLine: { width: 3, height: 40, backgroundColor: '#64748b', borderRadius: 2 },
+  zoomControlsExpandedRow: { position: 'absolute', right: 0, flexDirection: 'row', alignItems: 'center', zIndex: 1001, overflow: 'visible' },
+  zoomControlsStack: { position: 'relative', alignItems: 'center', justifyContent: 'center', overflow: 'visible' },
+  zoomControlsPanel: { backgroundColor: '#1e293b', borderRadius: 8, padding: 4, borderWidth: 1.5, borderColor: '#3b82f6', elevation: 15, alignItems: 'center', minWidth: 40, zIndex: 1002, overflow: 'visible' },
+  zoomQueryButtonsStack: {
+    position: 'absolute',
+    bottom: '100%',
+    left: 0,
+    right: 0,
+    marginBottom: 6,
+    alignItems: 'center',
+    gap: ZOOM_QUERY_BUTTONS_GAP,
+    zIndex: 1003,
+  },
+  zoomQuerySquareButton: {
+    alignSelf: 'stretch',
+    width: '100%',
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#3b82f6',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+  zoomQuerySquareButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
+  zoomControlButtonWrap: { position: 'relative', alignItems: 'center', overflow: 'visible' },
+  zoomControlCloseHandle: { width: 44, height: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4, zIndex: 1001 },
+  panelCollapseHandle: { justifyContent: 'center', alignItems: 'center', height: 40, width: 28 },
   zoomControlButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#3b82f6' },
   screenshotPreviewButtons: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 12, paddingHorizontal: 20, zIndex: 1001 },
   screenshotPreviewButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 25, minWidth: 120, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5 },

@@ -5,6 +5,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Defs, Line, Pattern, Polygon, Text as SvgText } from 'react-native-svg';
 import AppBottomSheetModal from './AppBottomSheetModal';
+import { sheetScrollBottomPadding } from '../../src/utils/sheetSafeArea';
 import { styles } from './shapeDrawingModal/styles';
 import {
   DEFAULT_PARCEL_POLYGON_DESIGN,
@@ -199,7 +200,7 @@ export function ParcelPolygonDesignSheet({
       backgroundStyle={MAP_TOOLS_SHEET_BACKGROUND}
       handleIndicatorStyle={{ backgroundColor: 'rgba(255,255,255,0.35)' }}
     >
-      <View style={{ flex: 1, paddingBottom: insetsBottom }}>
+      <View style={{ flex: 1 }}>
         <View
           style={{
             flexDirection: 'row',
@@ -219,7 +220,7 @@ export function ParcelPolygonDesignSheet({
 
         <BottomSheetScrollView
           style={{ flex: 1, paddingHorizontal: 14 }}
-          contentContainerStyle={{ paddingBottom: Math.max(insetsBottom, 0) + 88 }}
+          contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insetsBottom, 88) }}
         >
           <ParcelDesignPreview {...draft} />
 
@@ -393,7 +394,7 @@ export function ParcelPolygonDesignSheet({
             gap: 10,
             paddingHorizontal: 16,
             paddingTop: 10,
-            paddingBottom: Math.max(insetsBottom, 12),
+            paddingBottom: sheetScrollBottomPadding(insetsBottom, 12),
             borderTopWidth: 1,
             borderTopColor: '#334155',
           }}

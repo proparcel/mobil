@@ -7,6 +7,14 @@
 // Kullanıcı rolleri
 export type UserRole = "admin" | "user" | "consultant" | "broker" | "vip" | "vip_limited";
 
+/** Abonelik paketi — GET /api/profile/read/ → data.user.customer_type */
+export type CustomerType = 'basic' | 'business' | 'silver' | 'gold' | 'premium';
+
+/** Özellik kapıları — GET /api/profile/read/ → data.features */
+export interface CustomerFeatureFlags {
+  smart_query?: boolean;
+}
+
 // Kullanıcı temel bilgileri
 export interface User {
   id: number;
@@ -29,6 +37,13 @@ export interface User {
   has_seen_app_tour?: boolean;
   // Admin kontrolü (role == admin || is_staff || is_superuser)
   is_admin?: boolean;
+  /** Profil adresi — ana harita hızlı il odaklama (yerel önbellek) */
+  city_id?: number;
+  city_name?: string;
+  /** Abonelik seviyesi (varsayılan: basic) */
+  customer_type?: CustomerType;
+  /** Sunucu özellik kapıları */
+  features?: CustomerFeatureFlags;
 }
 
 // Kullanıcı profili
@@ -183,7 +198,9 @@ export interface RegisterRequest {
   password: string;
   password_confirm: string;
   referral_code?: string; // opsiyonel (deferred deep link / manuel)
-  // Danışman için zorunlu: bağlanmak istediği firmanın vergi no'su
+  /** Danışman kayıt — bağlanılacak kurumsal UserProfile.id (zorunlu) */
+  company_profile_id?: number;
+  /** @deprecated legacy — danışman kayıtta kullanılmaz */
   company_vergi_no?: string;
   emlak_yetki_belge_no?: string;
   consultant_type?: 'emlak' | 'spk' | 'lihkab';
@@ -206,10 +223,10 @@ export interface RegisterRequest {
   university_id?: number;
   department_id?: number;
   custom_department?: string;
-  vergi_no?: string; // kurumsal için zorunlu (10 rakam)
-  vergi_dairesi?: string; // kurumsal için zorunlu
   step?: 'validate' | 'send_otp' | 'verify_otp'; // çok adımlı akış için
   otp?: string; // verify_otp adımında
+  expertise_quarters?: string; // virgülle ayrılmış quarter_value listesi
+  expertise_cities?: string; // virgülle ayrılmış city_id listesi (SPK)
 }
 
 // Login Request
@@ -260,7 +277,6 @@ export interface ProfileUpdateRequest {
   company_license_no?: string;
   office_no?: string;
   spk_tc_no?: string;
-  vergi_no?: string;
   address_line1?: string;
   city?: string;
   district?: string;
@@ -273,7 +289,6 @@ export interface ProfileUpdateRequest {
   quarter_name?: string;
   quarter_value?: number;
   emlak_yetki_belge_no?: string;
-  vergi_dairesi?: string;
 }
 
 export interface UserExpertiseArea {
@@ -319,6 +334,7 @@ export interface AuthContextValue extends AuthState {
   login: (identifier: string, password: string) => Promise<LoginResult>; // identifier: email veya phone
   loginWithOTP: (phone_number: string, otp: string) => Promise<boolean>;
   register: (data: RegisterRequest) => Promise<boolean>;
+  syncSessionFromLoginResponse: (data: NonNullable<LoginResponse["data"]>) => void;
   logout: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
   sendOTP: (phone_number: string) => Promise<boolean>;
@@ -331,18 +347,29 @@ export interface AuthContextValue extends AuthState {
 export interface CompanyProfile {
   id: number;
   company_name: string;
-  vergi_no: string;
+  vergi_no?: string | null;
   vergi_dairesi?: string;
   corporate_type?: 'emlak' | 'spk' | 'lihkab' | null;
   company_logo?: string;
   is_company_authority?: boolean;
 }
 
+/** Danışman kayıt / firma bağlantı listesi — GET /api/auth/company/list/ */
+export interface RegistrationCompanyItem {
+  company_profile_id: number;
+  company_name: string;
+  corporate_type?: 'emlak' | 'spk' | 'lihkab' | null;
+  vergi_no?: string | null;
+}
+
 // Firma bağlantı isteği
 export interface CompanyMembershipRequest {
   id: number;
   individual_user: User;
-  company_vergi_no: string;
+  company_profile_id?: number;
+  company_name?: string;
+  /** @deprecated legacy */
+  company_vergi_no?: string;
   status: 'pending' | 'approved' | 'rejected';
   requested_at: string;
   responded_at?: string;

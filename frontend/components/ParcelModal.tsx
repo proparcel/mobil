@@ -13,6 +13,7 @@ import { formatTurkishPrice, parseTurkishPrice } from '../src/utils/priceParser'
 import { normalizeParcelShapeLabel } from '../src/utils/normalizeParcelShapeLabel';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
+import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 
 interface ParcelModalProps {
@@ -194,7 +195,7 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
     >
       <BottomSheetScrollView
         style={styles.content}
-        contentContainerStyle={{ paddingBottom: 16 + (insets?.bottom || 0), flexGrow: 1 }}
+        contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insets?.bottom || 0, 16), flexGrow: 1 }}
         showsVerticalScrollIndicator={true}
         scrollEventThrottle={16}
         nestedScrollEnabled={true}

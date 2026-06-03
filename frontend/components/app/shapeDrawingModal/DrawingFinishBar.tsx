@@ -7,16 +7,26 @@ type Props = {
   bottomInset: number;
   label?: string;
   onFinish: () => void;
+  /** bottom: varsayılan (3D editör); top: ana harita */
+  placement?: "top" | "bottom";
+  topOffset?: number;
 };
 
-/** Çizim modunda üstte özellik kutusu yerine altta gösterilir. */
+/** Çizim modunda altta veya üstte gösterilir. */
 export const DrawingFinishBar: React.FC<Props> = ({
   visible,
   bottomInset,
   label = "Çizim bitir",
   onFinish,
+  placement = "bottom",
+  topOffset = 8,
 }) => {
   if (!visible) return null;
+
+  const edgeStyle =
+    placement === "top"
+      ? { top: topOffset }
+      : { bottom: Math.max(bottomInset, 8) + 12 };
 
   return (
     <View
@@ -25,7 +35,7 @@ export const DrawingFinishBar: React.FC<Props> = ({
         position: "absolute",
         left: 0,
         right: 0,
-        bottom: Math.max(bottomInset, 8) + 12,
+        ...edgeStyle,
         alignItems: "center",
         zIndex: 1350,
       }}

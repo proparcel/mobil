@@ -109,21 +109,27 @@ export async function captureAndUploadProQueryMapImage(
       }
     }
 
-    params.mapReadyRef.current.isIdle = false;
+    const wasIdle =
+      params.mapReadyRef.current.didFinishLoadingMap &&
+      params.mapReadyRef.current.didFinishLoadingStyle &&
+      params.mapReadyRef.current.isIdle;
+    if (!wasIdle) {
+      params.mapReadyRef.current.isIdle = false;
+      await waitForMapIdle(params.mapReadyRef, 2000, { resetIfAlreadyIdle: false });
+    }
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    await waitForMapIdle(params.mapReadyRef, 8000);
-    await new Promise((r) => setTimeout(r, 400));
 
     const mapUri = await tryMapboxSnap(params.mapRef, dimensions);
     params.setCapturedMapUri(mapUri || null);
 
     let uploadUri = mapUri;
-    if (mapUri && params.combinedContainerRef.current?.capture) {
-      await new Promise((res) => requestAnimationFrame(() => res(null)));
-      await new Promise((r) => setTimeout(r, mapUri ? 350 : 150));
+    const captureApi = params.combinedContainerRef.current;
+    if (mapUri && captureApi) {
       try {
-        const combinedUri = await params.combinedContainerRef.current.capture();
+        const combinedUri =
+          typeof captureApi.captureWithMapUri === 'function'
+            ? await captureApi.captureWithMapUri(mapUri)
+            : await captureApi.capture();
         if (combinedUri) uploadUri = combinedUri;
       } catch (e) {
         console.warn('[proQueryMapCapture] Combined capture başarısız:', e);

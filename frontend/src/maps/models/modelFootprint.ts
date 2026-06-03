@@ -16,10 +16,6 @@ function filenameStemLower(item: { filename?: string }): string {
     .toLowerCase();
 }
 
-/**
- * GLB'nin birim boyutu modele göre çok değişiyor; DB'de footprint_base_m2 yokken bilinen büyük mesh'ler için taban referansını artırır.
- * (Örn. farm_house yerleştirmede scale ~0.28; referans düşük kalırsa alan scale² ile aşırı küçülür.)
- */
 export function getFootprintStemBaseMultiplier(item: ModelCatalogFlatItem): number {
   const stem = filenameStemLower(item);
   if (stem === "farm_house" || stem.includes("farm_house")) return 12;
@@ -27,10 +23,7 @@ export function getFootprintStemBaseMultiplier(item: ModelCatalogFlatItem): numb
   return 1;
 }
 
-/**
- * GLB pivot çoğu evde geometri merkezinde; Mapbox modelTranslation[2] metre cinsinden Z kaldırır.
- * farm_house gibi büyük mesh'ler yarı gömülü görünmesin diye tabana oturtma.
- */
+/** Merkez pivot GLB: yerleştirmede sabit Z offset (m). Capture modu ile aynı: düz zemin, terrain yok. */
 export function getTranslationForCatalogItem(
   item: ModelCatalogFlatItem | undefined
 ): [number, number, number] {

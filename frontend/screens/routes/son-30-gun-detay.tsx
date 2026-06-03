@@ -23,6 +23,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AppBottomSheetModal from '../../components/app/AppBottomSheetModal';
+import { sheetScrollBottomPadding } from '../../src/utils/sheetSafeArea';
 import { KeyboardAwareScrollScreen } from '../../components/app/KeyboardAwareScrollScreen';
 import ListingFavoriteMenuMobile from '../../components/app/ListingFavoriteMenuMobile';
 import QueryFavoriteMenuMobile from '../../components/app/QueryFavoriteMenuMobile';
@@ -92,6 +93,7 @@ import {
   isPortalRateLimited,
 } from '../../src/utils/portalDetailAuth';
 import { getParcelMapLayerStyle } from '../../src/constants/parcelMapStyle';
+import { calculateBoundsAndCamera } from '../../src/utils/parcelUtils';
 import { buildStaticMapImageUrl } from '../../src/utils/staticMapCapture';
 import { buildPortalParcelMapLabelProperty } from '../../src/utils/parcelShareLabels';
 import { portalDetailToShareParcelData } from '../../src/utils/portalDetailToShareParcelData';
@@ -2588,6 +2590,15 @@ export default function Son30GunDetayScreen() {
     };
   }, [data, parcelGeom]);
 
+  const heroCameraDefaults = useMemo(() => {
+    if (parcelGeom) {
+      const cam = calculateBoundsAndCamera(parcelGeom);
+      if (cam) return { centerCoordinate: cam.center, zoomLevel: cam.zoom, animationDuration: 0 };
+    }
+    if (parcelCenter) return { centerCoordinate: parcelCenter, zoomLevel: 15, animationDuration: 0 };
+    return undefined;
+  }, [parcelGeom, parcelCenter]);
+
   const electricValuesResolved = useMemo(() => {
     const fromSection = electricSectionData?.electric_values;
     return (fromSection ?? data?.electric_values ?? {}) as Record<string, unknown>;
@@ -2702,6 +2713,49 @@ export default function Son30GunDetayScreen() {
     if (features.length === 0) return null;
     return { type: 'FeatureCollection' as const, features };
   }, [expertResponsesForEmsal]);
+
+  const heroParcelFitBounds = useMemo((): [[number, number], [number, number]] | null => {
+    if (!parcelGeom) return null;
+    const geometries: any[] = [parcelGeom];
+    if (emsalGeoJSON && activeDetailTabId !== 'electric') {
+      for (const f of emsalGeoJSON.features) {
+        if (f.geometry) geometries.push(f.geometry);
+      }
+    }
+    const bounds = computeGeoBounds(geometries, 0);
+    if (!bounds) return null;
+    return [[bounds[0], bounds[1]], [bounds[2], bounds[3]]];
+  }, [parcelGeom, emsalGeoJSON, activeDetailTabId]);
+
+  useEffect(() => {
+    if (activeDetailTabId === 'electric' && electricHasLineCoords) return;
+    if (!heroParcelFitBounds) return;
+    const timer = setTimeout(() => {
+      try {
+        if (typeof heroCameraRef.current?.fitBounds === 'function') {
+          heroCameraRef.current.fitBounds(heroParcelFitBounds[0], heroParcelFitBounds[1], 60, 400);
+        } else if (parcelGeom) {
+          const cam = calculateBoundsAndCamera(parcelGeom);
+          if (cam) {
+            heroCameraRef.current?.setCamera?.({
+              centerCoordinate: cam.center,
+              zoomLevel: cam.zoom,
+              animationDuration: 400,
+            });
+          }
+        }
+      } catch {
+        // fallback: default camera
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [
+    heroParcelFitBounds,
+    activeDetailTabId,
+    electricHasLineCoords,
+    heroTopTab,
+    parcelGeom,
+  ]);
 
   const heroListingMediaItems = useMemo((): HeroListingMediaItem[] => {
     if (!data) return [];
@@ -3343,8 +3397,6 @@ export default function Son30GunDetayScreen() {
     const ring = coords.map(c => [c[0], c[1]] as [number, number]);
     const closedRing = ring.length > 0 && (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1])
       ? [...ring, ring[0]] : ring;
-    const cLon = ring.reduce((sum, c) => sum + c[0], 0) / ring.length;
-    const cLat = ring.reduce((sum, c) => sum + c[1], 0) / ring.length;
     const parcelGeoJSON = {
       type: 'Feature' as const,
       geometry: { type: 'Polygon' as const, coordinates: [closedRing] },
@@ -3360,14 +3412,13 @@ export default function Son30GunDetayScreen() {
         if (fCoords) fCoords.forEach((c: number[]) => allMapCoords.push([c[0], c[1]]));
       }
     }
-    const hasEmsalOnMap = emsalGeoJSON && allMapCoords.length > ring.length;
     const mapLons = allMapCoords.map(c => c[0]);
     const mapLats = allMapCoords.map(c => c[1]);
-    const mapBounds = hasEmsalOnMap ? {
+    const mapBounds = {
       ne: [Math.max(...mapLons), Math.max(...mapLats)] as [number, number],
       sw: [Math.min(...mapLons), Math.min(...mapLats)] as [number, number],
       paddingTop: 60, paddingBottom: 60, paddingLeft: 60, paddingRight: 60,
-    } : undefined;
+    };
 
     return (
       <SafeAreaView style={s.safeArea} edges={['top']}>
@@ -3396,12 +3447,8 @@ export default function Son30GunDetayScreen() {
             >
               <Mapbox.Camera
                 ref={mapCameraRef}
-                defaultSettings={mapBounds ? {
+                defaultSettings={{
                   bounds: mapBounds,
-                  pitch: mapIs3D ? 60 : 0,
-                } : {
-                  centerCoordinate: [cLon, cLat],
-                  zoomLevel: 17,
                   pitch: mapIs3D ? 60 : 0,
                 }}
                 animationDuration={0}
@@ -3668,7 +3715,7 @@ export default function Son30GunDetayScreen() {
               >
                 <Mapbox.Camera
                   ref={heroCameraRef}
-                  defaultSettings={{ centerCoordinate: parcelCenter, zoomLevel: 17, animationDuration: 0 }}
+                  defaultSettings={heroCameraDefaults}
                 />
 
                 {emsalGeoJSON && activeDetailTabId !== 'electric' && (
@@ -4535,7 +4582,7 @@ export default function Son30GunDetayScreen() {
         backdropPressBehavior="close"
         keyboardForm
       >
-        <View style={s.modalContent}>
+        <View style={[s.modalContent, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 24) }]}>
           <Text style={s.modalTitle}>
             <Ionicons name="person" size={18} color={COLORS.accentBlue} /> Uzman Görüşü İste
           </Text>

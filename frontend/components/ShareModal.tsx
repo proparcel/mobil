@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 import { GestureDetector, Gesture, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -92,8 +93,8 @@ const ShareModal: React.FC<ShareModalProps> = ({ visible, onClose, onShare, isPr
           />
           <GestureDetector gesture={gesture}>
             <Animated.View style={[styles.modalContent, animatedStyle, { 
-              height: MODAL_HEIGHT + Math.max(insets.bottom || 0, 20),
-              paddingBottom: Math.max(insets.bottom || 0, 20) 
+              height: MODAL_HEIGHT + sheetScrollBottomPadding(insets.bottom || 0, 20),
+              paddingBottom: sheetScrollBottomPadding(insets.bottom || 0, 20) 
             }]}>
               <View style={styles.grabber} />
               
@@ -119,7 +120,7 @@ const ShareModal: React.FC<ShareModalProps> = ({ visible, onClose, onShare, isPr
                   </View>
                 )}
 
-                <View style={[styles.buttonContainer, { marginBottom: Math.max(insets.bottom || 0, 20) }]}>
+                <View style={[styles.buttonContainer, { marginBottom: 20 }]}>
                   <TouchableOpacity
                     style={[styles.button, styles.cancelButton]}
                     onPress={onClose}

@@ -8,6 +8,7 @@ import {
   type BottomSheetModalProps,
 } from "@gorhom/bottom-sheet";
 import { KEYBOARD_SHEET_MODAL_PROPS } from "../../src/keyboard";
+import { sheetModalBottomInset } from "../../src/utils/sheetSafeArea";
 
 export type AppBottomSheetModalProps = {
   visible: boolean;
@@ -60,6 +61,10 @@ export type AppBottomSheetModalProps = {
    * Sheet içinde TextInput varsa true — adjustResize + interactive klavye (merkezi sözleşme).
    */
   keyboardForm?: boolean;
+  /**
+   * Tam ekran modal (3D editör): sheet alt kenarı ekran dibine yapışır; safe area içerik padding'inde kalır.
+   */
+  flushToScreenBottom?: boolean;
 };
 
 export default function AppBottomSheetModal({
@@ -78,9 +83,11 @@ export default function AppBottomSheetModal({
   handleIndicatorStyle,
   modalProps,
   keyboardForm = false,
+  flushToScreenBottom = false,
 }: AppBottomSheetModalProps) {
   const ref = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
+  const sheetBottomInset = flushToScreenBottom ? 0 : sheetModalBottomInset(insets.bottom);
 
   const finalSnapPoints = useMemo<(string | number)[]>(
     () => (snapPoints && snapPoints.length ? snapPoints : ["70%", "90%"]),
@@ -169,6 +176,9 @@ export default function AppBottomSheetModal({
     [backdropOpacity, backdropPressBehavior, enableBackdropTouchThrough]
   );
 
+  const backdropComponent =
+    backdropOpacity <= 0 && enableBackdropTouchThrough ? undefined : renderBackdrop;
+
   // onDismiss callback'ini sadece gerçekten dismiss olduğunda çağır
   // BottomSheetModal'ın onDismiss'i sadece modal gerçekten kapandığında çağrılır
   const handleDismiss = useCallback(() => {
@@ -197,12 +207,13 @@ export default function AppBottomSheetModal({
       enableDynamicSizing={false}
       enablePanDownToClose={enablePanDownToClose}
       enableContentPanningGesture={true}
-      backdropComponent={renderBackdrop}
+      backdropComponent={backdropComponent}
       handleIndicatorStyle={handleIndicatorStyle ?? defaultHandleIndicatorStyle}
       backgroundStyle={backgroundStyle ?? defaultBackgroundStyle}
       // Keep modal mounted only while presented; notify caller on dismiss.
       onDismiss={handleDismiss}
       topInset={insets.top}
+      bottomInset={sheetBottomInset}
       {...(mergedModalProps as any)}
     >
       {children}

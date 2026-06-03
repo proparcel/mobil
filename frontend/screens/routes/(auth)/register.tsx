@@ -4,7 +4,7 @@
  * Yeni kullanıcı kaydı - Bireysel/Kurumsal + OTP akışı.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -16,46 +16,162 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  type ScrollView as ScrollViewType,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../../src/hooks/useNavigation";
 import { useAuth } from "../../contexts/AuthContext";
 import { authService } from "../../../services/authService";
+import type { RegistrationCompanyItem } from "../../../src/types/auth";
 import { storageService } from "../../../services/storageService";
-import { StatusBar } from "react-native";
+import { AppStatusBar } from "../../../components/app/AppStatusBar";
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 import { LandingLegalFooter } from "../../../components/landing/LandingLegalFooter";
-import { AddressPickerModal, type AddressValue } from "../../../components/app/AddressPickerModal";
+import {
+  INPUT_TEXT_COLOR,
+  securePasswordInputProps,
+  securePasswordInputStyle,
+} from "../../../src/utils/passwordTextInput";
+import type { AddressValue } from "../../../components/app/AddressPickerModal";
+import { AddressFormFields } from "../../../components/app/AddressFormFields";
+import {
+  EducationPickerFields,
+  EMPTY_EDUCATION_PICKER,
+  type EducationPickerValue,
+} from "../../../components/app/EducationPickerFields";
+import { useScrollInputIntoView } from "../../../src/keyboard";
+import {
+  RegistrationMediaStep,
+  type RegistrationMediaValue,
+} from "../../../components/auth/RegistrationMediaStep";
+import {
+  RegistrationExpertiseStep,
+  type RegistrationExpertiseValue,
+} from "../../../components/auth/RegistrationExpertiseStep";
 
 type MemberType = "individual" | "consultant" | "corporate";
+type RegistrationStep = "info" | "media" | "expertise";
 type CorporateType = "emlak" | "spk" | "lihkab";
+type ConsultantType = "emlak" | "spk" | "lihkab";
 
-type CompanySearchItem = {
-  id?: number;
-  company_name?: string;
-  name?: string;
-  title?: string;
-  vergi_no: string;
-  vergi_dairesi?: string;
-  corporate_type?: "emlak" | "spk" | "lihkab" | null;
-};
-
-function getCompanyDisplayName(company: CompanySearchItem | null): string {
+function getCompanyDisplayName(company: RegistrationCompanyItem | null): string {
   if (!company) return "";
-  return (company.company_name || company.name || company.title || company.vergi_no || "").trim();
+  return (company.company_name || "").trim();
 }
 
-function getConsultantTypeFromCompany(company: CompanySearchItem | null): "emlak" | "spk" | "lihkab" {
-  return company?.corporate_type || "emlak";
+function isConsultantSpkFlow(
+  consultantType: ConsultantType,
+  company: RegistrationCompanyItem | null
+): boolean {
+  if (consultantType === "lihkab") return false;
+  if (consultantType === "spk") return true;
+  return company?.corporate_type === "spk";
+}
+
+function shouldShowExpertiseStep(
+  memberType: MemberType,
+  consultantType: ConsultantType,
+  corporateType: CorporateType | null,
+): boolean {
+  if (memberType === "individual") return false;
+  if (memberType === "consultant" && consultantType === "lihkab") return false;
+  if (memberType === "corporate" && corporateType === "lihkab") return false;
+  return true;
+}
+
+function useSpkExpertiseMode(
+  memberType: MemberType,
+  consultantSpkFlow: boolean,
+  corporateType: CorporateType | null,
+): boolean {
+  if (memberType === "corporate" && corporateType === "spk") return true;
+  if (memberType === "consultant" && consultantSpkFlow) return true;
+  return false;
+}
+
+function resolveEducationLevel(
+  memberType: MemberType,
+  consultantType: ConsultantType,
+  corporateType: CorporateType | null,
+  educationLevel: number | null
+): number | undefined {
+  if (memberType === "consultant" && consultantType === "lihkab") return 0;
+  if (memberType === "corporate" && corporateType === "lihkab") return 0;
+  return educationLevel ?? undefined;
+}
+
+function getGraduationNoteText(isRequired: boolean, variant: "consultant" | "corporate"): string {
+  if (!isRequired) {
+    return "Mezuniyetiniz uygulama üzerinde uzmanlık puanınızı arttırır ve uygulamanın bir çok alanda size öncelik vermesini sağlar.";
+  }
+  if (variant === "corporate") {
+    return "SPK Lisanslı Değerleme Firması için üniversite bilgileri zorunludur.";
+  }
+  return "SPK Lisanslı Değerleme Firmasına bağlı danışmanlar için üniversite bilgileri zorunludur.";
+}
+
+function buildEducationPayload(
+  memberType: MemberType,
+  consultantType: ConsultantType,
+  corporateType: CorporateType | null,
+  educationLevel: number | null,
+  educationDetails: EducationPickerValue,
+) {
+  const level = resolveEducationLevel(memberType, consultantType, corporateType, educationLevel);
+  if (level === undefined) return {};
+  return {
+    education_level: level,
+    university_id:
+      level === 1 || level === 2 ? educationDetails.universityId ?? undefined : undefined,
+    department_id:
+      level === 1 || level === 2 ? educationDetails.departmentId ?? undefined : undefined,
+    custom_department:
+      level === 1 || level === 2
+        ? educationDetails.customDepartment.trim() || undefined
+        : undefined,
+  };
+}
+
+function ScrollInputWrap({
+  scrollRef,
+  style,
+  children,
+}: {
+  scrollRef: React.RefObject<ScrollViewType | null>;
+  style?: StyleProp<ViewStyle>;
+  children: (focus: { onFocus: () => void; onBlur: () => void }) => React.ReactNode;
+}) {
+  const wrapRef = useRef<View>(null);
+  const { handleFocus, handleBlur } = useScrollInputIntoView({ scrollRef, inputWrapRef: wrapRef });
+  return (
+    <View ref={wrapRef} collapsable={false} style={style}>
+      {children({ onFocus: handleFocus, onBlur: handleBlur })}
+    </View>
+  );
 }
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const { isLoading } = useAuth();
+  const { isLoading, syncSessionFromLoginResponse } = useAuth();
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollViewType>(null);
 
   // State
+  const [registrationStep, setRegistrationStep] = useState<RegistrationStep>("info");
+  const [registrationMedia, setRegistrationMedia] = useState<RegistrationMediaValue>({
+    avatarUri: null,
+    companyLogoUri: null,
+  });
+  const [registrationExpertise, setRegistrationExpertise] = useState<RegistrationExpertiseValue>({
+    quarters: [],
+    cities: [],
+  });
   const [memberType, setMemberType] = useState<MemberType>("individual");
+  const [consultantType, setConsultantType] = useState<ConsultantType>("emlak");
+  const [consultantLicenseNo, setConsultantLicenseNo] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -68,14 +184,9 @@ export default function RegisterScreen() {
   const [companyLicenseNo, setCompanyLicenseNo] = useState("");
   const [officeNo, setOfficeNo] = useState("");
   const [spkTcNo, setSpkTcNo] = useState("");
-  const [vergiNo, setVergiNo] = useState("");
-  const [vergiDairesi, setVergiDairesi] = useState("");
   const [postalCode, setPostalCode] = useState("");
   const [educationLevel, setEducationLevel] = useState<number | null>(null);
-  const [universityId, setUniversityId] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
-  const [customDepartment, setCustomDepartment] = useState("");
-  const [showCorporateAddressModal, setShowCorporateAddressModal] = useState(false);
+  const [educationDetails, setEducationDetails] = useState<EducationPickerValue>(EMPTY_EDUCATION_PICKER);
   const [corporateAddress, setCorporateAddress] = useState<AddressValue>({
     cityId: null,
     cityName: "",
@@ -87,8 +198,8 @@ export default function RegisterScreen() {
     streetAndNumber: "",
   });
   const [companySearchText, setCompanySearchText] = useState("");
-  const [companySearchResults, setCompanySearchResults] = useState<CompanySearchItem[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState<CompanySearchItem | null>(null);
+  const [companySearchResults, setCompanySearchResults] = useState<RegistrationCompanyItem[]>([]);
+  const [selectedCompany, setSelectedCompany] = useState<RegistrationCompanyItem | null>(null);
   const [isCompanySearching, setIsCompanySearching] = useState(false);
   const [companySearchError, setCompanySearchError] = useState("");
   const [isCompanyPickerOpen, setIsCompanyPickerOpen] = useState(false);
@@ -97,6 +208,7 @@ export default function RegisterScreen() {
   const [isSending, setIsSending] = useState(false);
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpModalError, setOtpModalError] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
 
   useEffect(() => {
     storageService.getDeferredReferralCode().then((code) => {
@@ -104,7 +216,7 @@ export default function RegisterScreen() {
     });
   }, []);
 
-  // Danışman: Firma arama (autocomplete)
+  // Danışman: firma arama (liste API)
   useEffect(() => {
     if (memberType !== "consultant") {
       setIsCompanySearching(false);
@@ -114,13 +226,6 @@ export default function RegisterScreen() {
     }
 
     const q = companySearchText.trim();
-    if (q && /^\d+$/.test(q)) {
-      setIsCompanySearching(false);
-      setCompanySearchResults([]);
-      setCompanySearchError("Firma adı ile arama yapın.");
-      return;
-    }
-
     if (!isCompanyPickerOpen) {
       setIsCompanySearching(false);
       setCompanySearchResults([]);
@@ -139,12 +244,13 @@ export default function RegisterScreen() {
       try {
         setIsCompanySearching(true);
         setCompanySearchError("");
-        const res = await authService.listCompanies(q, 20);
+
+        const res = await authService.listCompaniesForRegistration(q, 20);
         if (cancelled) return;
 
-        setCompanySearchResults((res.data || []).filter((company) => !!company.vergi_no));
+        setCompanySearchResults(res.data || []);
         if (!res.success) setCompanySearchError(res.message || "Firma araması yapılamadı.");
-      } catch (e) {
+      } catch {
         if (cancelled) return;
         setCompanySearchError("Firma araması sırasında hata oluştu.");
       } finally {
@@ -157,6 +263,20 @@ export default function RegisterScreen() {
       clearTimeout(timer);
     };
   }, [companySearchText, isCompanyPickerOpen, memberType, selectedCompany]);
+
+  const consultantSpkFlow =
+    memberType === "consultant" && isConsultantSpkFlow(consultantType, selectedCompany);
+  const showExpertiseStep = shouldShowExpertiseStep(memberType, consultantType, corporateType);
+  const expertiseMode = useSpkExpertiseMode(memberType, consultantSpkFlow, corporateType)
+    ? "cities"
+    : "quarters";
+
+  useEffect(() => {
+    if (memberType !== "consultant" || consultantType === "lihkab") return;
+    if (consultantSpkFlow && educationLevel === 0) {
+      setEducationLevel(null);
+    }
+  }, [memberType, consultantType, consultantSpkFlow, educationLevel]);
 
   /**
    * Form validasyonu
@@ -209,11 +329,30 @@ export default function RegisterScreen() {
       if (corporateType === "lihkab" && !officeNo.trim()) {
         newErrors.officeNo = "Lihkab büro için büro no gereklidir";
       }
-      if (!vergiNo || vergiNo.length !== 10 || !/^\d{10}$/.test(vergiNo)) {
-        newErrors.vergiNo = "10 haneli vergi no gereklidir";
+      if (!corporateAddress.cityId || !corporateAddress.districtId || !corporateAddress.quarterValue) {
+        newErrors.address = "Adres için il, ilçe ve mahalle seçiniz";
       }
-      if (!vergiDairesi) {
-        newErrors.vergiDairesi = "Vergi dairesi gereklidir";
+      if (!corporateAddress.streetAndNumber.trim()) {
+        newErrors.streetAndNumber = "Sokak ve numara bilgisi gereklidir";
+      }
+      if (corporateType && corporateType !== "lihkab" && corporateType === "spk") {
+        if (educationLevel === null) {
+          newErrors.educationLevel = "Mezuniyet seviyesi seçiniz";
+        } else if (educationLevel !== 1) {
+          newErrors.educationLevel = "SPK için Lisans seviyesi seçiniz";
+        } else if (!educationDetails.universityId) {
+          newErrors.universityId = "Üniversite seçiniz";
+        }
+      }
+    }
+
+    // Danışman için ek alanlar
+    if (memberType === "consultant") {
+      if (!selectedCompany?.company_profile_id) {
+        newErrors.companyPicker = "Lütfen listeden firma seçiniz";
+      }
+      if (consultantType === "spk" && !consultantLicenseNo.trim()) {
+        newErrors.consultantLicenseNo = "SPK Lisanslı Değerleme Uzmanı için Lisans No gereklidir";
       }
       if (!corporateAddress.cityId || !corporateAddress.districtId || !corporateAddress.quarterValue) {
         newErrors.address = "Adres için il, ilçe ve mahalle seçiniz";
@@ -221,20 +360,13 @@ export default function RegisterScreen() {
       if (!corporateAddress.streetAndNumber.trim()) {
         newErrors.streetAndNumber = "Sokak ve numara bilgisi gereklidir";
       }
-      if (corporateType === "spk") {
-        if (educationLevel === null) {
-          newErrors.educationLevel = "Mezuniyet seviyesi seçiniz";
+      if (consultantType !== "lihkab" && consultantSpkFlow) {
+        if (educationLevel !== 1 && educationLevel !== 2) {
+          newErrors.educationLevel =
+            "SPK Lisanslı firmaya bağlı danışmanlar için Lisans veya Ön Lisans seçiniz";
+        } else if (!educationDetails.universityId) {
+          newErrors.universityId = "Üniversite seçiniz";
         }
-        if ((educationLevel === 1 || educationLevel === 2) && !universityId.trim()) {
-          newErrors.universityId = "Üniversite ID gereklidir";
-        }
-      }
-    }
-
-    // Danışman için ek alanlar
-    if (memberType === "consultant") {
-      if (!selectedCompany) {
-        newErrors.companyPicker = "Lütfen listeden firma seçiniz";
       }
     }
 
@@ -243,7 +375,7 @@ export default function RegisterScreen() {
   };
 
   const buildRegisterData = () => {
-    const selectedCompanyVergiNo = (selectedCompany?.vergi_no || "").trim();
+    const selectedCompanyProfileId = selectedCompany?.company_profile_id;
 
     return {
       member_type: memberType,
@@ -254,19 +386,35 @@ export default function RegisterScreen() {
       password,
       password_confirm: passwordConfirm,
       referral_code: referralCode?.trim() || undefined,
-      ...(memberType === "consultant" && selectedCompanyVergiNo && {
-        consultant_type: getConsultantTypeFromCompany(selectedCompany),
-        consultant_license_no: "",
-        company_vergi_no: selectedCompanyVergiNo,
-      }),
+      ...(memberType === "consultant" && selectedCompanyProfileId
+        ? {
+            consultant_type: consultantType,
+            consultant_license_no: consultantType === "spk" ? consultantLicenseNo.trim() : undefined,
+            company_profile_id: selectedCompanyProfileId,
+            city_id: corporateAddress.cityId || undefined,
+            district_id: corporateAddress.districtId || undefined,
+            quarter_id: corporateAddress.quarterId || undefined,
+            quarter_value: corporateAddress.quarterValue || undefined,
+            city_name: corporateAddress.cityName || undefined,
+            district_name: corporateAddress.districtName || undefined,
+            quarter_name: corporateAddress.quarterName || undefined,
+            street_and_number: corporateAddress.streetAndNumber.trim(),
+            postal_code: postalCode.trim() || undefined,
+            ...buildEducationPayload(
+              memberType,
+              consultantType,
+              corporateType,
+              educationLevel,
+              educationDetails,
+            ),
+          }
+        : {}),
       ...(memberType === "corporate" && {
         corporate_type: corporateType || undefined,
         company_name: companyName,
         company_license_no: companyLicenseNo,
         office_no: corporateType === "lihkab" ? officeNo.trim() : undefined,
         spk_tc_no: corporateType === "spk" ? spkTcNo : undefined,
-        vergi_no: vergiNo,
-        vergi_dairesi: vergiDairesi,
         city_id: corporateAddress.cityId || undefined,
         district_id: corporateAddress.districtId || undefined,
         quarter_id: corporateAddress.quarterId || undefined,
@@ -276,10 +424,13 @@ export default function RegisterScreen() {
         quarter_name: corporateAddress.quarterName || undefined,
         street_and_number: corporateAddress.streetAndNumber.trim(),
         postal_code: postalCode.trim() || undefined,
-        education_level: educationLevel ?? undefined,
-        university_id: universityId.trim() ? Number(universityId.trim()) : undefined,
-        department_id: departmentId.trim() ? Number(departmentId.trim()) : undefined,
-        custom_department: customDepartment.trim() || undefined,
+        ...buildEducationPayload(
+          memberType,
+          consultantType,
+          corporateType,
+          educationLevel,
+          educationDetails,
+        ),
       }),
     };
   };
@@ -293,8 +444,79 @@ export default function RegisterScreen() {
     return parts.length ? parts.join("\n") : null;
   };
 
+  const mapRegisterApiErrors = (errs: Record<string, string[]> | undefined): Record<string, string> => {
+    if (!errs) return {};
+    const mapped: Record<string, string> = {};
+    if (errs.address?.[0]) mapped.address = errs.address[0];
+    if (errs.street_and_number?.[0]) mapped.streetAndNumber = errs.street_and_number[0];
+    if (errs.education_level?.[0]) mapped.educationLevel = errs.education_level[0];
+    if (errs.university_id?.[0]) mapped.universityId = errs.university_id[0];
+    if (errs.department_id?.[0]) mapped.departmentId = errs.department_id[0];
+    if (errs.company_profile_id?.[0]) mapped.companyPicker = errs.company_profile_id[0];
+    if (errs.company_vergi_no?.[0]) mapped.companyPicker = errs.company_vergi_no[0];
+    if (errs.consultant_license_no?.[0]) mapped.consultantLicenseNo = errs.consultant_license_no[0];
+    if (errs.consultant_type?.[0]) mapped.consultantType = errs.consultant_type[0];
+    return mapped;
+  };
+
+  const buildRegisterDataWithExpertise = () => {
+    const base = buildRegisterData();
+    const quarterCsv = registrationExpertise.quarters.map((q) => q.quarter_value).join(",");
+    const cityCsv = registrationExpertise.cities.map((c) => c.city_id).join(",");
+    return {
+      ...base,
+      ...(quarterCsv ? { expertise_quarters: quarterCsv } : {}),
+      ...(cityCsv ? { expertise_cities: cityCsv } : {}),
+    };
+  };
+
+  const proceedToOtp = async () => {
+    const registerData = buildRegisterDataWithExpertise();
+    setIsSending(true);
+    setErrors({});
+    try {
+      const sendRes = await authService.registerSendOTP(registerData);
+      if (!sendRes.success) {
+        setErrors({
+          general: sendRes.message || "Kod gönderilemedi. Lütfen tekrar deneyin.",
+          ...mapRegisterApiErrors(sendRes.errors),
+        });
+        setRegistrationStep("info");
+        return;
+      }
+      setOtpModalError("");
+      setOtp("");
+      setShowOtpModal(true);
+    } catch {
+      setErrors({ general: "Bir hata oluştu. Lütfen tekrar deneyin." });
+      setRegistrationStep("info");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const goToStepAfterMedia = () => {
+    if (showExpertiseStep) {
+      setRegistrationStep("expertise");
+      return;
+    }
+    void proceedToOtp();
+  };
+
+  const handleRegistrationBack = () => {
+    if (registrationStep === "expertise") {
+      setRegistrationStep("media");
+      return;
+    }
+    if (registrationStep === "media") {
+      setRegistrationStep("info");
+      return;
+    }
+    router.back();
+  };
+
   /**
-   * Devam: Önce bilgi varlığı kontrolü → varsa uyarı, yoksa OTP gönderip modal aç
+   * Devam: Bilgi validasyonu → medya adımı
    */
   const handleDevam = async () => {
     if (!validateForm()) return;
@@ -314,22 +536,15 @@ export default function RegisterScreen() {
           setIsSending(false);
           return;
         }
-        setErrors({ general: validateRes.message || "Bilgilerinizi kontrol edin." });
+        setErrors({
+          general: validateRes.message || "Bilgilerinizi kontrol edin.",
+          ...mapRegisterApiErrors(validateRes.errors),
+        });
         setIsSending(false);
         return;
       }
 
-      const sendRes = await authService.registerSendOTP(registerData);
-
-      if (!sendRes.success) {
-        setErrors({ general: sendRes.message || "Kod gönderilemedi. Lütfen tekrar deneyin." });
-        setIsSending(false);
-        return;
-      }
-
-      setOtpModalError("");
-      setOtp("");
-      setShowOtpModal(true);
+      setRegistrationStep("media");
     } catch (error) {
       setErrors({ general: "Bir hata oluştu. Lütfen tekrar deneyin." });
     } finally {
@@ -341,41 +556,57 @@ export default function RegisterScreen() {
    * OTP doğrula ve kayıt ol (modal içinden)
    */
   const handleVerifyOTP = async () => {
+    if (isVerifying) {
+      return;
+    }
+
     if (!otp || otp.length !== 6) {
       setOtpModalError("6 haneli doğrulama kodunu girin");
       return;
     }
 
-    const registerData = buildRegisterData();
+    const registerData = buildRegisterDataWithExpertise();
 
     setOtpModalError("");
+    setIsVerifying(true);
 
     try {
-      const response = await authService.registerVerifyOTP(registerData, otp);
+      const response = await authService.registerVerifyOTP(registerData, otp, {
+        avatarUri: registrationMedia.avatarUri,
+        companyLogoUri: registrationMedia.companyLogoUri,
+      });
 
       if (response.success && response.data) {
+        syncSessionFromLoginResponse(response.data);
         setShowOtpModal(false);
         await storageService.clearDeferredReferralCode();
-        if (memberType === "individual") {
-          router.replace("index");
-        } else {
-          router.replace("complete-registration");
-        }
+        router.replace("index");
       } else {
         setOtpModalError(response.message || "Geçersiz doğrulama kodu");
       }
     } catch (error) {
       setOtpModalError("Bir hata oluştu. Lütfen tekrar deneyin.");
+    } finally {
+      setIsVerifying(false);
     }
   };
 
+  const stepSubtitle =
+    registrationStep === "info"
+      ? "Hesap bilgilerinizi girin"
+      : registrationStep === "media"
+        ? showExpertiseStep
+          ? "2/3 Profil fotoğrafı"
+          : "2/2 Profil fotoğrafı"
+        : "3/3 Uzmanlık bölgeleri";
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
+      <AppStatusBar />
       <View style={styles.topbar}>
         <TouchableOpacity
           style={styles.headerBtn}
-          onPress={() => router.back()}
+          onPress={handleRegistrationBack}
           accessibilityLabel="Geri"
         >
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -384,20 +615,46 @@ export default function RegisterScreen() {
         <View style={styles.headerRight} />
       </View>
       <KeyboardAwareScrollScreen
+        ref={scrollRef}
         behaviorContext="auth"
         headerHeight={56}
         backgroundColor="#fff"
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + insets.bottom }]}
       >
         {/* Header */}
         <View style={styles.formHeader}>
           <Text style={styles.formTitle}>Hesap Oluştur</Text>
-          <Text style={styles.formSubtitle}>ProParcel'e hoş geldiniz</Text>
+          <Text style={styles.formSubtitle}>
+            {registrationStep === "info" ? "ProParcel'e hoş geldiniz" : stepSubtitle}
+          </Text>
         </View>
 
         {/* Error Message */}
         {errors.general ? <Text style={styles.error}>{errors.general}</Text> : null}
 
+        {registrationStep === "media" ? (
+          <RegistrationMediaStep
+            memberType={memberType}
+            value={registrationMedia}
+            onChange={setRegistrationMedia}
+            onContinue={goToStepAfterMedia}
+            onSkip={goToStepAfterMedia}
+          />
+        ) : null}
+
+        {registrationStep === "expertise" ? (
+          <RegistrationExpertiseStep
+            mode={expertiseMode}
+            value={registrationExpertise}
+            onChange={setRegistrationExpertise}
+            onContinue={() => void proceedToOtp()}
+            onSkip={() => void proceedToOtp()}
+            busy={isSending}
+          />
+        ) : null}
+
+        {registrationStep === "info" ? (
+        <>
         {/* Member Type Selection */}
         <View style={styles.tabs}>
             <TouchableOpacity
@@ -453,100 +710,203 @@ export default function RegisterScreen() {
         {/* Form */}
         <View style={styles.form}>
             {/* First Name */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Ad *</Text>
-              <TextInput
-                style={[styles.input, errors.firstName && styles.inputError]}
-                placeholder="Adınız"
-                placeholderTextColor="#999"
-                value={firstName}
-                onChangeText={(text) => {
-                  setFirstName(text);
-                  if (errors.firstName) setErrors((e) => ({ ...e, firstName: "" }));
-                }}
-              />
-              {errors.firstName ? (
-                <Text style={styles.fieldError}>{errors.firstName}</Text>
-              ) : null}
-            </View>
+            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+              {({ onFocus, onBlur }) => (
+                <>
+                  <Text style={styles.label}>Ad *</Text>
+                  <TextInput
+                    style={[styles.input, errors.firstName && styles.inputError]}
+                    placeholder="Adınız"
+                    placeholderTextColor="#999"
+                    value={firstName}
+                    onChangeText={(text) => {
+                      setFirstName(text);
+                      if (errors.firstName) setErrors((e) => ({ ...e, firstName: "" }));
+                    }}
+                    onFocus={onFocus}
+                    onBlur={onBlur}
+                  />
+                  {errors.firstName ? (
+                    <Text style={styles.fieldError}>{errors.firstName}</Text>
+                  ) : null}
+                </>
+              )}
+            </ScrollInputWrap>
 
             {/* Last Name */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Soyad *</Text>
-              <TextInput
-                style={[styles.input, errors.lastName && styles.inputError]}
-                placeholder="Soyadınız"
-                placeholderTextColor="#999"
-                value={lastName}
-                onChangeText={(text) => {
-                  setLastName(text);
-                  if (errors.lastName) setErrors((e) => ({ ...e, lastName: "" }));
-                }}
-              />
-              {errors.lastName ? (
-                <Text style={styles.fieldError}>{errors.lastName}</Text>
-              ) : null}
-            </View>
+            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+              {({ onFocus, onBlur }) => (
+                <>
+                  <Text style={styles.label}>Soyad *</Text>
+                  <TextInput
+                    style={[styles.input, errors.lastName && styles.inputError]}
+                    placeholder="Soyadınız"
+                    placeholderTextColor="#999"
+                    value={lastName}
+                    onChangeText={(text) => {
+                      setLastName(text);
+                      if (errors.lastName) setErrors((e) => ({ ...e, lastName: "" }));
+                    }}
+                    onFocus={onFocus}
+                    onBlur={onBlur}
+                  />
+                  {errors.lastName ? (
+                    <Text style={styles.fieldError}>{errors.lastName}</Text>
+                  ) : null}
+                </>
+              )}
+            </ScrollInputWrap>
 
             {/* Email */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>E-posta *</Text>
-              <TextInput
-                style={[styles.input, errors.email && styles.inputError]}
-                placeholder="ornek@email.com"
-                placeholderTextColor="#999"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={email}
-                onChangeText={(text) => {
-                  setEmail(text);
-                  if (errors.email) setErrors((e) => ({ ...e, email: "" }));
-                }}
-              />
-              {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
-            </View>
+            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+              {({ onFocus, onBlur }) => (
+                <>
+                  <Text style={styles.label}>E-posta *</Text>
+                  <TextInput
+                    style={[styles.input, errors.email && styles.inputError]}
+                    placeholder="ornek@email.com"
+                    placeholderTextColor="#999"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    value={email}
+                    onChangeText={(text) => {
+                      setEmail(text);
+                      if (errors.email) setErrors((e) => ({ ...e, email: "" }));
+                    }}
+                    onFocus={onFocus}
+                    onBlur={onBlur}
+                  />
+                  {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
+                </>
+              )}
+            </ScrollInputWrap>
 
             {/* Phone */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Telefon *</Text>
-              <View style={styles.phoneInputContainer}>
-                <Text style={styles.phonePrefix}>+90</Text>
-                <TextInput
-                  style={[styles.input, styles.phoneInput, errors.phone && styles.inputError]}
-                  placeholder="5XX XXX XX XX"
-                  placeholderTextColor="#999"
-                  keyboardType="phone-pad"
-                  maxLength={10}
-                  value={phoneNumber}
-                  onChangeText={(text) => {
-                    setPhoneNumber(text.replace(/\D/g, ""));
-                    if (errors.phone) setErrors((e) => ({ ...e, phone: "" }));
-                  }}
-                />
-              </View>
-              {errors.phone ? <Text style={styles.fieldError}>{errors.phone}</Text> : null}
-            </View>
-
-            {/* Referral Code (optional) */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Referans Kodu (opsiyonel)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Referans kodun var mı?"
-                placeholderTextColor="#999"
-                value={referralCode}
-                onChangeText={setReferralCode}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            </View>
+            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+              {({ onFocus, onBlur }) => (
+                <>
+                  <Text style={styles.label}>Telefon *</Text>
+                  <View style={styles.phoneInputContainer}>
+                    <Text style={styles.phonePrefix}>+90</Text>
+                    <TextInput
+                      style={[styles.input, styles.phoneInput, errors.phone && styles.inputError]}
+                      placeholder="5XX XXX XX XX"
+                      placeholderTextColor="#999"
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                      value={phoneNumber}
+                      onChangeText={(text) => {
+                        setPhoneNumber(text.replace(/\D/g, ""));
+                        if (errors.phone) setErrors((e) => ({ ...e, phone: "" }));
+                      }}
+                      onFocus={onFocus}
+                      onBlur={onBlur}
+                    />
+                  </View>
+                  {errors.phone ? <Text style={styles.fieldError}>{errors.phone}</Text> : null}
+                </>
+              )}
+            </ScrollInputWrap>
 
             {/* Consultant Fields */}
             {memberType === "consultant" && (
               <>
                 <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Firma Seç</Text>
+                  <Text style={styles.label}>Danışman Tipi *</Text>
+                  <View style={styles.corporateTypeTabs}>
+                    {[
+                      { value: "emlak", label: "Emlak" },
+                      { value: "spk", label: "SPK" },
+                      { value: "lihkab", label: "LİHKAB" },
+                    ].map((item) => (
+                      <TouchableOpacity
+                        key={item.value}
+                        style={[
+                          styles.corporateTypeTab,
+                          consultantType === item.value && styles.corporateTypeTabActive,
+                        ]}
+                        onPress={() => {
+                          setConsultantType(item.value as ConsultantType);
+                          if (item.value !== "spk") setConsultantLicenseNo("");
+                          if (item.value === "lihkab") {
+                            setEducationLevel(null);
+                            setEducationDetails(EMPTY_EDUCATION_PICKER);
+                          }
+                          setErrors((e) => ({
+                            ...e,
+                            consultantType: "",
+                            consultantLicenseNo: "",
+                            educationLevel: "",
+                            universityId: "",
+                            departmentId: "",
+                          }));
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.corporateTypeTabText,
+                            consultantType === item.value && styles.corporateTypeTabTextActive,
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {errors.consultantType ? (
+                    <Text style={styles.fieldError}>{errors.consultantType}</Text>
+                  ) : null}
+                </View>
+
+                {consultantType === "spk" ? (
+                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                    {({ onFocus, onBlur }) => (
+                      <>
+                        <Text style={styles.label}>Lisans No *</Text>
+                        <TextInput
+                          style={[styles.input, errors.consultantLicenseNo && styles.inputError]}
+                          placeholder="SPK lisans numaranız"
+                          placeholderTextColor="#999"
+                          value={consultantLicenseNo}
+                          onChangeText={(text) => {
+                            setConsultantLicenseNo(text);
+                            if (errors.consultantLicenseNo) {
+                              setErrors((e) => ({ ...e, consultantLicenseNo: "" }));
+                            }
+                          }}
+                          onFocus={onFocus}
+                          onBlur={onBlur}
+                        />
+                        {errors.consultantLicenseNo ? (
+                          <Text style={styles.fieldError}>{errors.consultantLicenseNo}</Text>
+                        ) : null}
+                      </>
+                    )}
+                  </ScrollInputWrap>
+                ) : null}
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Adres Bilgileri *</Text>
+                  <Text style={styles.helperText}>
+                    Danışman kaydı için il, ilçe, mahalle ve açık adres bilgileri zorunludur.
+                  </Text>
+                  <AddressFormFields
+                    scrollRef={scrollRef}
+                    value={corporateAddress}
+                    onChange={(addr) => {
+                      setCorporateAddress(addr);
+                      setErrors((e) => ({ ...e, address: "", streetAndNumber: "" }));
+                    }}
+                    errors={{
+                      address: errors.address,
+                      streetAndNumber: errors.streetAndNumber,
+                    }}
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Firma Seç *</Text>
                   <TouchableOpacity
                     style={[styles.select2Button, errors.companyPicker && styles.inputError]}
                     onPress={() => {
@@ -568,18 +928,24 @@ export default function RegisterScreen() {
                   </TouchableOpacity>
                   {isCompanyPickerOpen ? (
                     <View style={styles.select2Dropdown}>
-                      <TextInput
-                        style={styles.select2SearchInput}
-                        placeholder="Firma adı ile ara"
-                        placeholderTextColor="#999"
-                        value={companySearchText}
-                        onChangeText={(text) => {
-                          setCompanySearchText(text);
-                          setCompanySearchError("");
-                        }}
-                        autoCapitalize="words"
-                        autoCorrect={false}
-                      />
+                      <ScrollInputWrap scrollRef={scrollRef}>
+                        {({ onFocus, onBlur }) => (
+                          <TextInput
+                            style={styles.select2SearchInput}
+                            placeholder="Firma adı ile arayın"
+                            placeholderTextColor="#999"
+                            value={companySearchText}
+                            onChangeText={(text) => {
+                              setCompanySearchText(text);
+                              setCompanySearchError("");
+                            }}
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                            onFocus={onFocus}
+                            onBlur={onBlur}
+                          />
+                        )}
+                      </ScrollInputWrap>
 
                       {isCompanySearching ? (
                         <View style={styles.companyPickerStatus}>
@@ -593,7 +959,7 @@ export default function RegisterScreen() {
                       ) : null}
 
                       {!isCompanySearching && !companySearchError && companySearchResults.length === 0 ? (
-                        <Text style={styles.helperText}>Firma adı yazarak listeden seçim yapın.</Text>
+                        <Text style={styles.helperText}>Firma adı yazarak listeden seçin.</Text>
                       ) : null}
 
                       {companySearchResults.length > 0 ? (
@@ -602,7 +968,7 @@ export default function RegisterScreen() {
                             const displayName = getCompanyDisplayName(company);
                             return (
                               <TouchableOpacity
-                                key={`${company.vergi_no}-${company.id || displayName}`}
+                                key={`${company.company_profile_id}-${displayName}`}
                                 style={styles.companyResultItem}
                                 onPress={() => {
                                   setSelectedCompany(company);
@@ -614,8 +980,10 @@ export default function RegisterScreen() {
                                 }}
                               >
                                 <Text style={styles.companyResultTitle}>{displayName}</Text>
-                                {company.vergi_dairesi ? (
-                                  <Text style={styles.companyResultMeta}>{company.vergi_dairesi}</Text>
+                                {company.corporate_type ? (
+                                  <Text style={styles.companyResultMeta}>
+                                    {company.corporate_type.toUpperCase()}
+                                  </Text>
                                 ) : null}
                               </TouchableOpacity>
                             );
@@ -628,8 +996,10 @@ export default function RegisterScreen() {
                     <View style={styles.selectedCompanyBox}>
                       <View style={styles.selectedCompanyText}>
                         <Text style={styles.selectedCompanyTitle}>{getCompanyDisplayName(selectedCompany)}</Text>
-                        {selectedCompany.vergi_dairesi ? (
-                          <Text style={styles.selectedCompanyMeta}>{selectedCompany.vergi_dairesi}</Text>
+                        {selectedCompany.corporate_type ? (
+                          <Text style={styles.selectedCompanyMeta}>
+                            {selectedCompany.corporate_type.toUpperCase()}
+                          </Text>
                         ) : null}
                       </View>
                       <TouchableOpacity
@@ -647,28 +1017,129 @@ export default function RegisterScreen() {
                     <Text style={styles.fieldError}>{errors.companyPicker}</Text>
                   ) : null}
                 </View>
+
+                {consultantType !== "lihkab" ? (
+                  <View style={styles.inputContainer}>
+                    <View style={styles.graduationTitleRow}>
+                      <Text style={styles.label}>Mezuniyet Bilgileri</Text>
+                      {consultantSpkFlow ? (
+                        <Text style={styles.graduationRequiredBadge}>* Zorunlu</Text>
+                      ) : null}
+                    </View>
+                    <View style={styles.graduationInfoNote}>
+                      <Ionicons name="information-circle-outline" size={18} color="#1d4ed8" />
+                      <Text style={styles.graduationInfoNoteText}>
+                        {getGraduationNoteText(consultantSpkFlow, "consultant")}
+                      </Text>
+                    </View>
+                    <View style={styles.educationOptions}>
+                      {[
+                        { value: 0, label: "Lise" },
+                        { value: 2, label: "Ön Lisans" },
+                        { value: 1, label: "Lisans" },
+                      ].map((item) => {
+                        const disabled = consultantSpkFlow && item.value === 0;
+                        return (
+                          <TouchableOpacity
+                            key={item.value}
+                            style={[
+                              styles.educationOption,
+                              disabled && styles.educationOptionDisabled,
+                              educationLevel === item.value && styles.educationOptionActive,
+                            ]}
+                            onPress={() => {
+                              if (disabled) return;
+                              setEducationLevel(item.value);
+                              if (item.value === 0) {
+                                setEducationDetails(EMPTY_EDUCATION_PICKER);
+                              } else {
+                                setEducationDetails((current) => ({
+                                  ...current,
+                                  departmentId: null,
+                                  departmentName: "",
+                                  customDepartment: "",
+                                }));
+                              }
+                              if (errors.educationLevel) {
+                                setErrors((e) => ({
+                                  ...e,
+                                  educationLevel: "",
+                                  universityId: "",
+                                  departmentId: "",
+                                }));
+                              }
+                            }}
+                            disabled={disabled}
+                          >
+                            <Text
+                              style={[
+                                styles.educationOptionText,
+                                disabled && styles.educationOptionTextDisabled,
+                                educationLevel === item.value && styles.educationOptionTextActive,
+                              ]}
+                            >
+                              {item.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {errors.educationLevel ? (
+                      <Text style={styles.fieldError}>{errors.educationLevel}</Text>
+                    ) : null}
+
+                    {(educationLevel === 1 || educationLevel === 2) ? (
+                      <EducationPickerFields
+                        scrollRef={scrollRef}
+                        educationLevel={educationLevel}
+                        value={educationDetails}
+                        required={consultantSpkFlow}
+                        onChange={(next) => {
+                          setEducationDetails(next);
+                          setErrors((e) => ({
+                            ...e,
+                            universityId: "",
+                            departmentId: "",
+                          }));
+                        }}
+                        errors={{
+                          universityId: errors.universityId,
+                          departmentId: errors.departmentId,
+                        }}
+                      />
+                    ) : null}
+                  </View>
+                ) : null}
               </>
             )}
+
+            {/* Referral Code — şimdilik gizli; deferred deep link kodu arka planda kullanılmaya devam eder */}
 
             {/* Corporate Fields */}
             {memberType === "corporate" && (
               <>
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Firma Marka/Ünvan *</Text>
-                  <TextInput
-                    style={[styles.input, errors.companyName && styles.inputError]}
-                    placeholder="Firma adı"
-                    placeholderTextColor="#999"
-                    value={companyName}
-                    onChangeText={(text) => {
-                      setCompanyName(text);
-                      if (errors.companyName) setErrors((e) => ({ ...e, companyName: "" }));
-                    }}
-                  />
-                  {errors.companyName ? (
-                    <Text style={styles.fieldError}>{errors.companyName}</Text>
-                  ) : null}
-                </View>
+                <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                  {({ onFocus, onBlur }) => (
+                    <>
+                      <Text style={styles.label}>Firma Marka/Ünvan *</Text>
+                      <TextInput
+                        style={[styles.input, errors.companyName && styles.inputError]}
+                        placeholder="Firma adı"
+                        placeholderTextColor="#999"
+                        value={companyName}
+                        onChangeText={(text) => {
+                          setCompanyName(text);
+                          if (errors.companyName) setErrors((e) => ({ ...e, companyName: "" }));
+                        }}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
+                      />
+                      {errors.companyName ? (
+                        <Text style={styles.fieldError}>{errors.companyName}</Text>
+                      ) : null}
+                    </>
+                  )}
+                </ScrollInputWrap>
 
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>Firma Tipi *</Text>
@@ -690,11 +1161,16 @@ export default function RegisterScreen() {
                             setEducationLevel(1);
                           } else if (item.value === "lihkab") {
                             setEducationLevel(null);
-                            setUniversityId("");
-                            setDepartmentId("");
-                            setCustomDepartment("");
+                            setEducationDetails(EMPTY_EDUCATION_PICKER);
                           }
-                          if (errors.corporateType) setErrors((e) => ({ ...e, corporateType: "" }));
+                          if (errors.corporateType) {
+                            setErrors((e) => ({
+                              ...e,
+                              corporateType: "",
+                              universityId: "",
+                              departmentId: "",
+                            }));
+                          }
                         }}
                       >
                         <Text
@@ -714,215 +1190,189 @@ export default function RegisterScreen() {
                 </View>
 
                 {corporateType === "spk" ? (
-                  <View style={styles.inputContainer}>
-                    <Text style={styles.label}>TC Kimlik No *</Text>
-                    <TextInput
-                      style={[styles.input, errors.spkTcNo && styles.inputError]}
-                      placeholder="11 haneli TC kimlik no"
-                      placeholderTextColor="#999"
-                      keyboardType="number-pad"
-                      maxLength={11}
-                      value={spkTcNo}
-                      onChangeText={(text) => {
-                        setSpkTcNo(text.replace(/\D/g, ""));
-                        if (errors.spkTcNo) setErrors((e) => ({ ...e, spkTcNo: "" }));
-                      }}
-                    />
-                    {errors.spkTcNo ? (
-                      <Text style={styles.fieldError}>{errors.spkTcNo}</Text>
-                    ) : null}
-                  </View>
+                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                    {({ onFocus, onBlur }) => (
+                      <>
+                        <Text style={styles.label}>TC Kimlik No *</Text>
+                        <TextInput
+                          style={[styles.input, errors.spkTcNo && styles.inputError]}
+                          placeholder="11 haneli TC kimlik no"
+                          placeholderTextColor="#999"
+                          keyboardType="number-pad"
+                          maxLength={11}
+                          value={spkTcNo}
+                          onChangeText={(text) => {
+                            setSpkTcNo(text.replace(/\D/g, ""));
+                            if (errors.spkTcNo) setErrors((e) => ({ ...e, spkTcNo: "" }));
+                          }}
+                          onFocus={onFocus}
+                          onBlur={onBlur}
+                        />
+                        {errors.spkTcNo ? (
+                          <Text style={styles.fieldError}>{errors.spkTcNo}</Text>
+                        ) : null}
+                      </>
+                    )}
+                  </ScrollInputWrap>
                 ) : null}
 
                 {corporateType === "lihkab" ? (
-                  <View style={styles.inputContainer}>
-                    <Text style={styles.label}>Büro No *</Text>
-                    <TextInput
-                      style={[styles.input, errors.officeNo && styles.inputError]}
-                      placeholder="Büro no"
-                      placeholderTextColor="#999"
-                      value={officeNo}
-                      onChangeText={(text) => {
-                        setOfficeNo(text);
-                        if (errors.officeNo) setErrors((e) => ({ ...e, officeNo: "" }));
-                      }}
-                    />
-                    {errors.officeNo ? (
-                      <Text style={styles.fieldError}>{errors.officeNo}</Text>
-                    ) : null}
-                  </View>
+                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                    {({ onFocus, onBlur }) => (
+                      <>
+                        <Text style={styles.label}>Büro No *</Text>
+                        <TextInput
+                          style={[styles.input, errors.officeNo && styles.inputError]}
+                          placeholder="Büro no"
+                          placeholderTextColor="#999"
+                          value={officeNo}
+                          onChangeText={(text) => {
+                            setOfficeNo(text);
+                            if (errors.officeNo) setErrors((e) => ({ ...e, officeNo: "" }));
+                          }}
+                          onFocus={onFocus}
+                          onBlur={onBlur}
+                        />
+                        {errors.officeNo ? (
+                          <Text style={styles.fieldError}>{errors.officeNo}</Text>
+                        ) : null}
+                      </>
+                    )}
+                  </ScrollInputWrap>
                 ) : null}
 
+                <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                  {({ onFocus, onBlur }) => (
+                    <>
+                      <Text style={styles.label}>Lisans / Yetki Belge No *</Text>
+                      <TextInput
+                        style={[
+                          styles.input,
+                          errors.companyLicenseNo && styles.inputError,
+                        ]}
+                        placeholder={corporateType === "emlak" ? "7 haneli TTBS yetki belge no" : "Lisans / yetki belge no"}
+                        placeholderTextColor="#999"
+                        value={companyLicenseNo}
+                        onChangeText={(text) => {
+                          setCompanyLicenseNo(corporateType === "emlak" ? text.replace(/\D/g, "") : text);
+                          if (errors.companyLicenseNo)
+                            setErrors((e) => ({ ...e, companyLicenseNo: "" }));
+                        }}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
+                      />
+                      {errors.companyLicenseNo ? (
+                        <Text style={styles.fieldError}>{errors.companyLicenseNo}</Text>
+                      ) : null}
+                    </>
+                  )}
+                </ScrollInputWrap>
+
                 <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Lisans / Yetki Belge No *</Text>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      errors.companyLicenseNo && styles.inputError,
-                    ]}
-                    placeholder={corporateType === "emlak" ? "7 haneli TTBS yetki belge no" : "Lisans / yetki belge no"}
-                    placeholderTextColor="#999"
-                    value={companyLicenseNo}
-                    onChangeText={(text) => {
-                      setCompanyLicenseNo(corporateType === "emlak" ? text.replace(/\D/g, "") : text);
-                      if (errors.companyLicenseNo)
-                        setErrors((e) => ({ ...e, companyLicenseNo: "" }));
+                  <Text style={styles.label}>Adres Bilgileri *</Text>
+                  <AddressFormFields
+                    scrollRef={scrollRef}
+                    value={corporateAddress}
+                    onChange={(addr) => {
+                      setCorporateAddress(addr);
+                      setErrors((e) => ({ ...e, address: "", streetAndNumber: "" }));
+                    }}
+                    errors={{
+                      address: errors.address,
+                      streetAndNumber: errors.streetAndNumber,
                     }}
                   />
-                  {errors.companyLicenseNo ? (
-                    <Text style={styles.fieldError}>{errors.companyLicenseNo}</Text>
-                  ) : null}
                 </View>
 
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Vergi No *</Text>
-                  <TextInput
-                    style={[styles.input, errors.vergiNo && styles.inputError]}
-                    placeholder="10 haneli kod"
-                    placeholderTextColor="#999"
-                    keyboardType="number-pad"
-                    maxLength={10}
-                    value={vergiNo}
-                    onChangeText={(text) => {
-                      setVergiNo(text.replace(/\D/g, ""));
-                      if (errors.vergiNo) setErrors((e) => ({ ...e, vergiNo: "" }));
-                    }}
-                  />
-                  {errors.vergiNo ? (
-                    <Text style={styles.fieldError}>{errors.vergiNo}</Text>
-                  ) : null}
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Vergi Dairesi *</Text>
-                  <TextInput
-                    style={[styles.input, errors.vergiDairesi && styles.inputError]}
-                    placeholder="Vergi dairesi adı"
-                    placeholderTextColor="#999"
-                    value={vergiDairesi}
-                    onChangeText={(text) => {
-                      setVergiDairesi(text);
-                      if (errors.vergiDairesi)
-                        setErrors((e) => ({ ...e, vergiDairesi: "" }));
-                    }}
-                  />
-                  {errors.vergiDairesi ? (
-                    <Text style={styles.fieldError}>{errors.vergiDairesi}</Text>
-                  ) : null}
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Adres *</Text>
-                  <TouchableOpacity
-                    style={[
-                      styles.select2Button,
-                      (errors.address || errors.streetAndNumber) && styles.inputError,
-                    ]}
-                    onPress={() => setShowCorporateAddressModal(true)}
-                    activeOpacity={0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.select2ButtonText,
-                        !corporateAddress.cityName && styles.select2Placeholder,
-                      ]}
-                    >
-                      {corporateAddress.cityName
-                        ? `${corporateAddress.cityName} / ${corporateAddress.districtName || "-"} / ${corporateAddress.quarterName || "-"}`
-                        : "İl, ilçe, mahalle ve sokak seçin"}
-                    </Text>
-                    <Ionicons name="chevron-down" size={18} color="#64748b" />
-                  </TouchableOpacity>
-                  {corporateAddress.streetAndNumber ? (
-                    <Text style={styles.helperText}>{corporateAddress.streetAndNumber}</Text>
-                  ) : null}
-                  {errors.address ? <Text style={styles.fieldError}>{errors.address}</Text> : null}
-                  {errors.streetAndNumber ? <Text style={styles.fieldError}>{errors.streetAndNumber}</Text> : null}
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Posta Kodu (opsiyonel)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Posta kodu"
-                    placeholderTextColor="#999"
-                    keyboardType="number-pad"
-                    maxLength={10}
-                    value={postalCode}
-                    onChangeText={(text) => setPostalCode(text.replace(/\D/g, ""))}
-                  />
-                </View>
-
-                {corporateType === "spk" ? (
+                {corporateType && corporateType !== "lihkab" ? (
                   <View style={styles.inputContainer}>
-                    <Text style={styles.label}>Mezuniyet Bilgileri *</Text>
+                    <View style={styles.graduationTitleRow}>
+                      <Text style={styles.label}>Mezuniyet Bilgileri</Text>
+                      {corporateType === "spk" ? (
+                        <Text style={styles.graduationRequiredBadge}>* Zorunlu</Text>
+                      ) : null}
+                    </View>
+                    <View style={styles.graduationInfoNote}>
+                      <Ionicons name="information-circle-outline" size={18} color="#1d4ed8" />
+                      <Text style={styles.graduationInfoNoteText}>
+                        {getGraduationNoteText(corporateType === "spk", "corporate")}
+                      </Text>
+                    </View>
                     <View style={styles.educationOptions}>
                       {[
                         { value: 0, label: "Lise" },
                         { value: 2, label: "Ön Lisans" },
                         { value: 1, label: "Lisans" },
-                      ].map((item) => (
-                        <TouchableOpacity
-                          key={item.value}
-                          style={[
-                            styles.educationOption,
-                            item.value !== 1 && styles.educationOptionDisabled,
-                            educationLevel === item.value && styles.educationOptionActive,
-                          ]}
-                          onPress={() => {
-                            setEducationLevel(item.value);
-                            if (errors.educationLevel) setErrors((e) => ({ ...e, educationLevel: "" }));
-                          }}
-                          disabled={item.value !== 1}
-                        >
-                          <Text
+                      ].map((item) => {
+                        const disabled = corporateType === "spk" && item.value !== 1;
+                        return (
+                          <TouchableOpacity
+                            key={item.value}
                             style={[
-                              styles.educationOptionText,
-                              item.value !== 1 && styles.educationOptionTextDisabled,
-                              educationLevel === item.value && styles.educationOptionTextActive,
+                              styles.educationOption,
+                              disabled && styles.educationOptionDisabled,
+                              educationLevel === item.value && styles.educationOptionActive,
                             ]}
+                            onPress={() => {
+                              if (disabled) return;
+                              setEducationLevel(item.value);
+                              if (item.value === 0) {
+                                setEducationDetails(EMPTY_EDUCATION_PICKER);
+                              } else {
+                                setEducationDetails((current) => ({
+                                  ...current,
+                                  departmentId: null,
+                                  departmentName: "",
+                                  customDepartment: "",
+                                }));
+                              }
+                              if (errors.educationLevel) {
+                                setErrors((e) => ({
+                                  ...e,
+                                  educationLevel: "",
+                                  universityId: "",
+                                  departmentId: "",
+                                }));
+                              }
+                            }}
+                            disabled={disabled}
                           >
-                            {item.label}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
+                            <Text
+                              style={[
+                                styles.educationOptionText,
+                                disabled && styles.educationOptionTextDisabled,
+                                educationLevel === item.value && styles.educationOptionTextActive,
+                              ]}
+                            >
+                              {item.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                     {errors.educationLevel ? (
                       <Text style={styles.fieldError}>{errors.educationLevel}</Text>
                     ) : null}
 
                     {(educationLevel === 1 || educationLevel === 2) ? (
-                      <>
-                        <TextInput
-                          style={[styles.input, styles.stackedInput, errors.universityId && styles.inputError]}
-                          placeholder="Üniversite ID *"
-                          placeholderTextColor="#999"
-                          keyboardType="number-pad"
-                          value={universityId}
-                          onChangeText={(text) => {
-                            setUniversityId(text.replace(/\D/g, ""));
-                            if (errors.universityId) setErrors((e) => ({ ...e, universityId: "" }));
-                          }}
-                        />
-                        {errors.universityId ? (
-                          <Text style={styles.fieldError}>{errors.universityId}</Text>
-                        ) : null}
-                        <TextInput
-                          style={[styles.input, styles.stackedInput]}
-                          placeholder="Bölüm ID (opsiyonel)"
-                          placeholderTextColor="#999"
-                          keyboardType="number-pad"
-                          value={departmentId}
-                          onChangeText={(text) => setDepartmentId(text.replace(/\D/g, ""))}
-                        />
-                        <TextInput
-                          style={[styles.input, styles.stackedInput]}
-                          placeholder="Bölüm listede yoksa yazın"
-                          placeholderTextColor="#999"
-                          value={customDepartment}
-                          onChangeText={setCustomDepartment}
-                        />
-                      </>
+                      <EducationPickerFields
+                        scrollRef={scrollRef}
+                        educationLevel={educationLevel}
+                        value={educationDetails}
+                        required={corporateType === "spk"}
+                        onChange={(next) => {
+                          setEducationDetails(next);
+                          setErrors((e) => ({
+                            ...e,
+                            universityId: "",
+                            departmentId: "",
+                          }));
+                        }}
+                        errors={{
+                          universityId: errors.universityId,
+                          departmentId: errors.departmentId,
+                        }}
+                      />
                     ) : null}
                   </View>
                 ) : null}
@@ -930,43 +1380,61 @@ export default function RegisterScreen() {
             )}
 
             {/* Password */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Şifre *</Text>
-              <TextInput
-                style={[styles.input, errors.password && styles.inputError]}
-                placeholder="En az 8 karakter"
-                placeholderTextColor="#999"
-                secureTextEntry
-                value={password}
-                onChangeText={(text) => {
-                  setPassword(text);
-                  if (errors.password) setErrors((e) => ({ ...e, password: "" }));
-                }}
-              />
-              {errors.password ? (
-                <Text style={styles.fieldError}>{errors.password}</Text>
-              ) : null}
-            </View>
+            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+              {({ onFocus, onBlur }) => (
+                <>
+                  <Text style={styles.label}>Şifre *</Text>
+                  <TextInput
+                    style={[styles.input, errors.password && styles.inputError, securePasswordInputStyle]}
+                    placeholder="En az 8 karakter"
+                    placeholderTextColor="#999"
+                    secureTextEntry
+                    value={password}
+                    onChangeText={(text) => {
+                      setPassword(text);
+                      if (errors.password) setErrors((e) => ({ ...e, password: "" }));
+                    }}
+                    autoComplete="password-new"
+                    textContentType="newPassword"
+                    onFocus={onFocus}
+                    onBlur={onBlur}
+                    {...securePasswordInputProps}
+                  />
+                  {errors.password ? (
+                    <Text style={styles.fieldError}>{errors.password}</Text>
+                  ) : null}
+                </>
+              )}
+            </ScrollInputWrap>
 
             {/* Password Confirm */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Şifre Tekrar *</Text>
-              <TextInput
-                style={[styles.input, errors.passwordConfirm && styles.inputError]}
-                placeholder="Şifrenizi tekrar girin"
-                placeholderTextColor="#999"
-                secureTextEntry
-                value={passwordConfirm}
-                onChangeText={(text) => {
-                  setPasswordConfirm(text);
-                  if (errors.passwordConfirm)
-                    setErrors((e) => ({ ...e, passwordConfirm: "" }));
-                }}
-              />
-              {errors.passwordConfirm ? (
-                <Text style={styles.fieldError}>{errors.passwordConfirm}</Text>
-              ) : null}
-            </View>
+            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+              {({ onFocus, onBlur }) => (
+                <>
+                  <Text style={styles.label}>Şifre Tekrar *</Text>
+                  <TextInput
+                    style={[styles.input, errors.passwordConfirm && styles.inputError, securePasswordInputStyle]}
+                    placeholder="Şifrenizi tekrar girin"
+                    placeholderTextColor="#999"
+                    secureTextEntry
+                    value={passwordConfirm}
+                    onChangeText={(text) => {
+                      setPasswordConfirm(text);
+                      if (errors.passwordConfirm)
+                        setErrors((e) => ({ ...e, passwordConfirm: "" }));
+                    }}
+                    autoComplete="password-new"
+                    textContentType="newPassword"
+                    onFocus={onFocus}
+                    onBlur={onBlur}
+                    {...securePasswordInputProps}
+                  />
+                  {errors.passwordConfirm ? (
+                    <Text style={styles.fieldError}>{errors.passwordConfirm}</Text>
+                  ) : null}
+                </>
+              )}
+            </ScrollInputWrap>
 
             {/* Devam - önce varlık kontrolü, yoksa OTP + modal */}
             <TouchableOpacity
@@ -981,6 +1449,8 @@ export default function RegisterScreen() {
               )}
             </TouchableOpacity>
           </View>
+        </>
+        ) : null}
 
         {/* Login Link */}
         <View style={styles.footer}>
@@ -992,19 +1462,6 @@ export default function RegisterScreen() {
 
         <LandingLegalFooter tone="light" />
       </KeyboardAwareScrollScreen>
-
-      <AddressPickerModal
-        visible={showCorporateAddressModal}
-        title="Kurumsal Adres"
-        initialValue={corporateAddress}
-        saveLabel="Adresi Seç"
-        onCancel={() => setShowCorporateAddressModal(false)}
-        onSave={(addr) => {
-          setCorporateAddress(addr);
-          setShowCorporateAddressModal(false);
-          setErrors((e) => ({ ...e, address: "", streetAndNumber: "" }));
-        }}
-      />
 
       {/* OTP Onay Modal */}
       <Modal
@@ -1040,9 +1497,9 @@ export default function RegisterScreen() {
             <TouchableOpacity
               style={styles.button}
               onPress={handleVerifyOTP}
-              disabled={isLoading}
+              disabled={isLoading || isVerifying}
             >
-              {isLoading ? (
+              {isLoading || isVerifying ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.buttonText}>Doğrula ve Kayıt Ol</Text>
@@ -1159,6 +1616,7 @@ const styles = StyleSheet.create({
     padding: 16,
     fontSize: 16,
     backgroundColor: "#fafafa",
+    color: INPUT_TEXT_COLOR,
   },
   inputError: {
     borderColor: "#dc3545",
@@ -1283,6 +1741,34 @@ const styles = StyleSheet.create({
   },
   educationOptionTextActive: {
     color: "#1a73e8",
+  },
+  graduationTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  graduationRequiredBadge: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#dc2626",
+  },
+  graduationInfoNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#eff6ff",
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  graduationInfoNoteText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#1e3a8a",
   },
   stackedInput: {
     marginTop: 10,

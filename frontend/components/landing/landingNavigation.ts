@@ -26,6 +26,8 @@ export function navigateLandingCapability(router: Router, id: string) {
       router.replace('index', { launch: '3d-designs' });
       break;
     case 'ai-drone':
+      router.push('ai-drone-hub');
+      break;
     case 'ai-video':
       router.push('ai-video-studio');
       break;

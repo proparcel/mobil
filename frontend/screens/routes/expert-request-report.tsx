@@ -42,6 +42,7 @@ const resolveImageUrl = (url: string | null | undefined): string | null => {
 import { launchImageLibrary } from 'react-native-image-picker';
 import { respondExpertRequest } from '../../services/expertRequestService';
 import { authJsonFetch, authFormFetch } from '../../services/apiClient';
+import { fetchTkgmParcelByAdaParsel } from '../../src/utils/tkgmParcelQuery';
 import AppBottomSheetModal from '../../components/app/AppBottomSheetModal';
 import { expertRequestCache, type CachedExpertRequestData } from '../../src/utils/expertRequestCache';
 import { getCreditsForEventType } from '../../services/giftRewardsService';
@@ -612,22 +613,15 @@ export default function ExpertRequestReportScreen() {
           console.log('[expert-request-report] Parametreler:', { tkgmValue, adaVal, parselVal });
           
           try {
-            // 1. TKGM verisini al (POST /api/tkgm_view/)
-            console.log('[expert-request-report] [1/2] TKGM verisi alınıyor...');
-            const tkgmResult = await authJsonFetch<any>(
-              `/api/tkgm_view/`,
-              { 
-                method: 'POST',
-                json: {
-                  mahalleTkgmValue: tkgmValue,
-                  ada: adaVal,
-                  parsel: parselVal,
-                  map_mode: '2d'
-                }
-              }
-            );
+            // 1. TKGM verisi — doğrudan cbsapi (backend tkgm_view yok)
+            console.log('[expert-request-report] [1/2] TKGM verisi alınıyor (doğrudan)...');
+            const tkgmResult = await fetchTkgmParcelByAdaParsel({
+              mahalleTkgmValue: tkgmValue,
+              ada: adaVal,
+              parsel: parselVal,
+            });
             
-            console.log('[expert-request-report] TKGM sonucu:', { ok: tkgmResult.ok, hasData: !!tkgmResult.data, error: tkgmResult.error });
+            console.log('[expert-request-report] TKGM sonucu:', { ok: tkgmResult.ok, hasData: tkgmResult.ok && !!tkgmResult.data, error: tkgmResult.ok ? undefined : tkgmResult.error });
             
             if (tkgmResult.ok && tkgmResult.data) {
               console.log('[expert-request-report] ✓ TKGM verisi alındı');

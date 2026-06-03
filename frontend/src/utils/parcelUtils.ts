@@ -1,4 +1,30 @@
-import { GeoJSONGeometry } from '../../src/types/parcelResponse';
+import type { RefObject } from 'react';
+import { Dimensions } from 'react-native';
+import { projectLngLatsBatch } from '../maps/drawing/shapeScreenProjection';
+import {
+  isFiniteScreenPoint,
+  isScreenPointInsideViewport,
+} from '../maps/drawing/mapOverlayProjection';
+import {
+  isMapOverlayViewportReady,
+  type MapOverlayViewport,
+} from '../maps/drawing/mapOverlayViewport';
+
+const PARCEL_VIEWPORT_PADDING_PX = 32;
+
+/** Basit sorgu sonrası kamera: çok uzaklaşmayı önler, çok yakınlaşmayı sınırlar */
+export const SIMPLE_QUERY_MIN_ZOOM = 14;
+export const SIMPLE_QUERY_MAX_ZOOM = 16;
+
+function clampSimpleQueryZoom(zoom: number): number {
+  return Math.max(SIMPLE_QUERY_MIN_ZOOM, Math.min(zoom, SIMPLE_QUERY_MAX_ZOOM));
+}
+
+function resolveMapViewport(viewport: MapOverlayViewport): MapOverlayViewport {
+  if (isMapOverlayViewportReady(viewport)) return viewport;
+  const { width, height } = Dimensions.get('window');
+  return { width, height };
+}
 
 /**
  * Bir noktanın parsel polygon içinde olup olmadığını kontrol et (ray-casting algoritması)
@@ -93,52 +119,245 @@ export const normalizeGeometryCoordinates = (geometry: any): any => {
 };
 
 /**
+ * Parsel geometrisinin dış halka koordinatlarını toplar.
+ */
+export function collectParcelRingCoords(geometry: any): [number, number][] {
+  const allCoords: [number, number][] = [];
+  if (geometry?.type === 'Polygon' && geometry.coordinates?.[0]) {
+    for (const coord of geometry.coordinates[0]) {
+      if (coord && coord.length >= 2) allCoords.push([coord[0], coord[1]]);
+    }
+  } else if (geometry?.type === 'MultiPolygon' && geometry.coordinates) {
+    for (const polygon of geometry.coordinates) {
+      const ring = polygon?.[0];
+      if (!ring) continue;
+      for (const coord of ring) {
+        if (coord && coord.length >= 2) allCoords.push([coord[0], coord[1]]);
+      }
+    }
+  }
+  return allCoords;
+}
+
+export function getGeometryBoundingBox(
+  geometry: any
+): { minLon: number; minLat: number; maxLon: number; maxLat: number } | null {
+  const allCoords = collectParcelRingCoords(geometry);
+  if (!allCoords.length) return null;
+  let minLon = allCoords[0][0];
+  let maxLon = allCoords[0][0];
+  let minLat = allCoords[0][1];
+  let maxLat = allCoords[0][1];
+  for (const [lon, lat] of allCoords) {
+    minLon = Math.min(minLon, lon);
+    maxLon = Math.max(maxLon, lon);
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+  }
+  return { minLon, minLat, maxLon, maxLat };
+}
+
+/**
+ * Parsel poligonunun tüm köşeleri harita görünümünde mi?
+ * null = harita/projeksiyon hazır değil (kamera dokunma).
+ */
+export async function isParcelGeometryFullyVisible(
+  mapRef: RefObject<any>,
+  geometry: any,
+  viewport: MapOverlayViewport,
+  paddingPx = PARCEL_VIEWPORT_PADDING_PX
+): Promise<boolean | null> {
+  if (!geometry) return null;
+  const coords = collectParcelRingCoords(geometry);
+  if (!coords.length) return null;
+
+  const resolvedViewport = resolveMapViewport(viewport);
+  const projected = await projectLngLatsBatch(mapRef, coords);
+  const insetViewport: MapOverlayViewport = {
+    width: Math.max(0, resolvedViewport.width - paddingPx * 2),
+    height: Math.max(0, resolvedViewport.height - paddingPx * 2),
+  };
+  if (insetViewport.width <= 0 || insetViewport.height <= 0) return null;
+
+  let validCount = 0;
+  for (const p of projected) {
+    if (!isFiniteScreenPoint(p)) continue;
+    validCount += 1;
+    const adjusted: [number, number] = [p[0] - paddingPx, p[1] - paddingPx];
+    if (!isScreenPointInsideViewport(adjusted, insetViewport)) return false;
+  }
+  if (validCount === 0) return null;
+  return true;
+}
+
+export type FitParcelInViewIfNeededArgs = {
+  mapRef: RefObject<any>;
+  cameraRef: RefObject<any>;
+  camRef?: RefObject<{ pitch?: number; zoom?: number }>;
+  geometry: any;
+  viewport: MapOverlayViewport;
+  currentZoom: number;
+  currentPitch?: number;
+  animationDuration?: number;
+  paddingPx?: number;
+  isProgrammaticMoveRef?: RefObject<boolean>;
+  programmaticTimerRef?: RefObject<ReturnType<typeof setTimeout> | null>;
+};
+
+function applySimpleQueryCamera(
+  cameraRef: RefObject<any>,
+  center: [number, number],
+  zoom: number,
+  pitch: number,
+  animationDuration: number,
+  camRef?: RefObject<{ pitch?: number; zoom?: number }>,
+  isProgrammaticMoveRef?: RefObject<boolean>,
+  programmaticTimerRef?: RefObject<ReturnType<typeof setTimeout> | null>
+): void {
+  if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = true;
+  if (programmaticTimerRef?.current) clearTimeout(programmaticTimerRef.current);
+
+  cameraRef.current.setCamera({
+    centerCoordinate: center,
+    zoomLevel: zoom,
+    pitch,
+    animationDuration,
+  });
+
+  if (camRef?.current) {
+    camRef.current.zoom = zoom;
+  }
+
+  if (programmaticTimerRef) {
+    programmaticTimerRef.current = setTimeout(() => {
+      if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = false;
+    }, animationDuration + 80);
+  }
+}
+
+/**
+ * Basit sorgu sonrası kamera:
+ * - Parsel ekrandaysa ve zoom ≥ 14 ise dokunma.
+ * - Zoom < 14 ise parsele odaklanıp en az 14'e getir (16'dan fazla yakınlaşmaz).
+ * - Parsel ekran dışındaysa parsele odaklan; zoom 14–16 aralığında sığdır.
+ */
+export async function fitParcelInViewIfNeeded({
+  mapRef,
+  cameraRef,
+  camRef,
+  geometry,
+  viewport,
+  currentZoom,
+  currentPitch = 0,
+  animationDuration = 900,
+  paddingPx = PARCEL_VIEWPORT_PADDING_PX,
+  isProgrammaticMoveRef,
+  programmaticTimerRef,
+}: FitParcelInViewIfNeededArgs): Promise<boolean> {
+  if (!geometry || !cameraRef?.current?.setCamera) return false;
+
+  const normalizedGeometry = normalizeGeometryCoordinates(geometry);
+  const fullyVisible = await isParcelGeometryFullyVisible(
+    mapRef,
+    normalizedGeometry,
+    viewport,
+    paddingPx
+  );
+
+  const fitSettings = calculateBoundsAndCamera(normalizedGeometry);
+  if (!fitSettings) return false;
+
+  const safeCurrentZoom =
+    typeof currentZoom === 'number' && Number.isFinite(currentZoom) ? currentZoom : fitSettings.zoom;
+  const fitZoom = clampSimpleQueryZoom(fitSettings.zoom);
+
+  // null = belirsiz → kameraya dokunma
+  if (fullyVisible === null) return false;
+
+  let targetZoom: number | null = null;
+  if (fullyVisible === true) {
+    if (safeCurrentZoom >= SIMPLE_QUERY_MIN_ZOOM) return false;
+    targetZoom = SIMPLE_QUERY_MIN_ZOOM;
+  } else {
+    targetZoom =
+      safeCurrentZoom < fitZoom ? fitZoom : Math.min(safeCurrentZoom, fitZoom);
+  }
+
+  applySimpleQueryCamera(
+    cameraRef,
+    fitSettings.center,
+    targetZoom,
+    currentPitch,
+    animationDuration,
+    camRef,
+    isProgrammaticMoveRef,
+    programmaticTimerRef
+  );
+
+  return true;
+}
+
+export type ZoomMapToParcelGeometryArgs = {
+  cameraRef: RefObject<any>;
+  camRef?: RefObject<{ pitch?: number; zoom?: number }>;
+  geometry: any;
+  animationDuration?: number;
+  isProgrammaticMoveRef?: RefObject<boolean>;
+  programmaticTimerRef?: RefObject<ReturnType<typeof setTimeout> | null>;
+};
+
+/** Parsel geometrisine merkezlenir ve bbox'a göre zoom in yapar. */
+export function zoomMapToParcelGeometry({
+  cameraRef,
+  camRef,
+  geometry,
+  animationDuration = 900,
+  isProgrammaticMoveRef,
+  programmaticTimerRef,
+}: ZoomMapToParcelGeometryArgs): boolean {
+  if (!geometry || !cameraRef?.current?.setCamera) return false;
+
+  const normalizedGeometry = normalizeGeometryCoordinates(geometry);
+  const fitSettings = calculateBoundsAndCamera(normalizedGeometry);
+  if (!fitSettings) return false;
+
+  if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = true;
+  if (programmaticTimerRef?.current) clearTimeout(programmaticTimerRef.current);
+
+  cameraRef.current.setCamera({
+    centerCoordinate: fitSettings.center,
+    zoomLevel: fitSettings.zoom,
+    pitch: camRef?.current?.pitch ?? 0,
+    animationDuration,
+  });
+
+  if (camRef?.current) {
+    camRef.current.zoom = fitSettings.zoom;
+  }
+
+  if (programmaticTimerRef) {
+    programmaticTimerRef.current = setTimeout(() => {
+      if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = false;
+    }, animationDuration + 80);
+  }
+
+  return true;
+}
+
+/**
  * Parsel polygon için bounding box hesapla ve kamera ayarlarını döndür
  */
 export const calculateBoundsAndCamera = (geometry: any): { center: [number, number]; zoom: number } | null => {
   try {
-    let allCoords: [number, number][] = [];
-    
-    // Tüm koordinatları topla
-    if (geometry.type === 'Polygon' && geometry.coordinates && geometry.coordinates[0]) {
-      // Polygon: coordinates[0] dış halka
-      const ring = geometry.coordinates[0];
-      for (const coord of ring) {
-        if (coord && coord.length >= 2) {
-          allCoords.push([coord[0], coord[1]]); // [lon, lat]
-        }
-      }
-    } else if (geometry.type === 'MultiPolygon' && geometry.coordinates) {
-      // MultiPolygon: her polygon için koordinatları topla
-      for (const polygon of geometry.coordinates) {
-        if (polygon && polygon[0]) {
-          const ring = polygon[0];
-          for (const coord of ring) {
-            if (coord && coord.length >= 2) {
-              allCoords.push([coord[0], coord[1]]);
-            }
-          }
-        }
-      }
-    }
+    const allCoords = collectParcelRingCoords(geometry);
     
     if (allCoords.length === 0) {
       return null;
     }
     
-    // Bounding box hesapla
-    let minLon = allCoords[0][0];
-    let maxLon = allCoords[0][0];
-    let minLat = allCoords[0][1];
-    let maxLat = allCoords[0][1];
-    
-    for (const [lon, lat] of allCoords) {
-      minLon = Math.min(minLon, lon);
-      maxLon = Math.max(maxLon, lon);
-      minLat = Math.min(minLat, lat);
-      maxLat = Math.max(maxLat, lat);
-    }
-    
+    const bbox = getGeometryBoundingBox(geometry);
+    if (!bbox) return null;
+    const { minLon, maxLon, minLat, maxLat } = bbox;
     // Merkez hesapla
     const centerLon = (minLon + maxLon) / 2;
     const centerLat = (minLat + maxLat) / 2;

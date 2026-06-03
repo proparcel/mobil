@@ -12,10 +12,12 @@ import type {
   CompanyProfile,
   CompanyMembershipRequest,
   CompanyCreditAllocationsData,
+  RegistrationCompanyItem,
 } from "../src/types/auth";
 
 // API Endpoints (Tümü JWT destekli)
 const COMPANY_ENDPOINTS = {
+  LIST: "/api/auth/company/list/",
   SEARCH: "/api/auth/company/exists/",
   REQUEST: "/api/profile/company/request/",
   APPROVE: (requestId: number) => `/api/profile/company/approve/${requestId}/`,
@@ -233,7 +235,58 @@ async function authFormPost<T>(
  */
 class CompanyService {
   /**
-   * Vergi numarasına göre firma ara
+   * Danışman kayıt / profil firma bağlantısı — firma listesi
+   */
+  async listCompaniesForRegistration(
+    q = "",
+    limit = 20,
+  ): Promise<ApiResponse<RegistrationCompanyItem[]>> {
+    return authService.listCompaniesForRegistration(q, limit);
+  }
+
+  /**
+   * Kurumsal profil id ile firma doğrula — GET /api/auth/company/exists/
+   */
+  async searchCompanyByProfileId(
+    companyProfileId: number,
+  ): Promise<ApiResponse<{ company: CompanyProfile }>> {
+    const id = Number(companyProfileId);
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: "Geçerli bir firma seçin." };
+    }
+
+    const response = await authFetch<{
+      exists: boolean;
+      company_profile_id: number;
+      company_name?: string;
+      corporate_type?: "emlak" | "spk" | "lihkab" | null;
+    }>(`${COMPANY_ENDPOINTS.SEARCH}?company_profile_id=${id}`, {
+      method: "GET",
+    });
+
+    if (response.success && response.data?.exists) {
+      return {
+        success: true,
+        message: response.message || "Firma bulundu",
+        data: {
+          company: {
+            id: response.data.company_profile_id,
+            company_name: response.data.company_name || "Firma adı belirtilmemiş",
+            vergi_no: null,
+            corporate_type: response.data.corporate_type || null,
+          } as CompanyProfile,
+        },
+      };
+    }
+
+    return {
+      success: false,
+      message: response.message || "Firma bulunamadı.",
+    };
+  }
+
+  /**
+   * @deprecated searchCompanyByProfileId kullanın
    */
   async searchCompanyByVergiNo(
     vergiNo: string
@@ -281,28 +334,23 @@ class CompanyService {
   }
 
   /**
-   * Firma bağlantı isteği gönder
+   * Firma bağlantı isteği gönder — POST /api/profile/company/request/
    */
   async requestCompanyMembership(
-    vergiNo: string
+    companyProfileId: number,
   ): Promise<ApiResponse<{ message: string }>> {
-    const normalized = vergiNo.replace(/\D/g, "");
-
-    if (normalized.length !== 10) {
+    const id = Number(companyProfileId);
+    if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
-        message: "Geçerli bir vergi numarası girin (10 haneli).",
+        message: "Geçerli bir firma seçin.",
       };
     }
 
-    // JSON API ile gönder
-    return authFetch<{ message: string }>(
-      COMPANY_ENDPOINTS.REQUEST,
-      {
-        method: "POST",
-        body: JSON.stringify({ vergi_no: normalized }),
-      }
-    );
+    return authFetch<{ message: string }>(COMPANY_ENDPOINTS.REQUEST, {
+      method: "POST",
+      body: JSON.stringify({ company_profile_id: id }),
+    });
   }
 
   /**

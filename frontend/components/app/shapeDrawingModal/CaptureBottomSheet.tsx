@@ -1,7 +1,7 @@
 /**
  * 3D Model Editör – Capture Bottom Sheet
  * Thumbnail galerisi + seçim modu. Sürükle bırak ile açılır/kapatılır.
- * snapPoints: ["10%", "55%", "90%"] - minimize, yarım, tam
+ * snapPoints: ["18%", "62%", "90%"] - minimize, yarım, tam
  */
 
 import React, { useMemo } from "react";
@@ -16,7 +16,9 @@ import {
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppBottomSheetModal from "../AppBottomSheetModal";
+import { sheetEditorScrollBottomPadding } from "@/src/utils/sheetSafeArea";
 import type { CaptureItem } from "@/src/utils/captureGallery";
 
 type Props = {
@@ -57,6 +59,7 @@ export const CaptureBottomSheet: React.FC<Props> = ({
   onShareSelected,
   onDeleteSelected,
 }) => {
+  const insets = useSafeAreaInsets();
   const selectedCount = selectedIds.size;
   const hasSelection = selectedCount > 0;
 
@@ -188,7 +191,8 @@ export const CaptureBottomSheet: React.FC<Props> = ({
     <AppBottomSheetModal
       visible={visible}
       onClose={onClose}
-      snapPoints={["10%", "55%", "90%"]}
+      flushToScreenBottom
+      snapPoints={["18%", "62%", "90%"]}
       initialIndex={Math.min(initialSnapIndex ?? 0, 2)}
       enablePanDownToClose={true}
       backdropPressBehavior="collapse"
@@ -197,7 +201,10 @@ export const CaptureBottomSheet: React.FC<Props> = ({
       handleIndicatorStyle={styles.handleIndicator}
     >
       <BottomSheetScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: sheetEditorScrollBottomPadding(insets.bottom, 12) },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {renderContent()}
@@ -217,7 +224,7 @@ const styles = StyleSheet.create({
     width: 42,
   },
   scrollContent: {
-    paddingBottom: 24,
+    paddingBottom: 12,
   },
   controlBar: {
     flexDirection: "row",

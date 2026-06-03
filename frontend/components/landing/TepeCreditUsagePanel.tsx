@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { creditService, type GiftRewardItem } from '../../services/creditService';
 import { LandingNewPlatformBadge } from './LandingNewPlatformBadge';
+import { LandingLegalFooter } from './LandingLegalFooter';
 import { TepeCreditTopBar } from './TepeCreditTopBar';
 import { TepeCreditUsageCard } from './TepeCreditUsageCard';
 import { tepeCreditColors } from './tepeCreditTheme';
@@ -119,6 +120,7 @@ export function TepeCreditUsagePanel({ reveal, onBack, onHelp, onBuyPackages }: 
               ))}
             </View>
           ) : null}
+          <LandingLegalFooter variant="scroll" tone="dark" />
         </ScrollView>
       </Animated.View>
     </View>

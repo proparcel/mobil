@@ -4,20 +4,18 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   ScrollView,
-  StatusBar,
   StyleSheet,
   View,
 } from 'react-native';
+import { AppStatusBar } from '../app/AppStatusBar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LandingBottomNav, type LandingNavTab } from './LandingBottomNav';
 import { LandingHeroBackground } from './LandingHeroBackground';
 import { LandingHomePanel } from './LandingHomePanel';
-import { LandingLegalFooter } from './LandingLegalFooter';
 import type { LandingCapabilityId } from './landingCapabilities';
 import type { GiftRewardItem } from '../../services/creditService';
 import { TepeCreditEarnPanel } from './TepeCreditEarnPanel';
 import { TepeCreditUsagePanel } from './TepeCreditUsagePanel';
-import { LANDING_LEGAL_DOCK_HEIGHT } from './landingTheme';
 
 const PAGE_COUNT = 3;
 
@@ -25,7 +23,6 @@ type Props = {
   reveal: boolean;
   onMenuPress: () => void;
   onNotificationsPress: () => void;
-  onSignUp: () => void;
   onPartnerDetails: () => void;
   onFeaturePress: (id: LandingCapabilityId) => void;
   onGoToMap: () => void;
@@ -39,7 +36,6 @@ export function LandingPager({
   reveal,
   onMenuPress,
   onNotificationsPress,
-  onSignUp,
   onPartnerDetails,
   onFeaturePress,
   onGoToMap,
@@ -52,8 +48,7 @@ export function LandingPager({
   const [pageIndex, setPageIndex] = useState(0);
   const { width } = Dimensions.get('window');
   const insets = useSafeAreaInsets();
-  const legalDockBottom = 78 + Math.max(insets.bottom, 12);
-  const dotsBottom = legalDockBottom + LANDING_LEGAL_DOCK_HEIGHT + 8;
+  const dotsBottom = 88 + Math.max(insets.bottom, 12);
 
   const goToPage = useCallback(
     (index: number) => {
@@ -99,7 +94,7 @@ export function LandingPager({
 
   return (
     <LandingHeroBackground dimmed={!reveal}>
-      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <AppStatusBar />
 
       <ScrollView
         ref={scrollRef}
@@ -117,7 +112,7 @@ export function LandingPager({
             reveal={reveal}
             onMenuPress={onMenuPress}
             onNotificationsPress={onNotificationsPress}
-            onSignUp={onSignUp}
+            onStart={onGoToMap}
             onPartnerDetails={onPartnerDetails}
             onFeaturePress={onFeaturePress}
           />
@@ -144,9 +139,6 @@ export function LandingPager({
 
       {reveal ? (
         <>
-          <View style={[styles.legalDock, { bottom: legalDockBottom }]} pointerEvents="box-none">
-            <LandingLegalFooter variant="dock" tone="dark" />
-          </View>
           <View style={[styles.dots, { bottom: dotsBottom }]} pointerEvents="none">
             {[0, 1, 2].map((i) => (
               <View key={i} style={[styles.dot, pageIndex === i && styles.dotActive]} />
@@ -165,12 +157,6 @@ const styles = StyleSheet.create({
   },
   page: {
     flex: 1,
-  },
-  legalDock: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    zIndex: 2,
   },
   dots: {
     position: 'absolute',

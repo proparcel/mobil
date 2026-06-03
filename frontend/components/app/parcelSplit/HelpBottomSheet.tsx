@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-nati
 import AppBottomSheetModal from "../AppBottomSheetModal";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { parcelSplitTheme } from "./theme";
+import { sheetScrollBottomPadding } from "../../../src/utils/sheetSafeArea";
 
 type Props = {
   visible: boolean;
@@ -25,7 +26,7 @@ export function HelpBottomSheet({ visible, onClose, insetsBottom }: Props) {
       backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
       handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
     >
-      <View style={[styles.container, { paddingBottom: Math.max(insetsBottom, 16) }]}>
+      <View style={[styles.container, { paddingBottom: sheetScrollBottomPadding(insetsBottom, 16) }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Yardım</Text>
           <TouchableOpacity onPress={onClose} accessibilityLabel="Kapat">

@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import Slider from "@react-native-community/slider";
 import { BottomSheetScrollView, BottomSheetTextInput } from "@gorhom/bottom-sheet";
+import { sheetEditorScrollBottomPadding } from "@/src/utils/sheetSafeArea";
 import { TextInput as GHTextInput } from "react-native-gesture-handler";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import type {
@@ -210,7 +211,7 @@ export const BuildingCreateFormBody: React.FC<BuildingCreateFormBodyProps> = ({
           style={sheetStyles.scroll}
           contentContainerStyle={[
             sheetStyles.scrollContent,
-            { paddingBottom: 24 + Math.max(0, insetsBottom) },
+            { paddingBottom: sheetEditorScrollBottomPadding(insetsBottom, 12) },
           ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"

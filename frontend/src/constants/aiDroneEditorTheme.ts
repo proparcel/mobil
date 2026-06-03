@@ -1,0 +1,38 @@
+/** Web `ai-drone-video-editor.css` + `drone-editor.css` renkleri (mobil basit editör). */
+export const AI_DRONE_EDITOR_THEME = {
+  shell: "#0b1220",
+  toolbarBg: "#ffffff",
+  toolbarBorder: "#e2e8f0",
+  text: "#1e293b",
+  textOnDark: "#e5eefc",
+  muted: "#64748b",
+  mutedOnDark: "#94a3b8",
+  primary: "#1a5fb4",
+  primaryBright: "#38bdf8",
+  previewBg: "#020617",
+  cardBg: "#ffffff",
+  border: "#e2e8f0",
+  tabBar: "rgba(15, 23, 42, 0.92)",
+  tabActive: "#38bdf8",
+  safeLine: "rgba(255, 255, 255, 0.86)",
+  accentGreen: "#22c55e",
+} as const;
+
+export const PORTRAIT_SAFE_LINE_TOP_PCT = 11.4583;
+/** Web `.pp-de-portrait-safe-line--bottom` (1920px referans, 30px yukarı). */
+export const PORTRAIT_SAFE_LINE_BOTTOM_PCT = 85.9375;
+
+export const DEFAULT_PORTRAIT_SUBTITLE = {
+  enabled: true,
+  mode: "boxed" as const,
+  x: 0.5,
+  y: 0.12,
+  textColor: "#ffffff",
+  shadowEnabled: true,
+  shadowColor: "#020617",
+  shadowStrength: 0.85,
+  fontSize: 22,
+  maxWords: 5,
+  textAlign: "center" as const,
+  visibilityRanges: [] as unknown[],
+};

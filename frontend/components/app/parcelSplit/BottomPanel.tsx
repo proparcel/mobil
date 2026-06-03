@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { parcelSplitTheme } from "./theme";
+import { sheetScrollBottomPadding } from "../../../src/utils/sheetSafeArea";
 import type { SplitProfile, SplitMode, Orientation, UiMode } from "../../../src/types/parcelSplit";
 
 type Props = {
@@ -88,7 +89,7 @@ export function BottomPanel({
     (mode === "by_count" ? parseInt(targetCount, 10) >= 2 : parseFloat(targetArea) > 0);
 
   return (
-    <View style={[styles.root, { paddingBottom: Math.max(insetsBottom, 12) }]}>
+    <View style={[styles.root, { paddingBottom: sheetScrollBottomPadding(insetsBottom, 12) }]}>
       <TouchableOpacity
         style={styles.header}
         onPress={() => setCollapsed((c) => !c)}

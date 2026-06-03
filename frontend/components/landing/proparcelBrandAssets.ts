@@ -1,5 +1,5 @@
 /**
- * Web kaynak: `myapp/static/img/favicon.ico` (beyaz P, mavi küre).
- * PNG: favicon.ico’dan üretilir — eski Expo placeholder png kullanılmamalı.
+ * Kaynak: `media/logoSade.png` (sade P ikonu).
+ * Uygulama içi marka görseli ve Expo icon/splash/adaptive-icon ile aynı dosyadan üretilir.
  */
 export const proparcelFavicon = require('../../assets/images/favicon.png');

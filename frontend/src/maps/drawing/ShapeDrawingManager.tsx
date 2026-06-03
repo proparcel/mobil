@@ -4,6 +4,8 @@
  */
 
 import type { ShapeType, ShapeProperties, DrawShapeOptions } from './types';
+import { DEFAULT_MAP_PIN_VARIANT, normalizeMapPinVariant, toOpaqueColor } from './mapPinStyles';
+import { DEFAULT_MAP_ARROW_VARIANT, normalizeMapArrowVariant } from './mapArrowStyles';
 import { computeArrowHeadPolygon } from './shapeResizeUtils';
 import { layoutFieldsForTextBox } from './textBoxLayout';
 
@@ -259,18 +261,18 @@ export function createArrowShape(
     },
     outlineColor: options.outlineColor || '#2563eb',
     outlineWidth: options.outlineWidth || 2,
-    // Arrow head için ek geometry (render'da kullanılacak)
+    shapeSizePercent: 65,
     arrowHead,
+    arrowVariant: normalizeMapArrowVariant(options.arrowVariant ?? DEFAULT_MAP_ARROW_VARIANT),
   };
 }
 
 /**
- * Marker (Nokta) çizim
- * Tek nokta ile
+ * Marker (Harita iğnesi): tek dokunuşla yerleştir
  */
 export function createMarkerShape(
   point: [number, number],
-  options: DrawShapeOptions = {}
+  options: DrawShapeOptions = {},
 ): ShapeProperties {
   const shapeId = `shape-marker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
@@ -281,8 +283,10 @@ export function createMarkerShape(
       type: 'Point',
       coordinates: point,
     },
-    outlineColor: options.outlineColor || '#2563eb',
-    fillColor: options.fillColor || '#3b82f6',
+    outlineColor: toOpaqueColor(options.outlineColor, '#ffffff'),
+    fillColor: toOpaqueColor(options.fillColor, '#3b82f6'),
+    fillOpacity: 1,
+    pinVariant: normalizeMapPinVariant(options.pinVariant ?? DEFAULT_MAP_PIN_VARIANT),
   };
 }
 

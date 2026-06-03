@@ -17,7 +17,7 @@ import {
 } from '../../../src/types/parcelResponse';
 import { normalizeGeometryCoordinates, calculateBoundsAndCamera, isPointInParcel } from '../parcelUtils';
 import { extractNitelikText, generatePropertyTypeTitle } from '../propertyTypeUtils';
-import { API_URL } from "../../../config/api";
+import { fetchTkgmByIds } from '../tkgmApi';
 import { runProParcelQuery, ProQueryLimitError } from '../proQueryApi';
 
 /**
@@ -105,24 +105,11 @@ export const createHandleAdaParselSubmit = (
 
       const data: ParcelResponse = isProMode
         ? ((await runProParcelQuery(requestBody)) as ProParcelResponse)
-        : await (async () => {
-            const backendUrl = (API_URL || '').replace(/\/$/, '');
-            const fullUrl = `${backendUrl}/api/tkgm_view/`;
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000);
-            const response = await fetch(fullUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(requestBody),
-              signal: controller.signal,
-            });
-            clearTimeout(timeoutId);
-            if (!response.ok) {
-              const txt = await response.text().catch(() => '');
-              throw new Error(`HTTP ${response.status} ${txt}`);
-            }
-            return (await response.json()) as TkgmViewResponse;
-          })();
+        : ((await fetchTkgmByIds(
+            requestBody.mahalleTkgmValue,
+            requestBody.ada,
+            requestBody.parsel,
+          )) as TkgmViewResponse);
 
       // Geometry çıkar
       let geometry: GeoJSONGeometry | null = null;

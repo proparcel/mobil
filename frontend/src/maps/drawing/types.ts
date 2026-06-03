@@ -88,4 +88,6 @@ export interface DrawShapeOptions {
   outlineWidth?: number; // Default: 2
   fillOpacity?: number; // Default: 0.5
   text?: string; // Textbox için metin
+  pinVariant?: import("./mapPinStyles").MapPinVariant;
+  arrowVariant?: import("./mapArrowStyles").MapArrowVariant;
 }

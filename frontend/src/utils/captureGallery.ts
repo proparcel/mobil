@@ -7,12 +7,13 @@
 import RNFS from "react-native-fs";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Dimensions } from "react-native";
+import { capSnapDimensions } from "./screenshotManager";
 
 export function getModelEditorCaptureDimensions(): { mapWidth: number; mapHeight: number } {
   const { width: sw } = Dimensions.get("window");
   const mapWidth = Math.min(sw * 0.95, 800);
   const mapHeight = Math.floor(mapWidth * 1.4);
-  return { mapWidth, mapHeight };
+  return capSnapDimensions({ mapWidth, mapHeight });
 }
 
 const CAPTURE_DIR = "ProParcel/Captures";

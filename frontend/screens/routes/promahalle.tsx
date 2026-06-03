@@ -30,6 +30,7 @@ import { useRouter, useLocalSearchParams } from "../../src/hooks/useNavigation";
 import { parseTurkishPrice } from "../../src/utils/priceParser";
 import { useAuth } from "../contexts/AuthContext";
 import AppBottomSheetModal from "../../components/app/AppBottomSheetModal";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
 import { KeyboardAwareBody } from "../../components/app/KeyboardAwareBody";
 import { PromahalleQuarterSelect } from "../../components/app/PromahalleQuarterSelect";
 import { PromahalleMapLayers } from "../../components/app/PromahalleMapLayers";
@@ -2043,7 +2044,7 @@ export default function PromahalleScreen() {
       >
         <View style={ps.postMenuBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setPostActionMenuId(null)} />
-          <View style={[ps.postMenuSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <View style={[ps.postMenuSheet, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 16) }]}>
             <TouchableOpacity
               style={ps.postMenuItem}
               onPress={() => {
@@ -2084,7 +2085,7 @@ export default function PromahalleScreen() {
         snapPoints={["70%", "92%"]}
         variant="light"
       >
-        <BottomSheetScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 28 }}>
+        <BottomSheetScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: sheetScrollBottomPadding(insets.bottom, 28) }}>
           <Text style={ps.sheetTitle}>Mahalle puanı & değerlendirme</Text>
           <Text style={ps.sheetSubtitle}>
             Topluluk yıldızları ve kriterler; web mahalle bilgileri ile aynı soru seti.
@@ -2109,7 +2110,7 @@ export default function PromahalleScreen() {
         variant="light"
         backdropPressBehavior="close"
       >
-        <BottomSheetScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}>
+        <BottomSheetScrollView contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insets.bottom, 28) }}>
           <Text style={[ps.sheetTitle, { paddingHorizontal: 16 }]}>Harita menüsü</Text>
           <Text style={[ps.sheetSubtitle, { paddingHorizontal: 16 }]}>
             Web «Mahalle Bilgileri» sağ toolbar ile aynı katmanlar. Ek çizim araçları için tam sayfayı tarayıcıda açabilirsiniz.

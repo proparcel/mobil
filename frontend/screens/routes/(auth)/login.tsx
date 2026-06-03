@@ -23,6 +23,11 @@ import { parsePortalDetailLoginReturn } from "../../../src/utils/portalDetailAut
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 import { LandingLegalFooter } from "../../../components/landing/LandingLegalFooter";
 import { useScrollInputIntoView } from "../../../src/keyboard";
+import {
+  INPUT_TEXT_COLOR,
+  securePasswordInputProps,
+  securePasswordInputStyle,
+} from "../../../src/utils/passwordTextInput";
 
 type LoginMode = "email" | "phone";
 
@@ -215,17 +220,17 @@ export default function LoginScreen() {
             </View>
             <View ref={passwordWrapRef} collapsable={false} style={styles.passwordRow}>
               <TextInput
-                style={[styles.input, styles.passwordInput]}
+                style={[styles.input, styles.passwordInput, securePasswordInputStyle]}
                 placeholder="Şifre"
                 placeholderTextColor="#999"
                 secureTextEntry={!showPassword}
                 value={password}
                 onChangeText={setPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
                 textContentType="password"
+                autoComplete="password"
                 onFocus={scrollPasswordIntoView}
                 onBlur={scrollPasswordBlur}
+                {...securePasswordInputProps}
               />
               <TouchableOpacity
                 style={styles.passwordToggle}
@@ -284,7 +289,7 @@ export default function LoginScreen() {
             </View>
             <View ref={passwordWrapRef} collapsable={false} style={styles.passwordRow}>
               <TextInput
-                style={[styles.input, styles.passwordInput]}
+                style={[styles.input, styles.passwordInput, securePasswordInputStyle]}
                 placeholder="Şifre"
                 placeholderTextColor="#999"
                 secureTextEntry={!showPassword}
@@ -293,11 +298,11 @@ export default function LoginScreen() {
                   setPassword(text);
                   setError("");
                 }}
-                autoCapitalize="none"
-                autoCorrect={false}
                 textContentType="password"
+                autoComplete="password"
                 onFocus={scrollPasswordIntoView}
                 onBlur={scrollPasswordBlur}
+                {...securePasswordInputProps}
               />
               <TouchableOpacity
                 style={styles.passwordToggle}
@@ -437,7 +442,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 16,
     backgroundColor: "#fafafa",
-    color: "#333",
+    color: INPUT_TEXT_COLOR,
   },
   passwordRow: {
     flexDirection: "row",

@@ -1,13 +1,16 @@
-import React from "react";
+import React, { useState } from "react";
 import { Text, TouchableOpacity, View, StyleSheet } from "react-native";
 import Slider from "@react-native-community/slider";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import type { ShapeProperties, ShapeType } from "@/src/maps/drawing/types";
+import type { MeasurementMode, ToolboxAnnotationMode } from "@/src/utils/measurementManager";
+import type { MapPinVariant } from "@/src/maps/drawing/mapPinStyles";
+import type { MapArrowVariant } from "@/src/maps/drawing/mapArrowStyles";
+import { ColorPaletteField } from "./ColorPaletteField";
+import { PinStylePicker } from "./PinStylePicker";
+import { ArrowStylePicker } from "./ArrowStylePicker";
 
-const PRESET_COLORS = ["#dc2626", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#0f172a", "#ffffff"];
-
-/** Ana harita: ruler → distance; modal yalnızca distance | area kullanır. */
-export type ToolboxMeasurementMode = "distance" | "area" | "pin" | "text" | "arrow" | null;
+export type ToolboxMeasurementMode = MeasurementMode | ToolboxAnnotationMode;
 
 type Props = {
   visible: boolean;
@@ -31,6 +34,10 @@ type Props = {
   annotationColor?: string;
   onAnnotationColorChange?: (hex: string) => void;
   arrowFirstPoint?: [number, number] | null;
+  drawPinVariant?: MapPinVariant;
+  onSelectPinVariant?: (variant: MapPinVariant) => void;
+  drawArrowVariant?: MapArrowVariant;
+  onSelectArrowVariant?: (variant: MapArrowVariant) => void;
   selectedShape?: ShapeProperties | null;
   onDeleteSelectedShape?: () => void;
   openTextBoxEditor?: (shapeId: string) => void;
@@ -81,7 +88,13 @@ export const DrawingToolbox: React.FC<Props> = ({
   annotationColor = "#3b82f6",
   onAnnotationColorChange,
   arrowFirstPoint = null,
+  drawPinVariant = "classic",
+  onSelectPinVariant,
+  drawArrowVariant = "classic",
+  onSelectArrowVariant,
 }) => {
+  const [activeColorPicker, setActiveColorPicker] = useState<string | null>(null);
+
   if (!visible) return null;
 
   const measuring = measurementMode === "distance" || measurementMode === "area";
@@ -109,21 +122,16 @@ export const DrawingToolbox: React.FC<Props> = ({
               ? "İki nokta ile mesafe; yarım kalan ilk noktayı bitir ile iptal edebilirsiniz."
               : "Alan için en az 3 nokta; bitir ile poligonu kaydedin."}
           </Text>
-          <Text style={toolboxStyles.subLabel}>Ölçüm rengi</Text>
-          <View style={toolboxStyles.colorRow}>
-            {PRESET_COLORS.map((c) => (
-              <TouchableOpacity
-                key={`m-${c}`}
-                style={[
-                  toolboxStyles.colorDot,
-                  { backgroundColor: c },
-                  (measurementMode === "distance" ? rulerColor : areaColor) === c && toolboxStyles.colorDotActive,
-                  c === "#ffffff" && { borderWidth: 1, borderColor: "#64748b" },
-                ]}
-                onPress={() => (measurementMode === "distance" ? onRulerColorChange(c) : onAreaColorChange(c))}
-              />
-            ))}
-          </View>
+          <ColorPaletteField
+            label="Ölçüm rengi"
+            value={measurementMode === "distance" ? rulerColor : areaColor}
+            onSelect={(c) =>
+              measurementMode === "distance" ? onRulerColorChange(c) : onAreaColorChange(c)
+            }
+            pickerId="measure"
+            activePickerId={activeColorPicker}
+            setActivePickerId={setActiveColorPicker}
+          />
           <TouchableOpacity style={toolboxStyles.finishBtn} onPress={onFinishMeasurement} activeOpacity={0.85}>
             <Ionicons name="checkmark-circle" size={20} color="#fff" />
             <Text style={toolboxStyles.finishBtnText}>Mevcut ölçümü bitir</Text>
@@ -142,21 +150,22 @@ export const DrawingToolbox: React.FC<Props> = ({
                   ? "Ok bitiş noktasını seçin veya bitir ile başlangıcı iptal edin."
                   : "Ok başlangıç noktasını seçin."}
           </Text>
-          <Text style={toolboxStyles.subLabel}>İşaret rengi</Text>
-          <View style={toolboxStyles.colorRow}>
-            {PRESET_COLORS.map((c) => (
-              <TouchableOpacity
-                key={`a-${c}`}
-                style={[
-                  toolboxStyles.colorDot,
-                  { backgroundColor: c },
-                  annotationColor === c && toolboxStyles.colorDotActive,
-                  c === "#ffffff" && { borderWidth: 1, borderColor: "#64748b" },
-                ]}
-                onPress={() => onAnnotationColorChange?.(c)}
-              />
-            ))}
-          </View>
+          <ColorPaletteField
+            label="İşaret rengi"
+            value={annotationColor}
+            onSelect={(c) => onAnnotationColorChange?.(c)}
+            pickerId="annotate"
+            activePickerId={activeColorPicker}
+            setActivePickerId={setActiveColorPicker}
+          />
+          {measurementMode === "arrow" && onSelectArrowVariant ? (
+            <ArrowStylePicker
+              selected={drawArrowVariant}
+              onSelect={onSelectArrowVariant}
+              accentColor={annotationColor}
+              compact
+            />
+          ) : null}
           {measurementMode === "arrow" && Boolean(arrowFirstPoint) ? (
             <TouchableOpacity style={toolboxStyles.finishBtn} onPress={onFinishMeasurement} activeOpacity={0.85}>
               <Ionicons name="checkmark-circle" size={20} color="#fff" />
@@ -169,39 +178,23 @@ export const DrawingToolbox: React.FC<Props> = ({
       {!measuring && !annotating && editingSelection && selectedShape && (
         <>
           <Text style={toolboxStyles.hint}>Renk dokunuşu seçili şekle uygulanır.</Text>
-          <Text style={toolboxStyles.subLabel}>Çizgi rengi</Text>
-          <View style={toolboxStyles.colorRow}>
-            {PRESET_COLORS.map((c) => (
-              <TouchableOpacity
-                key={`so-${c}`}
-                style={[
-                  toolboxStyles.colorDot,
-                  { backgroundColor: c },
-                  (selectedShape.outlineColor || outlineColor) === c && toolboxStyles.colorDotActive,
-                  c === "#ffffff" && { borderWidth: 1, borderColor: "#64748b" },
-                ]}
-                onPress={() => onOutlineColorChange(c)}
-              />
-            ))}
-          </View>
+          <ColorPaletteField
+            label="Çizgi rengi"
+            value={selectedShape.outlineColor || outlineColor}
+            onSelect={onOutlineColorChange}
+            pickerId="sel-outline"
+            activePickerId={activeColorPicker}
+            setActivePickerId={setActiveColorPicker}
+          />
           {selectedSupportsFill(selectedShape) && (
-            <>
-              <Text style={toolboxStyles.subLabel}>Dolgu rengi</Text>
-              <View style={toolboxStyles.colorRow}>
-                {PRESET_COLORS.map((c) => (
-                  <TouchableOpacity
-                    key={`sf-${c}`}
-                    style={[
-                      toolboxStyles.colorDot,
-                      { backgroundColor: c },
-                      (selectedShape.fillColor || fillColor) === c && toolboxStyles.colorDotActive,
-                      c === "#ffffff" && { borderWidth: 1, borderColor: "#64748b" },
-                    ]}
-                    onPress={() => onFillColorChange(c)}
-                  />
-                ))}
-              </View>
-            </>
+            <ColorPaletteField
+              label="Dolgu rengi"
+              value={selectedShape.fillColor || fillColor}
+              onSelect={onFillColorChange}
+              pickerId="sel-fill"
+              activePickerId={activeColorPicker}
+              setActivePickerId={setActiveColorPicker}
+            />
           )}
           {selectedSupportsOutlineWidth(selectedShape) && selectedShape.type !== "marker" && (
             <>
@@ -242,44 +235,58 @@ export const DrawingToolbox: React.FC<Props> = ({
 
       {!measuring && !annotating && drawing && (
         <>
-          <Text style={toolboxStyles.subLabel}>Çizgi rengi</Text>
-          <View style={toolboxStyles.colorRow}>
-            {PRESET_COLORS.map((c) => (
-              <TouchableOpacity
-                key={`d-${c}`}
-                style={[
-                  toolboxStyles.colorDot,
-                  { backgroundColor: c },
-                  outlineColor === c && toolboxStyles.colorDotActive,
-                  c === "#ffffff" && { borderWidth: 1, borderColor: "#64748b" },
-                ]}
-                onPress={() => onOutlineColorChange(c)}
-              />
-            ))}
-          </View>
+          {shapeDrawingMode === "marker" && onSelectPinVariant ? (
+            <PinStylePicker
+              selected={drawPinVariant}
+              onSelect={onSelectPinVariant}
+              accentColor={outlineColor}
+              compact
+            />
+          ) : null}
+          {shapeDrawingMode === "arrow" && onSelectArrowVariant ? (
+            <ArrowStylePicker
+              selected={drawArrowVariant}
+              onSelect={onSelectArrowVariant}
+              accentColor={outlineColor}
+              compact
+            />
+          ) : null}
+          <ColorPaletteField
+            label={shapeDrawingMode === "marker" ? "Kenarlık" : "Çizgi rengi"}
+            value={outlineColor}
+            onSelect={onOutlineColorChange}
+            pickerId="draw-outline"
+            activePickerId={activeColorPicker}
+            setActivePickerId={setActiveColorPicker}
+          />
+          {shapeDrawingMode === "marker" ? (
+            <ColorPaletteField
+              label="İğne rengi"
+              value={fillColor.startsWith("rgba") || fillColor.startsWith("rgb(") ? outlineColor : fillColor}
+              onSelect={onFillColorChange}
+              pickerId="draw-pin-fill"
+              activePickerId={activeColorPicker}
+              setActivePickerId={setActiveColorPicker}
+            />
+          ) : null}
           {shapeDrawingMode &&
             shapeDrawingMode !== "marker" &&
             shapeDrawingMode !== "arrow" &&
             shapeDrawingMode !== "line" &&
             shapeDrawingMode !== "pen" &&
             shapeDrawingMode !== "freehand" && (
-            <>
-              <Text style={toolboxStyles.subLabel}>Dolgu rengi</Text>
-              <View style={toolboxStyles.colorRow}>
-                {PRESET_COLORS.map((c) => (
-                  <TouchableOpacity
-                    key={`df-${c}`}
-                    style={[
-                      toolboxStyles.colorDot,
-                      { backgroundColor: c },
-                      fillColor === c && toolboxStyles.colorDotActive,
-                      c === "#ffffff" && { borderWidth: 1, borderColor: "#64748b" },
-                    ]}
-                    onPress={() => onFillColorChange(c)}
-                  />
-                ))}
-              </View>
-            </>
+            <ColorPaletteField
+              label="Dolgu rengi"
+              value={
+                fillColor.startsWith("rgba") || fillColor.startsWith("rgb(")
+                  ? outlineColor
+                  : fillColor
+              }
+              onSelect={onFillColorChange}
+              pickerId="draw-fill"
+              activePickerId={activeColorPicker}
+              setActivePickerId={setActiveColorPicker}
+            />
           )}
           {showWidthRow(shapeDrawingMode) && (
             <>
@@ -330,16 +337,6 @@ const toolboxStyles = StyleSheet.create({
   title: { color: "#f8fafc", fontSize: 15, fontWeight: "700" },
   hint: { color: "#94a3b8", fontSize: 11, lineHeight: 15, marginBottom: 10 },
   subLabel: { color: "#cbd5e1", fontSize: 12, fontWeight: "600", marginBottom: 6, marginTop: 4 },
-  colorRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
-  colorDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-  },
-  colorDotActive: {
-    borderWidth: 2,
-    borderColor: "#f8fafc",
-  },
   slider: { width: "100%", height: 36, marginBottom: 4 },
   finishBtn: {
     flexDirection: "row",

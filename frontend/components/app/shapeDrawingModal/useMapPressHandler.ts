@@ -1,7 +1,9 @@
 import { useCallback } from "react";
 import { Alert } from "react-native";
 import type { ShapeProperties } from "@/src/maps/drawing/types";
-import { trySelectShapeAtLngLat, screenPointFromMapPressEvent } from "@/src/maps/drawing/shapePickAtLngLat";
+import { trySelectShapeAtLngLat } from "@/src/maps/drawing/shapePickAtLngLat";
+import type { MapOverlayViewport } from "@/src/maps/drawing/mapOverlayViewport";
+import { tryHitMeasurementGroupAtLngLat } from "./measurementMapHit";
 
 type Args = {
   shapeDrawingMode: any;
@@ -32,7 +34,7 @@ type Args = {
   };
   /** Kategoriye göre scale (CATEGORY_SCALE); gerçek ölçülerde çizim için hepsi [1,1,1]. */
   getScaleForModelId?: (modelId: string) => [number, number, number] | undefined;
-  /** Kategoriye göre Z offset (ev: 2.5 m pivot zeminde, diğer: 0.8 m). */
+  /** Kategoriye göre Z offset — API base_translation_z_m (pivot tabanda 0). */
   getTranslationForModelId?: (modelId: string) => [number, number, number] | undefined;
 
   // Usage count management
@@ -47,6 +49,9 @@ type Args = {
   /** Çizim şekillerine dokunma (metin kutusu MarkerView üstünde harita onPress ile) */
   shapes?: ShapeProperties[];
   onShapePress?: (shapeId: string) => void;
+  overlayViewport?: MapOverlayViewport;
+  measurementFeatures?: any[];
+  onMeasurementGroupPress?: (groupId: string) => void;
 };
 
 export function normalizeLngLat(coord: [number, number]): [number, number] | null {
@@ -158,6 +163,9 @@ export function useMapPressHandler({
   updateModelInstance,
   shapes,
   onShapePress,
+  overlayViewport,
+  measurementFeatures,
+  onMeasurementGroupPress,
 }: Args) {
   return useCallback(
     async (e: any) => {
@@ -196,8 +204,8 @@ export function useMapPressHandler({
       }
 
       if (onShapePress && shapes?.length) {
-        const screenPoint = screenPointFromMapPressEvent(e);
-        const hitId = await trySelectShapeAtLngLat(mapRef, c, shapes, screenPoint);
+        // lngLat → getPointInView (ana harita ile aynı); e.point 3D editörde viewport kayması yapabiliyor
+        const hitId = await trySelectShapeAtLngLat(mapRef, c, shapes, undefined, overlayViewport);
         if (hitId) {
           onShapePress(hitId);
           return;
@@ -304,6 +312,9 @@ export function useMapPressHandler({
       updateModelInstance,
       shapes,
       onShapePress,
+      overlayViewport,
+      measurementFeatures,
+      onMeasurementGroupPress,
     ]
   );
 }

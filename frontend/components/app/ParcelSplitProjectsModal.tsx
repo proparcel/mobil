@@ -28,6 +28,7 @@ import AppBottomSheetModal from "./AppBottomSheetModal";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { API_URL } from "../../config/api";
 import { storageService } from "../../services/storageService";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
 import { useRouter } from "../../src/hooks/useNavigation";
 
 type BackendProject = {
@@ -57,7 +58,7 @@ export default function ParcelSplitProjectsModal({ visible, onClose }: Props) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const listBottomPadding = useMemo(() => (insets.bottom || 0) + 24, [insets.bottom]);
+  const listBottomPadding = useMemo(() => sheetScrollBottomPadding(insets.bottom || 0, 24), [insets.bottom]);
   const snapPoints = useMemo(() => ["70%", "88%"], []);
 
   const getDjangoUrl = useCallback(() => {

@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "main": "index.js",
-  "version": "1.0.8",
+  "version": "2.0.3",
   "scripts": {
     "start": "set NODE_ENV=development&& react-native start",
     "start:tunnel": "npx expo start --tunnel --clear --scheme proparcel",
@@ -99,8 +99,10 @@
     "@turf/polygon-to-line": "^7.3.5",
     "@turf/rewind": "^7.3.5",
     "expo": "~54.0.34",
+    "expo-av": "~16.0.8",
     "expo-dev-client": "~6.0.21",
     "expo-document-picker": "~14.0.8",
+    "expo-image-picker": "~17.0.11",
     "expo-media-library": "~18.2.1",
     "expo-notifications": "^0.32.17",
     "polygon-clipping": "^0.15.7",
@@ -114,6 +116,7 @@
     "react-native-gesture-handler": "~2.28.0",
     "react-native-haptic-feedback": "^2.2.0",
     "react-native-html-to-pdf": "^0.12.0",
+    "react-native-iap": "^15.3.1",
     "react-native-image-picker": "^7.1.2",
     "react-native-inappbrowser-reborn": "^3.6.0",
     "react-native-keep-awake": "^4.0.0",

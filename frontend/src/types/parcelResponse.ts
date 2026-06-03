@@ -4,10 +4,9 @@
  * Bu dosya, iki farklı endpoint'in döndürdüğü veri yapılarını tanımlar:
  * 
  * ============================================================================
- * BASİT MOD (TKGM View) - /api/tkgm_view/
+ * BASİT MOD (TKGM) - doğrudan cbsapi.tkgm.gov.tr (mobil)
  * ============================================================================
- * - Endpoint: /api/tkgm_view/
- * - Backend: myapp/views/parcel.py -> tkgm_view()
+ * - Kaynak: src/utils/tkgmApi.ts
  * - Açıklama: TKGM'den gelen ham GeoJSON verisi
  * - Response Yapısı:
  *   {
@@ -58,7 +57,7 @@
  * 
  * Backend Kaynakları:
  * - Pro Mod: myapp/scripts/core/process_polygon_yeni.py
- * - Basit Mod: myapp/views/parcel.py -> tkgm_view()
+ * - Basit Mod: doğrudan TKGM API (mobil)
  * 
  * Dökümantasyon: myapp/static/docs/backend/process_polygon.md
  */
@@ -68,7 +67,7 @@
 // ============================================================================
 
 /**
- * Basit Mod Response - /api/tkgm_view/ endpoint'i
+ * Basit Mod Response - doğrudan TKGM GeoJSON
  * TKGM'den gelen ham GeoJSON verisi
  */
 export interface TkgmViewResponse {

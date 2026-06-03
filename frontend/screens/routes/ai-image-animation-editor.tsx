@@ -9,12 +9,12 @@ import {
   Image,
   ScrollView,
   StyleSheet,
-  StatusBar,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import { AppStatusBar } from "../../components/app/AppStatusBar";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { launchImageLibrary } from "react-native-image-picker";
@@ -185,52 +185,99 @@ export default function AiImageAnimationEditorScreen() {
       });
       if (!prep.ok) throw new Error(prep.error);
 
-      for (let i = 0; i < selected.length; i += 1) {
-        const slotNumber = i + 1;
-        const src = selected[i];
-        setMessage(`Görsel yükleniyor (${i + 1}/${selected.length})...`);
-        const pushed = await runwayPrepPushRef(prep.jobId, slotNumber, src.slot.image!);
-        if (!pushed.ok) throw new Error(pushed.error);
-      }
+      let uploaded = 0;
+      await Promise.all(
+        selected.map(async (src, i) => {
+          const slotNumber = i + 1;
+          const pushed = await runwayPrepPushRef(prep.jobId, slotNumber, src.slot.image!);
+          if (!pushed.ok) throw new Error(pushed.error);
+          uploaded += 1;
+          setMessage(`Görseller yükleniyor (${uploaded}/${selected.length})…`);
+        }),
+      );
 
-      for (let i = 0; i < selected.length; i += 1) {
-        const slotNumber = i + 1;
-        const srcIndex = selected[i].index;
-        setSlots((prev) => {
-          const next = [...prev];
-          next[srcIndex] = { ...next[srcIndex], busy: true };
-          return next;
-        });
-        setMessage(`OpenAI ile canlandırılıyor (${i + 1}/${selected.length})...`);
-
-        const started = await startImageAnimationAnimate({
-          jobId: prep.jobId,
-          slot: slotNumber,
-          promptText,
-          image: selected[i].slot.image,
-        });
-        if (!started.ok) throw new Error(started.error);
-
-        if (started.async) {
-          const ready = await waitForImageAnimationReady(prep.jobId, slotNumber, started.pollMs);
-          if (!ready.ok) throw new Error(ready.error);
+      setSlots((prev) => {
+        const next = [...prev];
+        for (const { index } of selected) {
+          next[index] = { ...next[index], busy: true };
         }
+        return next;
+      });
+      setMessage(`Paralel canlandırma (${selected.length} kare)…`);
 
-        const resultUrl = imageAnimationResultUrl(prep.jobId, slotNumber);
-        setSlots((prev) => {
-          const next = [...prev];
-          next[srcIndex] = {
-            ...next[srcIndex],
-            resultUrl,
-            busy: false,
-          };
-          return next;
-        });
-        setActiveSlot(srcIndex);
+      let completed = 0;
+      const failures: string[] = [];
+
+      await Promise.all(
+        selected.map(async (src, i) => {
+          const slotNumber = i + 1;
+          const srcIndex = src.index;
+          try {
+            const started = await startImageAnimationAnimate({
+              jobId: prep.jobId,
+              slot: slotNumber,
+              promptText,
+              image: src.slot.image,
+            });
+            if (!started.ok) throw new Error(started.error);
+
+            const ready = await waitForImageAnimationReady(
+              prep.jobId,
+              slotNumber,
+              started.pollMs,
+              240,
+              (info) => {
+                const label = String(info.label || "").trim();
+                setMessage(
+                  label ||
+                    `Kare ${srcIndex + 1} canlandırılıyor… (${completed}/${selected.length} tamam)`,
+                );
+              },
+            );
+            if (!ready.ok) throw new Error(ready.error);
+
+            const resultUrl = imageAnimationResultUrl(prep.jobId, slotNumber);
+            completed += 1;
+            setSlots((prev) => {
+              const next = [...prev];
+              next[srcIndex] = {
+                ...next[srcIndex],
+                resultUrl,
+                busy: false,
+              };
+              return next;
+            });
+            setMessage(`Canlandırılıyor… (${completed}/${selected.length} tamamlandı)`);
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Canlandırma başarısız";
+            failures.push(`Kare ${srcIndex + 1}: ${msg}`);
+            setSlots((prev) => {
+              const next = [...prev];
+              next[srcIndex] = { ...next[srcIndex], busy: false };
+              return next;
+            });
+          }
+        }),
+      );
+
+      if (completed === 0) {
+        throw new Error(failures[0] || "Hiçbir kare canlandırılamadı.");
       }
 
-      setLicenseConsumed(true);
-      setMessage("Resim canlandırıldı. Sonuçları kartlardan görebilirsiniz.");
+      if (completed > 0) {
+        setLicenseConsumed(true);
+        setActiveSlot(selected[0]!.index);
+      }
+
+      if (failures.length > 0) {
+        Alert.alert(
+          "Kısmen tamamlandı",
+          `${completed}/${selected.length} kare hazır.\n\n${failures.join("\n")}`,
+        );
+        setMessage(`${completed}/${selected.length} kare canlandırıldı.`);
+      } else {
+        setMessage("Tüm kareler canlandırıldı. Sonuçları kartlardan görebilirsiniz.");
+      }
     } catch (e: unknown) {
       setMessage(e instanceof Error ? e.message : "Resim canlandırılamadı.");
       setSlots((prev) => prev.map((s) => ({ ...s, busy: false })));
@@ -241,7 +288,7 @@ export default function AiImageAnimationEditorScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
+      <AppStatusBar />
       <View style={styles.toolbar}>
         <TouchableOpacity onPress={() => router.back()} style={styles.toolbarBtn} accessibilityLabel="Geri">
           <Ionicons name="arrow-back" size={18} color={DE.text} />

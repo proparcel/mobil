@@ -50,10 +50,6 @@ export function navigateBackFromProfileChild(
   fallback?: () => void,
 ): void {
   if (isProfileReturn(params)) {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
     const section = parseProfileSectionParam(params?.profileSection);
     router.replace('profile', section ? { profileSection: section } : undefined);
     return;

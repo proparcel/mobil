@@ -41,7 +41,7 @@ export const CaptureModeBar: React.FC<Props> = ({
           <Text style={styles.buttonText}>Kapat</Text>
         </TouchableOpacity>
       </View>
-      <Text style={styles.subtitle}>UI gizlendi, sadece harita yakalanacak.</Text>
+      <Text style={styles.subtitle}>Haritayı konumlandırın, ardından Çek ile yakalayın.</Text>
     </View>
   );
 };

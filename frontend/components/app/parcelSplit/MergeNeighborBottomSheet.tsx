@@ -8,6 +8,7 @@ import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import AppBottomSheetModal from "../AppBottomSheetModal";
 import type { Piece } from "../../../src/types/parcelSplit";
 import { parcelSplitTheme } from "./theme";
+import { sheetScrollBottomPadding } from "../../../src/utils/sheetSafeArea";
 
 type Props = {
   visible: boolean;
@@ -36,7 +37,7 @@ export function MergeNeighborBottomSheet({
       backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
       handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
     >
-      <View style={[styles.container, { paddingBottom: Math.max(insetsBottom, 16) }]}>
+      <View style={[styles.container, { paddingBottom: sheetScrollBottomPadding(insetsBottom, 16) }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Komşu ile birleştir</Text>
           <TouchableOpacity onPress={onClose} accessibilityLabel="Kapat">

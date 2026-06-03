@@ -10,7 +10,7 @@ export function getShapeName(shapes: ShapeProperties[], shape: ShapeProperties):
     polygon: "Çokgen",
     line: "Çizgi",
     arrow: "Ok",
-    marker: "Nokta",
+    marker: "İğne",
     textbox: "Metin",
     pen: "Kalem",
     freehand: "Serbest",

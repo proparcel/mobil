@@ -23,9 +23,11 @@ import type {
   Subscription,
   CompanyProfile,
   CompanyMembershipRequest,
+  RegistrationCompanyItem,
   UserExpertiseArea,
   ProviderCoverageDistrict,
   UserBadge,
+  CustomerFeatureFlags,
 } from "../src/types/auth";
 import type {
   BadgeCelebrationPayload,
@@ -71,6 +73,73 @@ export function notifySessionExpired(): void {
   _onSessionExpired?.();
 }
 
+export type RegisterVerifyMediaFiles = {
+  avatarUri?: string | null;
+  companyLogoUri?: string | null;
+};
+
+function appendRegisterFormFields(formData: FormData, data: RegisterRequest & { otp: string }) {
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    formData.append(key, String(value));
+  });
+}
+
+async function registerVerifyMultipart(
+  data: RegisterRequest,
+  otp: string,
+  files: RegisterVerifyMediaFiles
+): Promise<LoginResponse> {
+  const url = `${AUTH_API_URL}${AUTH_ENDPOINTS.REGISTER}`;
+  const formData = new FormData();
+  appendRegisterFormFields(formData, { ...data, step: "verify_otp", otp });
+
+  if (files.avatarUri) {
+    formData.append("avatar", {
+      uri: files.avatarUri,
+      type: "image/jpeg",
+      name: "avatar.jpg",
+    } as any);
+  }
+  if (files.companyLogoUri) {
+    formData.append("company_logo", {
+      uri: files.companyLogoUri,
+      type: "image/jpeg",
+      name: "company_logo.jpg",
+    } as any);
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...ngrokHeadersForAuthBase(),
+      },
+      body: formData,
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json")
+      ? await response.json()
+      : { success: false, message: "Kayıt doğrulaması başarısız." };
+
+    if (payload.success && payload.data?.access) {
+      await storageService.setTokens({
+        access: payload.data.access,
+        refresh: payload.data.refresh,
+      });
+      await storageService.setUser(payload.data.user);
+    }
+
+    return payload as LoginResponse;
+  } catch (error) {
+    return {
+      success: false,
+      message: "Bağlantı hatası. Lütfen internet bağlantınızı kontrol edin.",
+    };
+  }
+}
+
 // API Endpoints
 const AUTH_ENDPOINTS = {
   REGISTER: "/api/auth/register/",
@@ -100,6 +169,41 @@ const AUTH_ENDPOINTS = {
   AVATAR: "/api/profile/avatar/",
   SUBSCRIPTION: "/api/subscription/",
 } as const;
+
+function normalizeRegistrationCompanies(raw: unknown): RegistrationCompanyItem[] {
+  const root = raw as Record<string, unknown> | unknown[] | null | undefined;
+  const arr = Array.isArray(root)
+    ? root
+    : Array.isArray((root as Record<string, unknown>)?.companies)
+      ? ((root as Record<string, unknown>).companies as unknown[])
+      : Array.isArray((root as Record<string, unknown>)?.results)
+        ? ((root as Record<string, unknown>).results as unknown[])
+        : [];
+
+  const items: RegistrationCompanyItem[] = [];
+  for (const entry of arr) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const companyProfileId = Number(row.company_profile_id ?? row.id);
+    const companyName = String(
+      row.company_name ?? row.name ?? row.title ?? "",
+    ).trim();
+    if (!Number.isFinite(companyProfileId) || companyProfileId <= 0 || !companyName) {
+      continue;
+    }
+    items.push({
+      company_profile_id: companyProfileId,
+      company_name: companyName,
+      corporate_type:
+        (row.corporate_type as RegistrationCompanyItem["corporate_type"]) ?? null,
+      vergi_no:
+        row.vergi_no != null && String(row.vergi_no).trim()
+          ? String(row.vergi_no).trim()
+          : null,
+    });
+  }
+  return items;
+}
 
 /**
  * HTTP request helper with auth header
@@ -367,53 +471,84 @@ class AuthService {
   /**
    * Kayıt - OTP doğrula ve kullanıcı oluştur
    */
-  async registerVerifyOTP(data: RegisterRequest, otp: string): Promise<LoginResponse> {
-    return this.register({ ...data, step: 'verify_otp', otp });
+  async registerVerifyOTP(
+    data: RegisterRequest,
+    otp: string,
+    files?: RegisterVerifyMediaFiles
+  ): Promise<LoginResponse> {
+    if (files?.avatarUri || files?.companyLogoUri) {
+      return registerVerifyMultipart(data, otp, files);
+    }
+    return this.register({ ...data, step: "verify_otp", otp });
   }
 
   /**
-   * Danışman kayıt ekranı: Firma vergi no veritabanında var mı?
+   * Danışman kayıt: firma adı ile arama — GET /api/auth/company/list/
+   */
+  async listCompaniesForRegistration(
+    q = "",
+    limit = 20,
+  ): Promise<ApiResponse<RegistrationCompanyItem[]>> {
+    const query = encodeURIComponent((q || "").trim());
+    const safeLimit = Math.max(1, Math.min(50, Number.isFinite(limit) ? limit : 20));
+    const response = await authFetch<unknown>(
+      `${AUTH_ENDPOINTS.COMPANY_LIST}?q=${query}&limit=${safeLimit}`,
+      { method: "GET" },
+    );
+
+    if (!response.success) {
+      return response as ApiResponse<RegistrationCompanyItem[]>;
+    }
+
+    const layer = (response.data as Record<string, unknown> | undefined)?.data ?? response.data;
+    return {
+      ...response,
+      data: normalizeRegistrationCompanies(layer),
+    };
+  }
+
+  /** @deprecated listCompaniesForRegistration kullanın */
+  async listCompanies(
+    query: string,
+    limit = 20,
+  ): Promise<ApiResponse<RegistrationCompanyItem[]>> {
+    return this.listCompaniesForRegistration(query, limit);
+  }
+
+  /**
+   * Danışman kayıt: kurumsal profil id ile firma doğrula
+   * GET /api/auth/company/exists/?company_profile_id=...
+   */
+  async checkCompanyByProfileId(
+    company_profile_id: number,
+  ): Promise<
+    ApiResponse<{
+      exists: boolean;
+      company_profile_id: number;
+      company_name?: string;
+      corporate_type?: "emlak" | "spk" | "lihkab" | null;
+    }>
+  > {
+    const id = Number(company_profile_id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: "Geçerli bir firma seçin." };
+    }
+    return authFetch(
+      `${AUTH_ENDPOINTS.CHECK_COMPANY_VKN}?company_profile_id=${id}`,
+      { method: "GET" },
+    );
+  }
+
+  /**
+   * @deprecated checkCompanyByProfileId kullanın
    */
   async checkCompanyVergiNo(
-    vergi_no: string
+    vergi_no: string,
   ): Promise<ApiResponse<{ exists: boolean; vergi_no: string; company_name?: string; corporate_type?: "emlak" | "spk" | "lihkab" | null }>> {
     const q = encodeURIComponent((vergi_no || "").trim());
     return authFetch(`${AUTH_ENDPOINTS.CHECK_COMPANY_VKN}?vergi_no=${q}`, {
       method: "GET",
     });
-  }
-
-  /**
-   * Danışman kayıt ekranı: firma adı veya vergi no ile arama.
-   */
-  async listCompanies(
-    query: string,
-    limit = 20
-  ): Promise<ApiResponse<Array<{ id?: number; company_name?: string; name?: string; title?: string; vergi_no: string; vergi_dairesi?: string; corporate_type?: "emlak" | "spk" | "lihkab" | null }>>> {
-    const q = encodeURIComponent((query || "").trim());
-    const safeLimit = Math.max(1, Math.min(50, Number.isFinite(limit) ? limit : 20));
-    const response = await authFetch<any>(
-      `${AUTH_ENDPOINTS.COMPANY_LIST}?q=${q}&limit=${safeLimit}`,
-      { method: "GET" }
-    );
-
-    if (!response.success) {
-      return response;
-    }
-
-    const raw = response.data;
-    const companies = Array.isArray(raw)
-      ? raw
-      : Array.isArray(raw?.results)
-        ? raw.results
-        : Array.isArray(raw?.companies)
-          ? raw.companies
-          : [];
-
-    return {
-      ...response,
-      data: companies,
-    };
   }
 
   /**
@@ -658,6 +793,7 @@ class AuthService {
     user: User;
     profile: UserProfile;
     subscription: Subscription | null;
+    features?: CustomerFeatureFlags;
     company_relation?: CompanyProfile | null;
     pending_requests?: CompanyMembershipRequest[];
     pending_membership_requests?: CompanyMembershipRequest[];

@@ -14,6 +14,8 @@ export const TURKEY_MAP_ZOOM = 5.5;
 export const USER_BOOTSTRAP_ZOOM = 8.5;
 /** Menü → Konumum: yakın zoom + mavi nokta */
 export const USER_MENU_LOCATION_ZOOM = 14;
+/** Girişli kullanıcı: profil iline yumuşak uçuş (ms) */
+export const HOME_PREFERRED_CITY_ANIM_MS = 1100;
 
 function getGeolocationModule(): typeof import("react-native-geolocation-service").default | null {
   try {

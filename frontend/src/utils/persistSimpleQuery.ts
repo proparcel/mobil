@@ -7,6 +7,7 @@ import {
   resolveMahalleTkgmFromLocationsParts,
 } from "./resolveMahalleTkgmFromLocations";
 import { loadSavedQueries, upsertSavedQuery, type LocationHeader, type QueryMode } from "./savedQueries";
+import { upsertSidebarSavedQueryFromPayload } from "./sidebarSavedQueries";
 
 export type QuerySubmitPayload = {
   mahalleTkgmValue: number;
@@ -16,6 +17,8 @@ export type QuerySubmitPayload = {
   proparcelValue?: number;
   city?: string;
   town?: string;
+  cityId?: number;
+  townId?: number;
 };
 
 function pickTkgmMahalleValue(props: Record<string, unknown>): number {
@@ -141,6 +144,12 @@ export async function persistQueryToMyQueries(
     },
     location_header,
   });
+
+  try {
+    await upsertSidebarSavedQueryFromPayload(merged, mode, props);
+  } catch (err) {
+    console.warn("[persistQuery] sidebar Sorgularım kaydı başarısız:", err);
+  }
 
   if (isAuthenticated) {
     const mahalleAd = location_header.mahalleAd || "";

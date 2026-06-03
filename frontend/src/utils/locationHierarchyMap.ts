@@ -117,6 +117,11 @@ function cityCenterFallback(cityId: number): { center: [number, number]; zoom: n
   return { center: [rec.lon, rec.lat], zoom: 9.5 };
 }
 
+/** Ana harita / hızlı il odaklama — ağ çağrısı yok */
+export function getCityMapCameraFromId(cityId: number): { center: [number, number]; zoom: number } | null {
+  return cityCenterFallback(cityId);
+}
+
 export type LocationBoundaryMapResult = {
   geometry: GeoJsonGeometry | null;
   level: AdminBoundaryLevel;

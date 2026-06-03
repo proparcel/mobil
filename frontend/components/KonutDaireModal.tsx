@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
+import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 
 export type KonutDaireParams = {
   emsal_info?: string;
@@ -24,6 +26,7 @@ const AMENITIES = [
 ] as const;
 
 const KonutDaireModal: React.FC<Props> = ({ visible, onClose, onResult }) => {
+  const insets = useSafeAreaInsets();
   const [emsal, setEmsal] = useState('');
   const [heightM, setHeightM] = useState('1');
   const [lengthM, setLengthM] = useState('');
@@ -49,7 +52,10 @@ const KonutDaireModal: React.FC<Props> = ({ visible, onClose, onResult }) => {
 
   return (
     <AppBottomSheetModal visible={visible} onClose={onClose} snapPoints={['85%']} initialIndex={0}>
-      <BottomSheetScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+      <BottomSheetScrollView
+        contentContainerStyle={[styles.body, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 40) }]}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.title}>Konut + Daire Hesaplama</Text>
         <Text style={styles.label}>Emsal bilgisi (opsiyonel)</Text>
         <TextInput style={styles.input} value={emsal} onChangeText={setEmsal} multiline placeholder="Ada/parsel, m², fiyat..." />

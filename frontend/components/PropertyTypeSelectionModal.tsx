@@ -11,6 +11,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 
 interface PropertyTypeSelectionModalProps {
   visible: boolean;
@@ -174,7 +175,7 @@ const PropertyTypeSelectionModal: React.FC<PropertyTypeSelectionModalProps> = ({
       >
         <BottomSheetScrollView
           style={styles.content}
-          contentContainerStyle={{ paddingBottom: 80 + (insets?.bottom || 0) * 2, flexGrow: 1 }}
+          contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insets?.bottom || 0, 80), flexGrow: 1 }}
           showsVerticalScrollIndicator={true}
           keyboardShouldPersistTaps="handled"
           scrollEventThrottle={16}
@@ -259,7 +260,7 @@ const PropertyTypeSelectionModal: React.FC<PropertyTypeSelectionModalProps> = ({
       >
         <BottomSheetScrollView
           style={styles.content}
-          contentContainerStyle={{ paddingBottom: 40 + (insets?.bottom || 0), flexGrow: 1 }}
+          contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insets?.bottom || 0, 40), flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >

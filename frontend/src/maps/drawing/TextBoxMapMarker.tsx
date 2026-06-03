@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Platform, Text, View } from "react-native";
 import type { ShapeProperties } from "./types";
+import { toOpaqueColor } from "./mapPinStyles";
 import {
   computeTextBoxLayout,
   TEXTBOX_PADDING,
@@ -27,12 +28,13 @@ function hexToRgba(hex: string, alpha: number): string {
 
 type Props = {
   shape: ShapeProperties;
+  selected?: boolean;
 };
 
 /**
- * MarkerView içinde yalnızca görsel; dokunma ShapesLayer Pressable + harita onPress ile.
+ * Ekran overlay metin kutusu — iğne ile aynı katmanlı 3D görünüm (gölge + beyaz halo + renk).
  */
-export function TextBoxMapMarker({ shape }: Props) {
+export function TextBoxMapMarker({ shape, selected = false }: Props) {
   const text = String(shape.text ?? "");
   const baseTextSize = typeof shape.textSize === "number" ? shape.textSize : 14;
   const shapeSizePercent =
@@ -59,9 +61,15 @@ export function TextBoxMapMarker({ shape }: Props) {
   const heightPx = layout.heightPx;
 
   const bgOpacity = typeof shape.fillOpacity === "number" ? shape.fillOpacity : 0.85;
-  const bgHex = String(shape.fillColor || "#0f172a");
-  const borderHex = String(shape.outlineColor || "#2563eb");
-  const borderW = boxFillEnabled ? Math.max(0, Number(shape.outlineWidth ?? 2)) : 0;
+  const bgHex = toOpaqueColor(
+    selected ? "#f87171" : shape.fillColor,
+    selected ? "#f87171" : "#0f172a"
+  );
+  const borderHex = toOpaqueColor(
+    selected ? "#ef4444" : shape.outlineColor,
+    selected ? "#ef4444" : "#2563eb"
+  );
+  const borderW = boxFillEnabled ? Math.max(1, Number(shape.outlineWidth ?? 2)) : 0;
   const radiusPx = Math.max(
     2,
     Math.min(12, typeof shape.boxCornerRadiusPx === "number" ? shape.boxCornerRadiusPx : 6)
@@ -72,51 +80,103 @@ export function TextBoxMapMarker({ shape }: Props) {
   const shadowOpacity = typeof shape.shadowOpacity === "number" ? shape.shadowOpacity : 0.35;
   const elevation = shadowEnabled ? 8 : 0;
   const backgroundColor = boxFillEnabled ? hexToRgba(bgHex, bgOpacity) : "transparent";
+  const haloW = borderW + 2;
+
+  const boxStyle = {
+    width: widthPx,
+    minHeight: heightPx,
+    paddingHorizontal: boxFillEnabled ? TEXTBOX_PADDING : 0,
+    paddingVertical: boxFillEnabled ? TEXTBOX_PADDING : 0,
+    borderRadius: boxFillEnabled ? radiusPx : 0,
+    transform: rotationDeg ? [{ rotate: `${rotationDeg}deg` }] : undefined,
+    overflow: "visible" as const,
+    alignSelf: "center" as const,
+  };
 
   return (
     <View collapsable={false} pointerEvents="none">
-      <View
-        collapsable={false}
-        style={{
-          width: widthPx,
-          minHeight: heightPx,
-          paddingHorizontal: boxFillEnabled ? TEXTBOX_PADDING : 0,
-          paddingVertical: boxFillEnabled ? TEXTBOX_PADDING : 0,
-          backgroundColor,
-          borderColor: boxFillEnabled ? borderHex : "transparent",
-          borderWidth: borderW,
-          borderRadius: boxFillEnabled ? radiusPx : 0,
-          transform: rotationDeg ? [{ rotate: `${rotationDeg}deg` }] : undefined,
-          overflow: "visible",
-          alignSelf: "center",
-          ...(shadowEnabled
-            ? Platform.select({
-                ios: {
-                  shadowColor,
-                  shadowOpacity,
-                  shadowRadius: 6,
-                  shadowOffset: { width: 0, height: 2 },
-                },
-                android: { elevation },
-                default: {},
-              })
-            : {}),
-        }}
-      >
-        {layout.lines.map((line, idx) => (
-          <Text
-            key={`line-${idx}-${line.length}`}
+      <View collapsable={false} style={{ alignItems: "center", justifyContent: "center" }}>
+        {boxFillEnabled && shadowEnabled ? (
+          <View
             style={{
-              color: textColor,
-              fontSize: effectiveTextSize,
-              lineHeight: layout.lineHeightPx,
-              textAlign,
-              includeFontPadding: false,
+              position: "absolute",
+              top: 3,
+              left: 2,
+              width: widthPx,
+              minHeight: heightPx,
+              borderRadius: radiusPx,
+              backgroundColor: hexToRgba(shadowColor, shadowOpacity),
             }}
-          >
-            {line.length > 0 ? line : "\u00A0"}
-          </Text>
-        ))}
+          />
+        ) : null}
+
+        {boxFillEnabled ? (
+          <View
+            style={{
+              position: "absolute",
+              top: -1,
+              left: -1,
+              width: widthPx + 2,
+              minHeight: heightPx + 2,
+              borderRadius: radiusPx + 1,
+              borderWidth: 2,
+              borderColor: "#ffffff",
+            }}
+          />
+        ) : null}
+
+        <View
+          collapsable={false}
+          style={{
+            ...boxStyle,
+            backgroundColor,
+            borderColor: boxFillEnabled ? borderHex : "transparent",
+            borderWidth: borderW,
+            ...(shadowEnabled
+              ? Platform.select({
+                  ios: {
+                    shadowColor,
+                    shadowOpacity,
+                    shadowRadius: 6,
+                    shadowOffset: { width: 0, height: 2 },
+                  },
+                  android: { elevation },
+                  default: {},
+                })
+              : {}),
+          }}
+        >
+          {layout.lines.map((line, idx) => (
+            <Text
+              key={`line-${idx}-${line.length}`}
+              style={{
+                color: textColor,
+                fontSize: effectiveTextSize,
+                lineHeight: layout.lineHeightPx,
+                textAlign,
+                includeFontPadding: false,
+              }}
+            >
+              {line.length > 0 ? line : "\u00A0"}
+            </Text>
+          ))}
+        </View>
+
+        {boxFillEnabled && borderW > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              top: -haloW / 2,
+              left: -haloW / 2,
+              width: widthPx + haloW,
+              minHeight: heightPx + haloW,
+              borderRadius: radiusPx + haloW / 2,
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.55)",
+            }}
+          />
+        ) : null}
       </View>
     </View>
   );

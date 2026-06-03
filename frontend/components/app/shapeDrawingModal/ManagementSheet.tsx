@@ -4,6 +4,7 @@ import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AppBottomSheetModal from "../AppBottomSheetModal";
 import { styles } from "./styles";
+import { sheetEditorScrollBottomPadding } from "@/src/utils/sheetSafeArea";
 
 type TabKey = "shapes" | "measurements" | "parcels";
 
@@ -63,13 +64,14 @@ export const ManagementSheet: React.FC<Props> = ({
     <AppBottomSheetModal
       visible={visible}
       onClose={onClose}
+      flushToScreenBottom
       snapPoints={["70%", "92%"]}
       initialIndex={0}
       backdropPressBehavior="close"
       backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
       handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
     >
-      <View style={{ flex: 1, paddingBottom: insetsBottom }}>
+      <View style={{ flex: 1 }}>
         <View
           style={{
             flexDirection: "row",
@@ -121,7 +123,7 @@ export const ManagementSheet: React.FC<Props> = ({
         {/* Tab Content */}
         <BottomSheetScrollView
           style={styles.tabContent}
-          contentContainerStyle={[styles.tabContentContainer, { paddingBottom: Math.max(insetsBottom, 0) + 100 }]}
+          contentContainerStyle={[styles.tabContentContainer, { paddingBottom: sheetEditorScrollBottomPadding(insetsBottom, 16) }]}
           showsVerticalScrollIndicator={true}
           scrollEventThrottle={16}
         >
@@ -154,7 +156,7 @@ export const ManagementSheet: React.FC<Props> = ({
                                       : shape.type === "arrow"
                                         ? "arrow-forward-outline"
                                         : shape.type === "marker"
-                                          ? "location-outline"
+                                          ? "location"
                                           : "text-outline"
                         }
                         size={20}
@@ -183,7 +185,6 @@ export const ManagementSheet: React.FC<Props> = ({
                   </View>
                 ))
               )}
-              <View style={{ height: Math.max(insetsBottom, 0) + 150 }} />
             </View>
           )}
 
@@ -220,7 +221,6 @@ export const ManagementSheet: React.FC<Props> = ({
                     </TouchableOpacity>
                   ))
               )}
-              <View style={{ height: Math.max(insetsBottom, 0) + 150 }} />
             </View>
           )}
 
@@ -260,7 +260,6 @@ export const ManagementSheet: React.FC<Props> = ({
                   </View>
                 ))
               )}
-              <View style={{ height: Math.max(insetsBottom, 0) + 150 }} />
             </View>
           )}
         </BottomSheetScrollView>

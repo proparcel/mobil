@@ -2,7 +2,7 @@
  * Hamburger menü — ana sayfa ile aynı sıra, alt menüler, lacivert sheet, profil/avatar/uzmanlık.
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, View } from "react-native";
+import { Alert, InteractionManager, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../../screens/contexts/AuthContext";
@@ -20,6 +20,7 @@ import {
 } from "./UserMenuSheet";
 import UserMenuSheetList from "./UserMenuSheetList";
 import { getMenuItems } from "./userMenuItems";
+import { isAppAdminUser } from "../../src/utils/adminAccess";
 
 interface Props {
   visible: boolean;
@@ -142,6 +143,29 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
         });
         return;
       }
+      if (itemId === "cikis") {
+        Alert.alert("Çıkış Yap", "Çıkış yapmak istediğinize emin misiniz?", [
+          { text: "İptal", style: "cancel" },
+          {
+            text: "Çıkış Yap",
+            style: "destructive",
+            onPress: async () => {
+              onClose();
+              setSubmenuOpenId(null);
+              setUzmanGorusuOpen(false);
+              setMenuSheetIndex(0);
+              try {
+                await logout();
+              } catch {
+                InteractionManager.runAfterInteractions(() => {
+                  Alert.alert("Hata", "Çıkış yapılırken bir hata oluştu.");
+                });
+              }
+            },
+          },
+        ]);
+        return;
+      }
 
       onClose();
       setSubmenuOpenId(null);
@@ -228,7 +252,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
             router.push("ai-image-animation-purchase");
             break;
           case "ai-drone-video":
-            router.push("ai-drone-video-info");
+            router.push("ai-drone-hub");
             break;
           case "ai-drone-jobs":
             if (!isAuthenticated) {
@@ -252,22 +276,6 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
               path: "/portal/ilan/mesajlar/",
               title: "Mesajlar",
             });
-            break;
-          case "cikis":
-            Alert.alert("Çıkış Yap", "Çıkış yapmak istediğinize emin misiniz?", [
-              { text: "İptal", style: "cancel" },
-              {
-                text: "Çıkış Yap",
-                style: "destructive",
-                onPress: async () => {
-                  try {
-                    await logout();
-                  } catch {
-                    Alert.alert("Hata", "Çıkış yapılırken bir hata oluştu.");
-                  }
-                },
-              },
-            ]);
             break;
           default:
             break;
@@ -293,7 +301,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
       backdropOpacity={0.2}
       backdropPressBehavior="close"
     >
-      <View style={{ paddingBottom: insets.bottom }}>
+      <>
         <UserMenuSheetHeader
           variant="dark"
           isAuthenticated={!!isAuthenticated}
@@ -310,7 +318,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
           }}
         />
         <UserMenuSheetList
-          items={getMenuItems(true, !!isAuthenticated, user?.is_admin || user?.role === "admin", user)}
+          items={getMenuItems(true, !!isAuthenticated, isAppAdminUser(user), user)}
           st={userMenuSheetDarkStyles}
           variant="dark"
           submenuOpenId={submenuOpenId}
@@ -324,7 +332,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
           userProfile={userProfile}
           footerInsetBottom={insets.bottom}
         />
-      </View>
+      </>
     </AppBottomSheetModal>
   );
 }

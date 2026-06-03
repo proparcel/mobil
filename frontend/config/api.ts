@@ -10,6 +10,7 @@
  *
  * .env (Metro: npm run start -- --reset-cache):
  *   EXPO_PUBLIC_API_URL=https://www.proparcel.com
+ *   EXPO_PUBLIC_DJANGO_API_URL=https://www.proparcel.com
  *   EXPO_PUBLIC_AUTH_API_URL=https://www.proparcel.com
  *   EXPO_PUBLIC_MODELS_URL=https://www.proparcel.com
  *

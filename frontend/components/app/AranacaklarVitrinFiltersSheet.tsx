@@ -14,6 +14,7 @@ import { getKeyboardAvoidingBehavior, SCROLL_VIEW_KEYBOARD_PROPS } from '../../s
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { VitrinListingSearchParams } from '../../src/types/vitrin';
 import { stripVitrinParamsOverlappingMainScreen } from '../../src/utils/aranacaklarListingSearchExtra';
+import { sheetScrollBottomPadding } from '../../src/utils/sheetSafeArea';
 
 const COLORS = {
   bg: '#f8fafc',
@@ -87,7 +88,7 @@ export default function AranacaklarVitrinFiltersSheet({ visible, onClose, value,
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView style={styles.backdrop} behavior={getKeyboardAvoidingBehavior('modal')}>
-        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <View style={[styles.sheet, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 12) }]}>
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>Vitrin filtreleri</Text>
             <Pressable onPress={onClose} hitSlop={12}>

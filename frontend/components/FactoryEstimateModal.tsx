@@ -13,6 +13,7 @@ import Slider from '@react-native-community/slider';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
+import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 import { API_URL } from '../config/api';
 
 const PARAM_DEPS: Record<string, string> = {
@@ -220,7 +221,7 @@ const FactoryEstimateModal: React.FC<Props> = ({
     >
       <BottomSheetScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: 24 + (insets.bottom || 0) * 2 }}
+        contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insets.bottom || 0, 24) }}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>Fabrika Maliyet Tahmini</Text>

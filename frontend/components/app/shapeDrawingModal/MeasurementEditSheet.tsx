@@ -3,6 +3,13 @@ import { Text, TouchableOpacity, View } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AppBottomSheetModal from "../AppBottomSheetModal";
+import {
+  EDIT_SHEET_MODAL_PROPS,
+  EDIT_SHEET_SNAP_POINTS,
+  editSheetExpandedIndex,
+  editSheetScrollContentStyle,
+  editSheetScrollViewProps,
+} from "./editSheetLayout";
 import { styles } from "./styles";
 
 const PALETTE = ["#2563eb", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#64748b"];
@@ -72,9 +79,11 @@ export const MeasurementEditSheet: React.FC<Props> = ({
     <AppBottomSheetModal
       visible={visible}
       onClose={onClose}
-      snapPoints={["12%", "55%", "88%"]}
-      index={minimized ? 0 : 1}
+      flushToScreenBottom
+      snapPoints={[...EDIT_SHEET_SNAP_POINTS]}
+      index={editSheetExpandedIndex(minimized)}
       backdropPressBehavior="close"
+      modalProps={EDIT_SHEET_MODAL_PROPS}
       backgroundStyle={{
         backgroundColor: "#1e293b",
         borderTopLeftRadius: 20,
@@ -84,7 +93,7 @@ export const MeasurementEditSheet: React.FC<Props> = ({
       }}
       handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
     >
-      <View style={{ flex: 1, paddingBottom: insetsBottom }}>
+      <View style={{ flex: 1 }}>
         <View style={styles.editPanelHeader} pointerEvents="auto">
           <Text style={styles.editPanelTitle}>Ölçüm özellikleri</Text>
           <View style={styles.editPanelHeaderButtons}>
@@ -100,8 +109,8 @@ export const MeasurementEditSheet: React.FC<Props> = ({
         {!minimized && (
           <BottomSheetScrollView
             style={styles.editPanelContent}
-            contentContainerStyle={[styles.editPanelContentContainer, { paddingBottom: Math.max(insetsBottom, 0) + 100 }]}
-            scrollEventThrottle={16}
+            contentContainerStyle={editSheetScrollContentStyle(insetsBottom)}
+            {...editSheetScrollViewProps}
           >
             <View style={styles.editSection}>
               <Text style={styles.editSectionTitle}>Renk (anında uygulanır)</Text>
@@ -124,7 +133,7 @@ export const MeasurementEditSheet: React.FC<Props> = ({
               </View>
             </View>
 
-            <TouchableOpacity style={styles.deleteButton} onPress={onDelete}>
+            <TouchableOpacity style={[styles.deleteButton, { marginBottom: 8 }]} onPress={onDelete}>
               <Ionicons name="trash" size={18} color="#fff" />
               <Text style={styles.deleteButtonText}>Ölçümü sil</Text>
             </TouchableOpacity>

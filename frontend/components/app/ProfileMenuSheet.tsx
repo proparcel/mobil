@@ -4,8 +4,10 @@
 import React, { useCallback, useMemo } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../src/hooks/useNavigation";
+import { withProfileReturn } from "../../src/utils/profileReturnNavigation";
 import { useAuth } from "../../screens/contexts/AuthContext";
 import type { UserProfile } from "../../src/types/auth";
 import AppBottomSheetModal from "./AppBottomSheetModal";
@@ -16,6 +18,7 @@ import {
   userMenuSheetDarkStyles,
 } from "./UserMenuSheet";
 import { PROFILE_SECTION_LABELS, type ProfileSectionId } from "./profileSectionTypes";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
 
 interface Props {
   visible: boolean;
@@ -49,6 +52,7 @@ export default function ProfileMenuSheet({
   onSelectSection,
 }: Props) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const isIndividual = profile?.member_type === "individual";
 
@@ -77,7 +81,7 @@ export default function ProfileMenuSheet({
     (id: ProfileSectionId) => {
       if (id === "rozetler") {
         onClose();
-        router.push("badges");
+        router.push("badges", withProfileReturn({}, "rozetler"));
         return;
       }
       onSelectSection(id);
@@ -104,12 +108,16 @@ export default function ProfileMenuSheet({
         onPressProfile={onClose}
         onPressCredits={() => {
           onClose();
-          router.push("pricing");
+          router.push("pricing", withProfileReturn({}, "kullanimlarim"));
         }}
       />
       <UserMenuSheetTitleRow variant="dark" title="Profil bölümleri" />
 
-      <BottomSheetScrollView style={userMenuSheetDarkStyles.scroll} bounces={false}>
+      <BottomSheetScrollView
+        style={userMenuSheetDarkStyles.scroll}
+        contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insets.bottom, 24) }}
+        bounces={false}
+      >
         {sections.map((id) => (
           <TouchableOpacity
             key={id}

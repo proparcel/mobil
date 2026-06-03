@@ -7,11 +7,17 @@ import {
   Modal,
   FlatList,
   StyleSheet,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardHeight, SCROLL_VIEW_KEYBOARD_PROPS } from "../../src/keyboard";
+import {
+  getKeyboardAvoidingBehavior,
+  SCROLL_VIEW_KEYBOARD_PROPS,
+  useKeyboardHeight,
+} from "../../src/keyboard";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import locationsJson from "../../src/data/locations.json";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
 
 type QuarterItem = {
   Id: number;
@@ -158,7 +164,13 @@ export function AddressPickerModal(props: {
 
           <View style={styles.modalScrollView}>
             <View style={styles.addressModalField}>
-              <TouchableOpacity style={styles.addressPickerTouch} onPress={() => setPickerMode("city")}>
+              <TouchableOpacity
+                style={styles.addressPickerTouch}
+                onPress={() => {
+                  setPickerSearch("");
+                  setPickerMode("city");
+                }}
+              >
                 <Text style={[styles.addressPickerText, !cityName && styles.placeholderText]}>{cityName || "İl"}</Text>
                 <Ionicons name="chevron-down" size={18} color="#64748b" />
               </TouchableOpacity>
@@ -166,7 +178,11 @@ export function AddressPickerModal(props: {
             <View style={styles.addressModalField}>
               <TouchableOpacity
                 style={[styles.addressPickerTouch, !cityId && styles.addressPickerDisabled]}
-                onPress={() => cityId && setPickerMode("town")}
+                onPress={() => {
+                  if (!cityId) return;
+                  setPickerSearch("");
+                  setPickerMode("town");
+                }}
                 disabled={!cityId}
               >
                 <Text style={[styles.addressPickerText, !districtName && styles.placeholderText]}>{districtName || "İlçe"}</Text>
@@ -176,7 +192,11 @@ export function AddressPickerModal(props: {
             <View style={styles.addressModalField}>
               <TouchableOpacity
                 style={[styles.addressPickerTouch, !districtId && styles.addressPickerDisabled]}
-                onPress={() => districtId && setPickerMode("quarter")}
+                onPress={() => {
+                  if (!districtId) return;
+                  setPickerSearch("");
+                  setPickerMode("quarter");
+                }}
                 disabled={!districtId}
               >
                 <Text style={[styles.addressPickerText, !quarterName && styles.placeholderText]}>{quarterName || "Mahalle"}</Text>
@@ -211,22 +231,23 @@ export function AddressPickerModal(props: {
         animationType="slide"
         onRequestClose={() => setPickerMode(null)}
       >
-        <View style={styles.modalOverlay}>
-          {/* picker: View + keyboardHeight padding (merkezi useKeyboardHeight) */}
-          <View
-            style={[
-              styles.modalContent,
-              styles.pickerModalContent,
-              { paddingBottom: 12 + insets.bottom + keyboardHeight },
-            ]}
-          >
+        <KeyboardAvoidingView
+          style={styles.pickerModalOverlay}
+          behavior={getKeyboardAvoidingBehavior("modal")}
+        >
+          <View style={[styles.pickerSheet, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 12) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {pickerMode === "city" && "İl seçin"}
                 {pickerMode === "town" && "İlçe seçin"}
                 {pickerMode === "quarter" && "Mahalle seçin"}
               </Text>
-              <TouchableOpacity onPress={() => setPickerMode(null)}>
+              <TouchableOpacity
+                onPress={() => {
+                  setPickerSearch("");
+                  setPickerMode(null);
+                }}
+              >
                 <Ionicons name="close" size={24} color="#64748b" />
               </TouchableOpacity>
             </View>
@@ -240,6 +261,10 @@ export function AddressPickerModal(props: {
             />
 
             <FlatList
+              style={styles.pickerList}
+              contentContainerStyle={
+                keyboardHeight > 0 ? { paddingBottom: keyboardHeight } : undefined
+              }
               data={listData}
               keyExtractor={(item: any) => String(item?.Id)}
               keyboardShouldPersistTaps={SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
@@ -255,7 +280,7 @@ export function AddressPickerModal(props: {
               }}
             />
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </Modal>
   );
@@ -346,8 +371,24 @@ const styles = StyleSheet.create({
   addressUpdateButton: {
     marginTop: 6,
   },
-  pickerModalContent: {
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  pickerSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    paddingHorizontal: 20,
     paddingTop: 16,
+    width: "100%",
+    height: "75%",
+    maxHeight: "85%",
+  },
+  pickerList: {
+    flex: 1,
+    minHeight: 0,
   },
   pickerSearchInput: {
     marginBottom: 10,

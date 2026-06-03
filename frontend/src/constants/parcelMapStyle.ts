@@ -37,7 +37,28 @@ export const parcelMapStyle = {
 
 } as const;
 
+/** Static API / liste thumbnail — @2x PNG küçük kartlarda kenar okunaklı kalsın */
+export const parcelStaticCaptureStroke = {
+  min: 24,
+  default: 32,
+  customMultiplier: 5,
+} as const;
 
+export function resolveStaticCaptureStrokeWidth(
+  custom?: ParcelPolygonDesignConfig | null,
+  selected = true,
+): number {
+  if (custom) {
+    const base = selected ? custom.strokeWidth + 1 : custom.strokeWidth;
+    return Math.max(
+      parcelStaticCaptureStroke.min,
+      Math.round(base * parcelStaticCaptureStroke.customMultiplier),
+    );
+  }
+  return selected
+    ? parcelStaticCaptureStroke.default
+    : Math.max(parcelStaticCaptureStroke.min, Math.round(parcelStaticCaptureStroke.default * 0.85));
+}
 
 /** Mapbox FillLayer + LineLayer */
 
@@ -71,39 +92,25 @@ export function getParcelStaticMapFeatureProps(
   selected = true,
   custom?: ParcelPolygonDesignConfig | null
 ) {
+  const strokeWidth = resolveStaticCaptureStrokeWidth(custom, selected);
 
   if (custom) {
-
     return {
-
       stroke: custom.strokeColor,
-
-      "stroke-width": selected ? custom.strokeWidth + 1 : custom.strokeWidth,
-
+      "stroke-width": strokeWidth,
       "stroke-opacity": 1,
-
       fill: custom.fillColor,
-
       "fill-opacity": Math.max(0, Math.min(1, custom.fillOpacity)),
-
     };
-
   }
 
   return {
-
     stroke: selected ? parcelMapStyle.strokeHighlight : parcelMapStyle.stroke,
-
-    "stroke-width": selected ? parcelMapStyle.strokeWidthHighlight : parcelMapStyle.strokeWidth,
-
+    "stroke-width": strokeWidth,
     "stroke-opacity": 1,
-
     fill: selected ? parcelMapStyle.fillHighlight : parcelMapStyle.fill,
-
     "fill-opacity": selected ? parcelMapStyle.fillOpacityHighlight : parcelMapStyle.fillOpacity,
-
   };
-
 }
 
 

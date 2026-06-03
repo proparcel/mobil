@@ -791,6 +791,46 @@ const rangeStyles = StyleSheet.create({
   sep: { fontSize: 16, color: COLORS.textSecondary, fontWeight: '600' },
 });
 
+function AdaParselFilterRow({
+  adaVal,
+  parselVal,
+  onAdaChange,
+  onParselChange,
+}: {
+  adaVal: string;
+  parselVal: string;
+  onAdaChange: (v: string) => void;
+  onParselChange: (v: string) => void;
+}) {
+  return (
+    <View style={rangeStyles.container}>
+      <Text style={rangeStyles.label}>Ada / Parsel</Text>
+      <Text style={styles.sheetHelperText}>Tam eşleşme ile arama yapılır.</Text>
+      <View style={rangeStyles.row}>
+        <TextInput
+          style={rangeStyles.input}
+          value={adaVal}
+          onChangeText={onAdaChange}
+          placeholder="Ada"
+          placeholderTextColor={COLORS.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <Text style={rangeStyles.sep}>/</Text>
+        <TextInput
+          style={rangeStyles.input}
+          value={parselVal}
+          onChangeText={onParselChange}
+          placeholder="Parsel"
+          placeholderTextColor={COLORS.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      </View>
+    </View>
+  );
+}
+
 function ListingAttrFiltersSection({
   categoryMain,
   categoryTypeIds,
@@ -1636,6 +1676,8 @@ export default function Son30GunScreen() {
   const [draftCity, setDraftCity] = useState<number | null>(null);
   const [draftTown, setDraftTown] = useState<number | null>(null);
   const [draftQuarter, setDraftQuarter] = useState<number | null>(null);
+  const [draftAda, setDraftAda] = useState('');
+  const [draftParsel, setDraftParsel] = useState('');
   const [draftCategoryMain, setDraftCategoryMain] = useState('');
   const [draftCategoryTypeIds, setDraftCategoryTypeIds] = useState<string[]>([]);
   const [draftCategoryLeafIds, setDraftCategoryLeafIds] = useState<string[]>([]);
@@ -1732,6 +1774,8 @@ export default function Son30GunScreen() {
     if (appliedFilters.city_id) c++;
     if (appliedFilters.town_id) c++;
     if (appliedFilters.quarter_id) c++;
+    if (appliedFilters.ada) c++;
+    if (appliedFilters.parsel) c++;
     if (appliedFilters.query_type) c++;
     if (appliedFilters.hisseli) c++;
     if (appliedFilters.unit_price_min != null) c++;
@@ -1854,7 +1898,7 @@ export default function Son30GunScreen() {
   // ── Load location cascades ──
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated && !isVitrinListingRoute) return;
     (async () => {
       try {
         setCitiesLoading(true);
@@ -1866,7 +1910,7 @@ export default function Son30GunScreen() {
         setCitiesLoading(false);
       }
     })();
-  }, [isAuthenticated, locationsCountsFor]);
+  }, [isAuthenticated, isVitrinListingRoute, locationsCountsFor]);
 
   useEffect(() => {
     const id =
@@ -2067,7 +2111,7 @@ export default function Son30GunScreen() {
   ]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated && !isVitrinListingRoute) return;
     let cancelled = false;
     (async () => {
       try {
@@ -2097,7 +2141,7 @@ export default function Son30GunScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isVitrinListingRoute]);
 
   /** Filtre sayfası açılınca taslakları uygulanan değerlerle doldur (web ile aynı mantık) */
   useEffect(() => {
@@ -2112,6 +2156,8 @@ export default function Son30GunScreen() {
       setDraftCity(appliedFilters.city_id ?? null);
       setDraftTown(appliedFilters.town_id ?? null);
       setDraftQuarter(appliedFilters.quarter_id ?? null);
+      setDraftAda(appliedFilters.ada ?? '');
+      setDraftParsel(appliedFilters.parsel ?? '');
       setDraftCategoryMain(nextMain);
       setDraftCategoryTypeIds(splitCsvIds(appliedFilters.category_type));
       setDraftCategoryLeafIds(splitCsvIds(appliedFilters.category_leaf_id));
@@ -2254,7 +2300,7 @@ export default function Son30GunScreen() {
 
   const loadListings = useCallback(
     async (pageNum: number = 1, append: boolean = false) => {
-      if (!isAuthenticated || !isVitrinListingRoute) return;
+      if (!isVitrinListingRoute) return;
 
       const cityId = effectiveAppliedListingFilters.city_id;
       if (cityId == null) {
@@ -2335,7 +2381,7 @@ export default function Son30GunScreen() {
         setListingInitialLoad(false);
       }
     },
-    [isAuthenticated, isVitrinListingRoute, effectiveAppliedListingFilters],
+    [isVitrinListingRoute, effectiveAppliedListingFilters],
   );
 
   useEffect(() => {
@@ -2591,6 +2637,10 @@ export default function Son30GunScreen() {
       if (draftCity) f.city_id = draftCity;
       if (draftTown) f.town_id = draftTown;
       if (draftQuarter) f.quarter_id = draftQuarter;
+      const adaTrim = draftAda.trim();
+      const parselTrim = draftParsel.trim();
+      if (adaTrim) f.ada = adaTrim;
+      if (parselTrim) f.parsel = parselTrim;
       if (draftCategoryMain) f.category_main = draftCategoryMain;
       if (draftCategoryTypeIds.length) f.category_type = draftCategoryTypeIds.join(',');
       if (draftCategoryLeafIds.length) f.category_leaf_id = draftCategoryLeafIds.join(',');
@@ -2651,6 +2701,8 @@ export default function Son30GunScreen() {
     draftCity,
     draftTown,
     draftQuarter,
+    draftAda,
+    draftParsel,
     draftCategoryMain,
     draftCategoryTypeIds,
     draftCategoryLeafIds,
@@ -2760,6 +2812,8 @@ export default function Son30GunScreen() {
     setDraftCity(null);
     setDraftTown(null);
     setDraftQuarter(null);
+    setDraftAda('');
+    setDraftParsel('');
     setDraftCategoryMain('');
     setDraftCategoryTypeIds([]);
     setDraftCategoryLeafIds([]);
@@ -3150,6 +3204,15 @@ export default function Son30GunScreen() {
             loading={quartersLoading}
             disabled={!draftTown}
           />
+
+          {listMode === 'proSorgular' ? (
+            <AdaParselFilterRow
+              adaVal={draftAda}
+              parselVal={draftParsel}
+              onAdaChange={setDraftAda}
+              onParselChange={setDraftParsel}
+            />
+          ) : null}
 
           <CategoryTreeFilter
             rootNodes={categoryRootNodes}

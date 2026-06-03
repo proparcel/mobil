@@ -1,10 +1,12 @@
 /**
  * Mapbox Snapshot Utilities
- * 
+ *
  * Mapbox haritasından snapshot alma fonksiyonları ve map idle yönetimi
  */
 
 import React from 'react';
+import { Platform } from 'react-native';
+import { isCaptureImageUriUsable } from './screenshotManager';
 
 export interface MapReadyState {
   didFinishLoadingMap: boolean;
@@ -12,9 +14,19 @@ export interface MapReadyState {
   isIdle: boolean;
 }
 
+/** Platformda en hızlı çalışan snap modu (oturum boyunca hatırlanır) */
+let preferredSnapMode: 'sized' | 'boolean' | null = null;
+
+function snapModeOrder(): Array<'sized' | 'boolean'> {
+  const fallback: Array<'sized' | 'boolean'> =
+    Platform.OS === 'android' ? ['boolean', 'sized'] : ['sized', 'boolean'];
+  if (!preferredSnapMode) return fallback;
+  const other = preferredSnapMode === 'sized' ? 'boolean' : 'sized';
+  return [preferredSnapMode, other];
+}
+
 /**
  * Mapbox map idle durumunu bekler
- * Map tamamen yüklenip render edilene kadar bekler
  */
 export const waitForMapIdle = async (
   mapReadyRef: React.MutableRefObject<MapReadyState>,
@@ -42,17 +54,48 @@ export const waitForMapIdle = async (
   return false;
 };
 
-/**
- * Mapbox snapshot alma fonksiyonu
- * takeSnap veya takeSnapshot metodunu dener, farklı parametre formatlarını test eder
- */
+function normalizeSnapUri(uri: string): string {
+  if (uri.startsWith('file://') || uri.startsWith('http')) return uri;
+  return uri.startsWith('/') ? `file://${uri}` : `file://${uri}`;
+}
+
+function extractSnapUri(res: unknown): string | null {
+  if (typeof res === 'string' && res.length > 0) return normalizeSnapUri(res);
+  const r = res as { uri?: string; path?: string } | null;
+  const raw = r?.uri || r?.path || null;
+  return raw ? normalizeSnapUri(raw) : null;
+}
+
+async function invokeMapboxSnap(
+  fn: (...args: unknown[]) => Promise<unknown>,
+  map: unknown,
+  mode: 'sized' | 'boolean',
+  dimensions: { mapWidth: number; mapHeight: number },
+): Promise<string | null> {
+  try {
+    const res =
+      mode === 'boolean'
+        ? await fn.call(map, true)
+        : await fn.call(map, {
+            width: dimensions.mapWidth,
+            height: dimensions.mapHeight,
+            format: 'png',
+            quality: 1,
+            writeToDisk: true,
+          });
+    return extractSnapUri(res);
+  } catch {
+    return null;
+  }
+}
+
 export const tryMapboxSnap = async (
   mapRef: React.RefObject<any>,
   dimensions: { mapWidth: number; mapHeight: number }
 ): Promise<string | null> => {
   const map = mapRef.current;
   if (!map) {
-    console.warn('[mapboxSnapshot.ts:39] ❌ MapView ref yok');
+    console.warn('[mapboxSnapshot] MapView ref yok');
     return null;
   }
 
@@ -62,69 +105,24 @@ export const tryMapboxSnap = async (
     null;
 
   if (!fn) {
-    console.warn('[mapboxSnapshot.ts:47] ❌ MapView snapshot fonksiyonu yok (takeSnap/takeSnapshot bulunamadı)');
+    console.warn('[mapboxSnapshot] takeSnap/takeSnapshot yok');
     return null;
   }
 
-  try {
-    console.log('[mapboxSnapshot.ts:52] 📸 Mapbox takeSnap/takeSnapshot deneniyor...', { 
-      width: dimensions.mapWidth, 
-      height: dimensions.mapHeight 
-    });
-    
-    // Önce frame bekleyelim
-    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+  await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
 
-    // Bazı Mapbox sürümlerinde takeSnap sadece boolean alır (writeToDisk)
-    // Önce object formatını dene, başarısız olursa boolean formatını dene
-    let res: any;
-    try {
-      // Önce object formatını dene
-      res = await fn.call(map, {
-        width: dimensions.mapWidth,
-        height: dimensions.mapHeight,
-        format: 'png',
-        quality: 1,
-        writeToDisk: true,
-      });
-    } catch (objError: any) {
-      // Object formatı başarısız olduysa, boolean formatını dene
-      if (objError?.message?.includes('Expected argument 1') || objError?.message?.includes('boolean')) {
-        console.log('[mapboxSnapshot.ts:75] 📸 Object format başarısız, boolean format deneniyor...');
-        try {
-          res = await fn.call(map, true); // writeToDisk = true
-        } catch (boolError) {
-          console.error('[mapboxSnapshot.ts:79] ❌ Boolean format da başarısız:', boolError);
-          throw objError; // Orijinal hatayı fırlat
-        }
-      } else {
-        throw objError; // Diğer hatalar için orijinal hatayı fırlat
-      }
+  for (const mode of snapModeOrder()) {
+    const uri = await invokeMapboxSnap(fn, map, mode, dimensions);
+    if (uri && (await isCaptureImageUriUsable(uri))) {
+      preferredSnapMode = mode;
+      if (__DEV__) console.log('[mapboxSnapshot] snapshot OK:', mode, uri);
+      return uri;
     }
-
-    const uri =
-      typeof res === 'string' ? res :
-      res?.uri || res?.path || null;
-
-    if (uri) {
-      let finalUri = uri;
-      if (!uri.startsWith('file://') && !uri.startsWith('http')) {
-        finalUri = uri.startsWith('/') ? `file://${uri}` : `file://${uri}`;
-      }
-      console.log('[mapboxSnapshot.ts:98] ✅ Mapbox snapshot başarılı:', finalUri);
-      return finalUri;
+    if (uri && __DEV__) {
+      console.warn('[mapboxSnapshot] snapshot çok küçük, sonraki yöntem deneniyor:', mode);
     }
-    
-    console.warn('[mapboxSnapshot.ts:102] ⚠️ Mapbox snapshot URI alınamadı');
-    return null;
-  } catch (error: any) {
-    // Eğer başarılı bir URI dönmüşse ama hata da oluşmuşsa, URI'yi kullan
-    // (Bazı Mapbox sürümlerinde snapshot başarılı ama internal event conflict oluşabiliyor)
-    if (error?.message?.includes('Call Stack')) {
-      console.warn('[mapboxSnapshot.ts:108] ⚠️ Mapbox snapshot internal event conflict (snapshot başarılı olabilir)');
-    } else {
-      console.error('[mapboxSnapshot.ts:110] ❌ Mapbox takeSnap/takeSnapshot hatası:', error);
-    }
-    return null;
   }
+
+  console.warn('[mapboxSnapshot] snapshot başarısız veya boş');
+  return null;
 };

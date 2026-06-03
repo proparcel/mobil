@@ -17,21 +17,41 @@ config.cacheStores = [
 
 // @turf paketlerinin doğru şekilde çözülmesi için resolver ayarları
 config.resolver = config.resolver || {};
-// Ana node_modules'ı öncelikli hale getir (nested node_modules'lardan önce)
-config.resolver.nodeModulesPaths = [
-  path.resolve(__dirname, 'node_modules'),
-];
+// Expo varsayılanlarını koru; proje node_modules'ı ekle (üzerine yazma)
+const projectNodeModules = path.resolve(__dirname, 'node_modules');
+const defaultNodeModulesPaths = config.resolver.nodeModulesPaths || [];
+if (!defaultNodeModulesPaths.includes(projectNodeModules)) {
+  config.resolver.nodeModulesPaths = [...defaultNodeModulesPaths, projectNodeModules];
+}
 
 // Extra node modules paths - nested dependencies için
 const extraNodeModules = {
+  ...(config.resolver.extraNodeModules || {}),
   '@turf/helpers': path.resolve(__dirname, 'node_modules/@turf/helpers'),
   '@turf/meta': path.resolve(__dirname, 'node_modules/@turf/meta'),
 };
 config.resolver.extraNodeModules = extraNodeModules;
 
+const portalEntry = path.resolve(
+  __dirname,
+  'node_modules/@gorhom/portal/lib/commonjs/index.js',
+);
+
 config.resolver.alias = {
   ...(config.resolver.alias || {}),
   "@": path.resolve(__dirname),
+  "@gorhom/portal": portalEntry,
+};
+
+const defaultResolveRequest = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === '@gorhom/portal') {
+    return { type: 'sourceFile', filePath: portalEntry };
+  }
+  if (defaultResolveRequest) {
+    return defaultResolveRequest(context, moduleName, platform);
+  }
+  return context.resolveRequest(context, moduleName, platform);
 };
 
 // // Exclude unnecessary directories from file watching

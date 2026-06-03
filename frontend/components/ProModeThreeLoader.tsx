@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet, Platform, Modal } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface ProModeThreeLoaderProps {
   visible: boolean;
@@ -14,8 +13,6 @@ interface ProModeThreeLoaderProps {
  * - Altta tek satır default mesajlar döner
  */
 export default function ProModeThreeLoader({ visible }: ProModeThreeLoaderProps) {
-  const insets = useSafeAreaInsets();
-
   const html = useMemo(() => {
     const messages = [
       'Analiz başlatılıyor…',
@@ -45,7 +42,7 @@ export default function ProModeThreeLoader({ visible }: ProModeThreeLoaderProps)
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
   <title>ProParcel Loader</title>
   <script type="importmap">
     {
@@ -56,8 +53,8 @@ export default function ProModeThreeLoader({ visible }: ProModeThreeLoaderProps)
     }
   </script>
   <style>
-    html, body { height:100%; width:100%; margin:0; padding:0; overflow:hidden; background:#020617; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
-    .root { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+    html, body { height:100%; width:100%; min-height:100dvh; margin:0; padding:0; overflow:hidden; background:#020617; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    .root { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#020617; }
 
     .panel {
       width: min(560px, 92vw);
@@ -342,10 +339,11 @@ export default function ProModeThreeLoader({ visible }: ProModeThreeLoaderProps)
       visible
       transparent
       animationType="fade"
-      statusBarTranslucent={Platform.OS === 'android'}
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
       onRequestClose={() => {}}
     >
-      <View style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={styles.overlay}>
         <WebView
           source={{ html }}
           originWhitelist={['*']}
@@ -356,6 +354,9 @@ export default function ProModeThreeLoader({ visible }: ProModeThreeLoaderProps)
           showsVerticalScrollIndicator={false}
           showsHorizontalScrollIndicator={false}
           automaticallyAdjustContentInsets={false}
+          contentInsetAdjustmentBehavior="never"
+          overScrollMode="never"
+          bounces={false}
           style={styles.webview}
         />
       </View>
@@ -365,20 +366,13 @@ export default function ProModeThreeLoader({ visible }: ProModeThreeLoaderProps)
 
 const styles = StyleSheet.create({
   overlay: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    zIndex: 99999,
-    elevation: 50,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    flex: 1,
+    backgroundColor: '#020617',
   },
   webview: {
     flex: 1,
-    backgroundColor: 'transparent',
-    opacity: 1,
-    ...(Platform.OS === 'android' ? { } : null),
+    backgroundColor: '#020617',
+    ...(Platform.OS === 'android' ? { opacity: 0.99 } : null),
   },
 });
 

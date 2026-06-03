@@ -1,27 +1,41 @@
 /**
  * Combined Screenshot Container Component
- * 
- * Harita ve parsel bilgilerini birleştiren Kurumsal & Premium Tasarım
+ *
+ * Harita + parsel bilgilerini birleştiren Kurumsal & Premium Tasarım
  */
 
-import React from 'react';
+import React, { useCallback, useImperativeHandle, useRef, useState } from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 import ViewShot from 'react-native-view-shot';
-import { getCombinedImageDimensions } from '../../src/utils/screenshotManager';
+import {
+  getCombinedImageDimensions,
+  prepareCaptureImageUri,
+  CAPTURE_VIEW_SHOT_OPTIONS,
+  CAPTURE_IMAGE_LOAD_TIMEOUT_MS,
+  waitCaptureLayoutFrames,
+  verifyCaptureFile,
+} from '../../src/utils/screenshotManager';
 import { parseTurkishPrice, formatTurkishPrice } from '../../src/utils/priceParser';
+import { MapCaptureOverlayOnMap } from './MapCaptureOverlayOnMap';
+import type { MapOverlayCapturePayload } from '../../src/utils/mapOverlayCaptureProjection';
+
+export type CaptureWithMapUriOptions = {
+  overlay?: MapOverlayCapturePayload | null;
+  sourceViewport?: { width: number; height: number } | null;
+  /** Arazi yok ve overlay yok → doğrudan mapUri (2. ViewShot yok) */
+  skipViewShot?: boolean;
+};
+
+export type CombinedScreenshotCaptureRef = {
+  capture: () => Promise<string>;
+  captureWithMapUri: (mapUri: string, options?: CaptureWithMapUriOptions) => Promise<string>;
+};
 
 interface CombinedScreenshotContainerProps {
   capturedMapUri: string | null;
   parcelData: any;
   isProMode?: boolean;
-  /**
-   * Arazi seçili değilse (ya da hiç sorgu/çizim yoksa) sadece harita çıktısı üret.
-   */
   mapOnly?: boolean;
-  /**
-   * Screenshot anında kullanıcı tarafından girilen fiyatları, backend'den gelen fiyatların üstüne yazar.
-   * Not: isProMode=false olsa bile override varsa fiyatlar gösterilir.
-   */
   priceOverride?: {
     unitPrice?: number | null;
     totalPrice?: number | null;
@@ -75,7 +89,10 @@ const formatPriceMaybe = (raw: any, allow: boolean): string => {
   return formatTurkishPrice(parsed);
 };
 
-export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreenshotContainerProps>(({
+export const CombinedScreenshotContainer = React.forwardRef<
+  CombinedScreenshotCaptureRef,
+  CombinedScreenshotContainerProps
+>(({
   capturedMapUri,
   parcelData,
   isProMode = false,
@@ -83,30 +100,81 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
   priceOverride = null,
 }, ref) => {
   const dimensions = getCombinedImageDimensions();
-  const [imageLoaded, setImageLoaded] = React.useState(false);
-  
-  // capturedMapUri değiştiğinde imageLoaded'i sıfırla
+  const viewShotRef = useRef<ViewShot>(null);
+  const [displayMapUri, setDisplayMapUri] = useState<string | null>(capturedMapUri);
+  const [captureOverlay, setCaptureOverlay] = useState<MapOverlayCapturePayload | null>(null);
+  const [captureSourceViewport, setCaptureSourceViewport] = useState<{ width: number; height: number } | null>(null);
+  const imageReadyResolveRef = useRef<(() => void) | null>(null);
+
   React.useEffect(() => {
-    setImageLoaded(false);
+    setDisplayMapUri(capturedMapUri);
   }, [capturedMapUri]);
 
-  // Debug: mapOnly ve parcelData durumunu logla
-  React.useEffect(() => {
-    console.log('[CombinedScreenshotContainer] 🔍 Render durumu:', {
-      mapOnly,
-      hasParcelData: !!parcelData,
-      hasCapturedMapUri: !!capturedMapUri,
-      imageLoaded,
+  const waitForDisplayedImage = useCallback(async (uri: string) => {
+    await prepareCaptureImageUri(uri);
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        imageReadyResolveRef.current = null;
+        resolve();
+      };
+      imageReadyResolveRef.current = finish;
+      setTimeout(finish, CAPTURE_IMAGE_LOAD_TIMEOUT_MS);
     });
-  }, [mapOnly, parcelData, capturedMapUri, imageLoaded]);
+  }, []);
 
-  // Arazi yoksa: sadece harita screenshot'ı (alt bilgi + fiyat overlay'leri yok)
+  const runViewShotCapture = useCallback(async (): Promise<string> => {
+    if (!viewShotRef.current?.capture) {
+      throw new Error('ViewShot hazır değil');
+    }
+    const uri = await viewShotRef.current.capture();
+    if (!uri) {
+      throw new Error('Paylaşılacak görüntü bulunamadı');
+    }
+    return uri;
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      capture: runViewShotCapture,
+      captureWithMapUri: async (mapUri: string, options?: CaptureWithMapUriOptions) => {
+        if (options?.skipViewShot) {
+          const ok = await verifyCaptureFile(mapUri);
+          if (!ok) throw new Error('Harita görüntüsü geçersiz');
+          return mapUri;
+        }
+
+        setDisplayMapUri(mapUri);
+        setCaptureOverlay(options?.overlay ?? null);
+        setCaptureSourceViewport(options?.sourceViewport ?? null);
+        await waitCaptureLayoutFrames(2);
+        await waitForDisplayedImage(mapUri);
+        return runViewShotCapture();
+      },
+    }),
+    [runViewShotCapture, waitForDisplayedImage],
+  );
+
+  const handleMapImageLoad = useCallback(() => {
+    imageReadyResolveRef.current?.();
+    imageReadyResolveRef.current = null;
+  }, []);
+
+  const mapOverlayLayer = (
+    <MapCaptureOverlayOnMap
+      overlay={captureOverlay}
+      width={dimensions.mapWidth}
+      height={dimensions.mapHeight}
+      sourceViewport={captureSourceViewport}
+    />
+  );
+
   if (mapOnly) {
-    console.log('[CombinedScreenshotContainer] ⚠️ mapOnly=true - sadece harita gösteriliyor (şablon yok)');
     return (
       <ViewShot
-        ref={ref}
-        options={{ format: 'png', quality: 1.0, result: 'tmpfile' }}
+        ref={viewShotRef}
+        options={CAPTURE_VIEW_SHOT_OPTIONS}
+        collapsable={false}
         style={{
           width: dimensions.totalWidth,
           height: dimensions.mapHeight,
@@ -115,26 +183,28 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
         }}
       >
         <View style={{ width: dimensions.mapWidth, height: dimensions.mapHeight, backgroundColor: '#0f172a' }}>
-          {capturedMapUri && (
+          {displayMapUri ? (
             <Image
-              source={{ uri: capturedMapUri }}
+              source={{ uri: displayMapUri }}
               fadeDuration={0}
+              onLoadEnd={handleMapImageLoad}
               style={{
                 width: dimensions.mapWidth,
                 height: dimensions.mapHeight,
                 resizeMode: 'cover',
               }}
             />
-          )}
+          ) : null}
+          {mapOverlayLayer}
         </View>
       </ViewShot>
     );
   }
-  
+
   const parametersData: any = parcelData?.analysisData?.parameters_data || {};
   const parcelValues = parametersData?.parcel_values || {};
   const mergedProperties = { ...(parcelData?.properties || {}), ...parametersData, ...parcelValues };
-  
+
   const pickValue = (source: Record<string, any>, keys: string[]): string => {
     for (const key of keys) {
       const val = source[key];
@@ -142,7 +212,7 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
     }
     return '-';
   };
-  
+
   const formatArea = (value: any): string => {
     if (value === null || value === undefined || value === '') return '-';
     let n: number;
@@ -161,7 +231,7 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
     if (!Number.isFinite(n) || n <= 0) return '-';
     return `${Math.round(n).toLocaleString('tr-TR')} m²`;
   };
-  
+
   const il = pickValue(mergedProperties, ['ilAd', 'il', 'city', 'city_name', 'cityName', 'CityName']);
   const ilce = pickValue(mergedProperties, ['ilceAd', 'ilce', 'town', 'town_name', 'townName', 'TownName']);
   const mahalle = pickValue(mergedProperties, ['mahalleAd', 'mahalle', 'quarter', 'quarter_name', 'QuarterName']);
@@ -170,20 +240,16 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
   const alanRaw = mergedProperties.alan ?? mergedProperties.area ?? mergedProperties.Area ?? mergedProperties.area_m2 ?? null;
   const alan = formatArea(alanRaw);
   const nitelik = pickValue(mergedProperties, ['nitelik', 'Nitelik']);
-  
-  // Fiyat hesaplama (override > backend)
+
   const areaNum = parseAreaToNumber(alanRaw);
   const allowPrices = Boolean(isProMode || priceOverride?.totalPrice || priceOverride?.unitPrice);
 
-  // Backend price candidates
   const backendUnitRaw = pickRaw(mergedProperties, PRICE_KEYS_UNIT);
   const backendTotalRaw = pickRaw(mergedProperties, PRICE_KEYS_TOTAL);
 
-  // Start with override if provided, otherwise use backend/raw values.
   let unitRaw: any = (priceOverride?.unitPrice ?? null);
   let totalRaw: any = (priceOverride?.totalPrice ?? null);
 
-  // If override exists partially, compute the other side using area.
   if ((totalRaw === null || totalRaw === undefined) && (unitRaw !== null && unitRaw !== undefined)) {
     const unitNum = Number(unitRaw);
     if (Number.isFinite(unitNum) && unitNum > 0 && areaNum > 0) totalRaw = unitNum * areaNum;
@@ -193,7 +259,6 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
     if (Number.isFinite(totalNum) && totalNum > 0 && areaNum > 0) unitRaw = totalNum / areaNum;
   }
 
-  // If still missing, fall back to backend and derived calc.
   if (unitRaw === null || unitRaw === undefined) unitRaw = backendUnitRaw;
   if (totalRaw === null || totalRaw === undefined) totalRaw = backendTotalRaw;
   if (totalRaw === null) {
@@ -208,42 +273,30 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
     priceOverride && (priceOverride.totalPrice !== null && priceOverride.totalPrice !== undefined
       || priceOverride.unitPrice !== null && priceOverride.unitPrice !== undefined)
   );
-  
-  const locationLine = [il, ilce].filter(v => v !== '-').join(' / ');
 
-  console.log('[CombinedScreenshotContainer] ✅ Şablon render ediliyor:', {
-    mapOnly: false,
-    hasParcelData: !!parcelData,
-    locationLine,
-    ada,
-    parsel,
-    alan,
-  });
+  const locationLine = [il, ilce].filter(v => v !== '-').join(' / ');
 
   return (
     <ViewShot
-      ref={ref}
-      options={{ format: 'png', quality: 1.0, result: 'tmpfile' }}
+      ref={viewShotRef}
+      options={CAPTURE_VIEW_SHOT_OPTIONS}
+      collapsable={false}
       style={{
         width: dimensions.totalWidth,
         height: dimensions.height,
-        backgroundColor: '#1e293b', // Kurumsal Lacivert
+        backgroundColor: '#1e293b',
         flexDirection: 'column',
       }}
     >
-      {/* Harita Bölümü */}
       <View style={{ width: dimensions.mapWidth, height: dimensions.mapHeight, backgroundColor: '#0f172a' }}>
-        {capturedMapUri ? (
+        {displayMapUri ? (
           <Image
-            source={{ uri: capturedMapUri }}
+            source={{ uri: displayMapUri }}
             fadeDuration={0}
-            onLoad={() => {
-              console.log('[CombinedScreenshotContainer] ✅ Harita görüntüsü yüklendi');
-              setImageLoaded(true);
-            }}
-            onError={(error) => {
-              console.error('[CombinedScreenshotContainer] ❌ Harita görüntüsü yüklenemedi:', error);
-              setImageLoaded(false);
+            onLoadEnd={handleMapImageLoad}
+            onError={() => {
+              imageReadyResolveRef.current?.();
+              imageReadyResolveRef.current = null;
             }}
             style={{
               width: dimensions.mapWidth,
@@ -252,38 +305,34 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
             }}
           />
         ) : null}
-        {/* Marka Overlay - Sağ Üst */}
+        {mapOverlayLayer}
         <View style={styles.brandOverlay}>
           <Text style={styles.brandOverlayText}>PROPARCEL</Text>
         </View>
-        
-        {/* Fiyat Alanları Overlay - Alt Orta */}
+
         <View style={styles.priceOverlay}>
           <View style={styles.priceBox}>
             <Text style={styles.priceLabel}>BİRİM FİYAT</Text>
             <Text style={styles.priceValue}>{unitPriceText}</Text>
           </View>
-          
+
           <View style={styles.priceBox}>
             <Text style={styles.priceLabel}>TOPLAM FİYAT</Text>
             <Text style={styles.priceValue}>{totalPriceText}</Text>
           </View>
         </View>
       </View>
-      
-      {/* Kurumsal Bilgi Alanı */}
+
       <View style={{
         width: dimensions.modalWidth,
         height: dimensions.modalHeight,
-        backgroundColor: '#1e293b', // Koyu kurumsal lacivert
+        backgroundColor: '#1e293b',
         paddingHorizontal: 20,
         paddingVertical: 6,
         justifyContent: 'flex-start',
         borderTopWidth: 4,
-        borderTopColor: '#3b82f6', // Mavi vurgu çizgisi
+        borderTopColor: '#3b82f6',
       }}>
-        
-        {/* Üst: Konum Bilgisi */}
         <View style={styles.headerInfo}>
           <View style={{ flex: 1 }}>
             <Text style={styles.locationSubtitle}>{locationLine}</Text>
@@ -294,18 +343,17 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
           </View>
         </View>
 
-        {/* Orta: Veri Kutuları (Boxes) - Tüm kutular kurumsal mavi border ve label ile eşitlendi */}
         <View style={styles.dataGrid}>
           <View style={styles.dataBox}>
             <Text style={styles.dataLabel}>ADA</Text>
             <Text style={styles.dataValue}>{ada}</Text>
           </View>
-          
+
           <View style={styles.dataBox}>
             <Text style={styles.dataLabel}>PARSEL</Text>
             <Text style={styles.dataValue}>{parsel}</Text>
           </View>
-          
+
           <View style={[styles.dataBox, { flex: 1.4 }]}>
             <Text style={styles.dataLabel}>ALAN</Text>
             <Text style={styles.dataValue}>{alan}</Text>
@@ -318,7 +366,6 @@ export const CombinedScreenshotContainer = React.forwardRef<any, CombinedScreens
           </Text>
         )}
 
-        {/* Alt: İnce Detay */}
         <View style={[styles.footer, { marginTop: 'auto' }]}>
           <Text style={styles.footerText}>Taşınmaz Özet Bilgi Formu</Text>
           <View style={styles.dot} />
@@ -426,10 +473,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#3b82f6', // Tüm kutular için kurumsal mavi border
+    borderColor: '#3b82f6',
   },
   dataLabel: {
-    color: '#3b82f6', // Tüm başlıklar için kurumsal mavi renk
+    color: '#3b82f6',
     fontSize: 8,
     fontWeight: '800',
     marginBottom: 4,

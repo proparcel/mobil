@@ -14,6 +14,7 @@ import { fetchCreditBalance } from '../../src/services/modelPurchaseService';
 import { TepeCreditBalanceCard } from './TepeCreditBalanceCard';
 import { TepeCreditEarnListSection } from './TepeCreditEarnListSection';
 import { LandingNewPlatformBadge } from './LandingNewPlatformBadge';
+import { LandingLegalFooter } from './LandingLegalFooter';
 import { TepeCreditTopBar } from './TepeCreditTopBar';
 import { tepeCreditColors } from './tepeCreditTheme';
 import { LANDING_BOTTOM_CHROME } from './landingTheme';
@@ -102,6 +103,7 @@ export function TepeCreditEarnPanel({
             onEarnPress={onEarnItemPress}
             onSeeAllEarn={onSeeAllMissions}
           />
+          <LandingLegalFooter variant="scroll" tone="dark" />
         </ScrollView>
       </Animated.View>
     </View>

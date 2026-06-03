@@ -21,6 +21,7 @@ import {
   getCachedTkgmForParcel,
   type Parcel3dEntry,
 } from "../../src/utils/parcel3dPurchasedStorage";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
 
 type Props = {
   visible: boolean;
@@ -42,7 +43,7 @@ export default function ThreeDDesignsModal({ visible, onClose, onOpenParcelInEdi
   const [rows, setRows] = useState<Parcel3dLicenseRow[]>([]);
   const insets = useSafeAreaInsets();
 
-  const listBottomPadding = useMemo(() => (insets.bottom || 0) + 24, [insets.bottom]);
+  const listBottomPadding = useMemo(() => sheetScrollBottomPadding(insets.bottom || 0, 24), [insets.bottom]);
   const snapPoints = useMemo(() => ["70%", "88%"], []);
 
   const refresh = useCallback(async () => {

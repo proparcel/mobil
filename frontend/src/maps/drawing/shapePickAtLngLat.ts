@@ -1,25 +1,22 @@
 import type React from "react";
 import type { ShapeProperties } from "./types";
 import { computeTextBoxLayout } from "./textBoxLayout";
+import { pinHitSizePx } from "./mapPinStyles";
+import { isOverlayVectorShape } from "./overlayShapePolicy";
+import { projectLngLatsBatch, projectOverlayShapes } from "./shapeScreenProjection";
+import { hitTestOverlayVectorAtScreenPoint } from "./shapeOverlayHitTest";
+import type { MapOverlayViewport } from "./mapOverlayViewport";
+import { isMapOverlayViewportReady } from "./mapOverlayViewport";
 
 type MapRef = React.RefObject<any>;
 
 async function lngLatToScreen(
   mapRef: MapRef,
-  lngLat: [number, number]
+  lngLat: [number, number],
+  viewport?: MapOverlayViewport
 ): Promise<[number, number] | null> {
-  const map = mapRef?.current;
-  if (!map || typeof map.getPointInView !== "function") return null;
-  try {
-    const p = await map.getPointInView(lngLat);
-    if (!p || p.length < 2) return null;
-    const x = Number(p[0]);
-    const y = Number(p[1]);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    return [x, y];
-  } catch {
-    return null;
-  }
+  const batch = await projectLngLatsBatch(mapRef, [lngLat], viewport);
+  return batch[0] ?? null;
 }
 
 export function screenPointFromMapPressEvent(e: any): [number, number] | null {
@@ -39,10 +36,12 @@ async function trySelectPointShapeAtLngLat(
   mapRef: MapRef,
   lngLat: [number, number],
   shapes: ShapeProperties[],
-  screenPoint?: [number, number] | null
+  screenPoint?: [number, number] | null,
+  viewport?: MapOverlayViewport
 ): Promise<string | null> {
-  const tapPx = screenPoint ?? (await lngLatToScreen(mapRef, lngLat));
-  if (!tapPx) return null;
+  const tapPxRaw = screenPoint ?? (await lngLatToScreen(mapRef, lngLat, viewport));
+  if (!tapPxRaw) return null;
+  const tapPx = tapPxRaw;
 
   let best: { id: string; dist: number } | null = null;
 
@@ -50,7 +49,7 @@ async function trySelectPointShapeAtLngLat(
     if (shape.screenSpace || shape.geometry?.type !== "Point") continue;
 
     const coord = shape.geometry.coordinates as [number, number];
-    const centerPx = await lngLatToScreen(mapRef, coord);
+      const centerPx = await lngLatToScreen(mapRef, coord, viewport);
     if (!centerPx) continue;
 
     const [tx, ty] = tapPx;
@@ -74,11 +73,14 @@ async function trySelectPointShapeAtLngLat(
     }
 
     if (shape.type === "marker") {
-      const r = 28;
-      const dist = Math.hypot(tx - cx, ty - cy);
-      if (dist <= r && (!best || dist < best.dist)) {
-        best = { id: shape.id, dist };
+      const hit = pinHitSizePx(shape);
+      const halfW = hit.width / 2;
+      const top = cy - hit.height;
+      if (tx >= cx - halfW && tx <= cx + halfW && ty >= top && ty <= cy + 10) {
+        const dist = Math.hypot(tx - cx, ty - (top + hit.height / 2));
+        if (!best || dist < best.dist) best = { id: shape.id, dist };
       }
+      continue;
     }
   }
 
@@ -89,39 +91,23 @@ export async function trySelectShapeAtLngLat(
   mapRef: MapRef,
   lngLat: [number, number],
   shapes: ShapeProperties[],
-  screenPoint?: [number, number] | null
+  screenPoint?: [number, number] | null,
+  viewport?: MapOverlayViewport
 ): Promise<string | null> {
   if (!shapes.length) return null;
 
-  const pointHit = await trySelectPointShapeAtLngLat(mapRef, lngLat, shapes, screenPoint);
+  const pointHit = await trySelectPointShapeAtLngLat(mapRef, lngLat, shapes, screenPoint, viewport);
   if (pointHit) return pointHit;
 
-  const map = mapRef?.current;
-  if (!map || typeof map.queryRenderedFeaturesAtPoint !== "function") return null;
+  const pxRaw = screenPoint ?? (await lngLatToScreen(mapRef, lngLat, viewport));
+  if (!pxRaw) return null;
+  const px = pxRaw;
 
-  try {
-    const px = screenPoint ?? (await lngLatToScreen(mapRef, lngLat));
-    if (!px) return null;
-
-    const probes: [number, number][] = [
-      px,
-      [px[0] + 8, px[1]],
-      [px[0] - 8, px[1]],
-      [px[0], px[1] + 8],
-      [px[0], px[1] - 8],
-    ];
-
-    for (const probe of probes) {
-      const fc = await map.queryRenderedFeaturesAtPoint(probe, [], []);
-      for (const f of fc?.features ?? []) {
-        const sid = f?.properties?.shapeId;
-        if (sid != null && String(sid).length > 0) {
-          return String(sid);
-        }
-      }
-    }
-  } catch {
-    /* ignore */
+  const vectorShapes = shapes.filter((s) => isOverlayVectorShape(s));
+  if (vectorShapes.length > 0 && viewport && isMapOverlayViewportReady(viewport)) {
+    const projected = await projectOverlayShapes(mapRef, vectorShapes, viewport);
+    const vectorHit = hitTestOverlayVectorAtScreenPoint(px, vectorShapes, projected);
+    if (vectorHit) return vectorHit;
   }
 
   return null;

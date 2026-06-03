@@ -17,6 +17,7 @@ import {
   RefreshControl,
   Modal,
   Dimensions,
+  Platform,
 } from "react-native";
 
 const { height: WINDOW_HEIGHT } = Dimensions.get("window");
@@ -31,6 +32,16 @@ import { DJANGO_API_URL } from "../../config/api";
 import type { CreditPackage, CreditBalance, CreditCostItem } from "../../services/creditService";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
+import { tepeCreditColors } from "../../components/landing/tepeCreditTheme";
+import { packageHasIapProduct, isEkPackage } from "../../config/iapProducts";
+
+const TEPE_SAVE_COLORS = {
+  accent: tepeCreditColors.teal,
+  accentText: "#0d9488",
+  accentTextStrong: "#0f766e",
+  highlightBg: "rgba(42, 220, 190, 0.14)",
+  pillBg: "rgba(57, 223, 255, 0.18)",
+} as const;
 
 type PeriodType = "monthly" | "yearly";
 type CustomerType = "kurumsal" | "bireysel" | "ek_paket";
@@ -51,6 +62,7 @@ export default function PricingScreen() {
   const [coinModalVisible, setCoinModalVisible] = useState(false);
   const [creditUsageItems, setCreditUsageItems] = useState<CreditCostItem[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [hasActiveYearlySubscription, setHasActiveYearlySubscription] = useState(false);
 
   // Icon rengi eşlemesi (icon key -> { bg, color })
   const ICON_COLORS: Record<string, { bg: string; color: string }> = {
@@ -81,6 +93,7 @@ export default function PricingScreen() {
         const packagesList = packagesRes.data.packages || [];
         console.log("[Pricing] Paketler yüklendi:", packagesList.length, "paket");
         setPackages(packagesList);
+        setHasActiveYearlySubscription(Boolean(packagesRes.data.has_active_yearly_subscription));
         if (packagesList.length === 0) {
           setLoadError("Sunucuda aktif paket bulunamadı.");
         }
@@ -152,7 +165,7 @@ export default function PricingScreen() {
     }, [loadData])
   );
 
-  /** Web pricing: Satın Al → havale ödeme sayfası */
+  /** Satın al → ödeme sayfası (iOS: Apple IAP; Android: Havale/EFT) */
   const handlePurchase = useCallback(
     (pkg: CreditPackage) => {
       if (!isAuthenticated) {
@@ -162,6 +175,13 @@ export default function PricingScreen() {
         ]);
         return;
       }
+      if (isEkPackage(pkg) && !hasActiveYearlySubscription) {
+        Alert.alert(
+          "Yıllık Abonelik Gerekli",
+          "Ek paketler yalnızca aktif yıllık aboneliği olan kullanıcılar için geçerlidir."
+        );
+        return;
+      }
       router.push("tepe-coin-purchase", {
         package_id: String(pkg.id),
         package_name: pkg.name,
@@ -169,7 +189,7 @@ export default function PricingScreen() {
         package_credits: String(pkg.credits),
       });
     },
-    [isAuthenticated, router]
+    [isAuthenticated, router, hasActiveYearlySubscription]
   );
 
   const targetAudienceText =
@@ -185,14 +205,20 @@ export default function PricingScreen() {
     const pkgType = (pkg.package_type ?? "kurumsal").toLowerCase();
 
     if (customerType === "ek_paket") {
+      if (Platform.OS === "ios" && !packageHasIapProduct(pkg)) return false;
       return isEk;
     }
     if (isEk) return false;
 
     if (customerType === "bireysel") {
-      return pkgType === "bireysel";
+      if (Platform.OS === "ios" && !packageHasIapProduct(pkg)) return false;
+      return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
     }
     if (pkgType !== "kurumsal") return false;
+    if (Platform.OS === "ios") {
+      if (!packageHasIapProduct(pkg)) return false;
+      return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
+    }
     return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
   });
 
@@ -321,7 +347,14 @@ export default function PricingScreen() {
           </TouchableOpacity>
         </View>
 
-        {customerType === "ek_paket" ? (
+        {customerType === "ek_paket" && isAuthenticated && !hasActiveYearlySubscription ? (
+          <View style={[styles.ekPaketBanner, styles.ekPaketBannerLocked]}>
+            <Ionicons name="lock-closed-outline" size={18} color="#b45309" />
+            <Text style={styles.ekPaketBannerText}>
+              Ek paket satın almak için aktif yıllık aboneliğiniz olmalıdır. Önce kurumsal veya bireysel yıllık paket alın.
+            </Text>
+          </View>
+        ) : customerType === "ek_paket" ? (
           <View style={styles.ekPaketBanner}>
             <Ionicons name="information-circle-outline" size={18} color="#b45309" />
             <Text style={styles.ekPaketBannerText}>
@@ -330,8 +363,8 @@ export default function PricingScreen() {
           </View>
         ) : null}
 
-        {/* Aylık / Yıllık — yalnızca kurumsal */}
-        {customerType === "kurumsal" ? (
+        {/* Aylık / Yıllık — kurumsal ve bireysel */}
+        {customerType === "kurumsal" || customerType === "bireysel" ? (
         <View style={styles.periodToggle}>
           <View style={styles.periodTabsRow}>
             <TouchableOpacity
@@ -407,7 +440,9 @@ export default function PricingScreen() {
           <View style={styles.packagesGrid}>
             {filteredPackages.map((pkg) => {
               const showYearlyStyle =
-                customerType === "kurumsal" && period === "yearly";
+                (customerType === "kurumsal" || customerType === "bireysel") && period === "yearly";
+              const isEkLocked =
+                isEkPackage(pkg) && isAuthenticated && !hasActiveYearlySubscription;
               const discountPct = pkg.discount_percent ?? 0;
               const showOriginal =
                 discountPct > 0 && (pkg.original_price ?? 0) > (pkg.price ?? 0);
@@ -457,13 +492,15 @@ export default function PricingScreen() {
                   ) : null}
                   <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "center" }}>
                     <Text style={styles.priceValue}>
-                      {showYearlyStyle && pkg.monthly_price
-                        ? pkg.monthly_price.toLocaleString("tr-TR")
-                        : pkg.price.toLocaleString("tr-TR")}
+                      {customerType === "ek_paket" && pkg.monthly_price != null
+                        ? Number(pkg.monthly_price).toLocaleString("tr-TR")
+                        : showYearlyStyle && pkg.monthly_price
+                          ? pkg.monthly_price.toLocaleString("tr-TR")
+                          : pkg.price.toLocaleString("tr-TR")}
                     </Text>
                     <Text style={styles.priceCurrency}>TL</Text>
                     <Text style={styles.pricePeriod}>
-                      {showYearlyStyle ? "/ay" : customerType === "bireysel" && pkg.duration_months === 12 ? `/${pkg.duration_months} ay` : ""}
+                      {showYearlyStyle ? "/ay" : customerType === "bireysel" && pkg.duration_months === 12 ? `/${pkg.duration_months} ay` : customerType === "ek_paket" ? "/ay" : ""}
                     </Text>
                   </View>
                 </View>
@@ -471,6 +508,12 @@ export default function PricingScreen() {
                 {showYearlyStyle && (
                   <Text style={styles.totalPrice}>
                     Toplam: {pkg.price.toLocaleString("tr-TR")} TL/yıl
+                  </Text>
+                )}
+
+                {customerType === "ek_paket" && pkg.monthly_price != null && (
+                  <Text style={styles.totalPrice}>
+                    Aylık ek kullanım: {Number(pkg.monthly_price).toLocaleString("tr-TR")} TL
                   </Text>
                 )}
 
@@ -494,7 +537,7 @@ export default function PricingScreen() {
                   </View>
                   {showYearlyStyle && discountPct > 0 && (
                     <View style={[styles.feature, styles.featureHighlight]}>
-                      <Ionicons name="pricetag" size={16} color="#f59e0b" />
+                      <Ionicons name="pricetag" size={16} color={TEPE_SAVE_COLORS.accent} />
                       <Text style={[styles.featureText, styles.featureTextHighlight]}>
                         %{discountPct} Tasarruf
                       </Text>
@@ -507,11 +550,31 @@ export default function PricingScreen() {
                 </View>
 
                 <TouchableOpacity
-                  style={styles.purchaseButton}
+                  style={[
+                    styles.purchaseButton,
+                    isEkLocked && styles.purchaseButtonDisabled,
+                  ]}
                   onPress={() => handlePurchase(pkg)}
+                  disabled={isEkLocked}
                 >
-                  <Ionicons name="cart" size={20} color="#fff" />
-                  <Text style={styles.purchaseButtonText}>Satın Al</Text>
+                  <Ionicons
+                    name={
+                      isEkLocked
+                        ? "lock-closed"
+                        : Platform.OS === "ios"
+                          ? "logo-apple"
+                          : "cart"
+                    }
+                    size={20}
+                    color="#fff"
+                  />
+                  <Text style={styles.purchaseButtonText}>
+                    {isEkLocked
+                      ? "Yıllık Abonelik Gerekli"
+                      : Platform.OS === "ios"
+                        ? "Apple ile Satın Al"
+                        : "Satın Al"}
+                  </Text>
                 </TouchableOpacity>
               </View>
             );
@@ -530,7 +593,9 @@ export default function PricingScreen() {
                 : customerType === "ek_paket"
                   ? "Henüz ek paket tanımlanmamış"
                   : customerType === "bireysel"
-                    ? "Henüz bireysel paket tanımlanmamış"
+                    ? period === "monthly"
+                      ? "Henüz bireysel aylık paket tanımlanmamış"
+                      : "Henüz bireysel yıllık paket tanımlanmamış"
                     : period === "monthly"
                       ? "Henüz aylık paket tanımlanmamış"
                       : "Henüz yıllık paket tanımlanmamış"}
@@ -863,6 +928,10 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 16,
   },
+  ekPaketBannerLocked: {
+    backgroundColor: "#fef2f2",
+    borderColor: "#fecaca",
+  },
   ekPaketBannerText: {
     flex: 1,
     fontSize: 12,
@@ -912,7 +981,7 @@ const styles = StyleSheet.create({
   },
   saveBadge: {
     fontSize: 12,
-    color: "#f59e0b",
+    color: TEPE_SAVE_COLORS.accentText,
   },
   packagesGrid: {
     gap: 16,
@@ -997,8 +1066,8 @@ const styles = StyleSheet.create({
   discountPill: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#b45309",
-    backgroundColor: "#fef3c7",
+    color: TEPE_SAVE_COLORS.accentTextStrong,
+    backgroundColor: TEPE_SAVE_COLORS.pillBg,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
@@ -1034,7 +1103,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   featureHighlight: {
-    backgroundColor: "#fef3c7",
+    backgroundColor: TEPE_SAVE_COLORS.highlightBg,
     padding: 8,
     borderRadius: 6,
   },
@@ -1043,7 +1112,7 @@ const styles = StyleSheet.create({
     color: "#64748b",
   },
   featureTextHighlight: {
-    color: "#f59e0b",
+    color: TEPE_SAVE_COLORS.accentText,
     fontWeight: "600",
   },
   purchaseButton: {

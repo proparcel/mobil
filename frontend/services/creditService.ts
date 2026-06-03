@@ -262,10 +262,13 @@ export interface CreditPackage {
   package_type?: PackageType;
   is_ek_package?: boolean;
   max_users?: number;
+  /** iOS App Store Product ID (backend eşlemesi) */
+  ios_product_id?: string | null;
 }
 
 export interface PackagesList {
   packages: CreditPackage[];
+  has_active_yearly_subscription?: boolean;
 }
 
 export interface PurchaseResult {
@@ -739,7 +742,10 @@ class CreditService {
 
         const data = JSON.parse(rawText) as {
           success?: boolean;
-          data?: { packages?: CreditPackage[] };
+          data?: {
+            packages?: CreditPackage[];
+            has_active_yearly_subscription?: boolean;
+          };
           packages?: CreditPackage[];
           message?: string;
           error?: string;
@@ -751,7 +757,13 @@ class CreditService {
         }
 
         if (data.data?.packages && Array.isArray(data.data.packages)) {
-          return { success: true, data: { packages: data.data.packages } };
+          return {
+            success: true,
+            data: {
+              packages: data.data.packages,
+              has_active_yearly_subscription: data.data.has_active_yearly_subscription,
+            },
+          };
         }
         if (data.packages && Array.isArray(data.packages)) {
           return { success: true, data: { packages: data.packages } };

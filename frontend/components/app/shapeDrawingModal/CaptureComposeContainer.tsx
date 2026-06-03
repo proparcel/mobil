@@ -1,81 +1,129 @@
 /**
  * 3D Model Editör – Capture Compose Container
- * Ekran dışında render edilen ViewShot: snapshot Image + ekran çizimleri (screenSpace) + ProParcel badge
+ * Ekran dışında render edilen ViewShot: snapshot Image + overlay (ok/iğne/metin/ekran çizimi) + ProParcel badge
  */
 
-import React from "react";
+import React, { useCallback, useImperativeHandle, useRef, useState } from "react";
 import { View, Text, Image, StyleSheet } from "react-native";
 import ViewShot from "react-native-view-shot";
-import Svg, { Polyline } from "react-native-svg";
-import type { ShapeProperties } from "@/src/maps/drawing/types";
+import { MapCaptureOverlayOnMap } from "../MapCaptureOverlayOnMap";
+import type { MapOverlayCapturePayload } from "@/src/utils/mapOverlayCaptureProjection";
+import {
+  CAPTURE_IMAGE_LOAD_TIMEOUT_MS,
+  CAPTURE_VIEW_SHOT_OPTIONS,
+  prepareCaptureImageUri,
+  verifyCaptureFile,
+  waitCaptureLayoutFrames,
+} from "@/src/utils/screenshotManager";
 
 interface Props {
   capturedMapUri: string | null;
   width: number;
   height: number;
-  /** "Ekrana çiz" ile kaydedilen normalize [0–1] çizgiler; yakalama JPEG'ine basılır */
-  screenOverlayShapes?: ShapeProperties[];
 }
 
-export const CaptureComposeContainer = React.forwardRef<any, Props>(
-  ({ capturedMapUri, width, height, screenOverlayShapes }, ref) => {
-    if (!width || !height) return null;
+export type CaptureComposeOptions = {
+  overlay?: MapOverlayCapturePayload | null;
+  sourceViewport?: { width: number; height: number } | null;
+};
 
-    const overlay =
-      screenOverlayShapes?.filter((s) => s.screenSpace && s.geometry?.type === "LineString") ?? [];
+export type CaptureComposeRef = {
+  capture: () => Promise<string>;
+  captureWithMapUri: (mapUri: string, options?: CaptureComposeOptions) => Promise<string>;
+};
+
+export const CaptureComposeContainer = React.forwardRef<CaptureComposeRef, Props>(
+  ({ capturedMapUri: capturedMapUriProp, width, height }, ref) => {
+    const viewShotRef = useRef<ViewShot>(null);
+    const [displayMapUri, setDisplayMapUri] = useState<string | null>(capturedMapUriProp);
+    const [captureOverlay, setCaptureOverlay] = useState<MapOverlayCapturePayload | null>(null);
+    const [captureSourceViewport, setCaptureSourceViewport] = useState<{
+      width: number;
+      height: number;
+    } | null>(null);
+    const imageReadyResolveRef = useRef<(() => void) | null>(null);
+
+    React.useEffect(() => {
+      setDisplayMapUri(capturedMapUriProp);
+    }, [capturedMapUriProp]);
+
+    const waitForDisplayedImage = useCallback(async (uri: string) => {
+      await prepareCaptureImageUri(uri);
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          imageReadyResolveRef.current = null;
+          resolve();
+        };
+        imageReadyResolveRef.current = finish;
+        setTimeout(finish, CAPTURE_IMAGE_LOAD_TIMEOUT_MS);
+      });
+    }, []);
+
+    const runViewShotCapture = useCallback(async (): Promise<string> => {
+      if (!viewShotRef.current?.capture) {
+        throw new Error("ViewShot hazır değil");
+      }
+      const uri = await viewShotRef.current.capture();
+      if (!uri) {
+        throw new Error("ViewShot capture başarısız");
+      }
+      return uri;
+    }, []);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        capture: runViewShotCapture,
+        captureWithMapUri: async (mapUri: string, options?: CaptureComposeOptions) => {
+          const ok = await verifyCaptureFile(mapUri);
+          if (!ok) throw new Error("Harita görüntüsü geçersiz");
+          setDisplayMapUri(mapUri);
+          setCaptureOverlay(options?.overlay ?? null);
+          setCaptureSourceViewport(options?.sourceViewport ?? null);
+          await waitCaptureLayoutFrames(2);
+          await waitForDisplayedImage(mapUri);
+          return runViewShotCapture();
+        },
+      }),
+      [runViewShotCapture, waitForDisplayedImage],
+    );
+
+    const handleMapImageLoad = useCallback(() => {
+      imageReadyResolveRef.current?.();
+      imageReadyResolveRef.current = null;
+    }, []);
+
+    if (!width || !height) return null;
 
     return (
       <ViewShot
-        ref={ref}
-        options={{ format: "jpg", quality: 0.9, result: "tmpfile" }}
+        ref={viewShotRef}
+        options={CAPTURE_VIEW_SHOT_OPTIONS}
         style={[styles.offscreen, { width, height }]}
       >
         <View style={[styles.container, { width, height }]}>
-          {capturedMapUri && (
+          {displayMapUri ? (
             <Image
-              source={{ uri: capturedMapUri }}
+              source={{ uri: displayMapUri }}
               fadeDuration={0}
               style={[styles.image, { width, height }]}
               resizeMode="cover"
+              onLoadEnd={handleMapImageLoad}
             />
-          )}
-          {overlay.length > 0 ? (
-            <View style={StyleSheet.absoluteFill} pointerEvents="none">
-              <Svg
-                width="100%"
-                height="100%"
-                viewBox="0 0 1 1"
-                preserveAspectRatio="none"
-                style={StyleSheet.absoluteFill}
-              >
-                {overlay.map((shape) => {
-                  const coords = (shape.geometry as GeoJSON.LineString).coordinates as [number, number][];
-                  if (!coords?.length) return null;
-                  const stroke = shape.outlineColor || "#2563eb";
-                  const sw = shape.outlineWidth || 3;
-                  const normStroke = Math.max(0.0025, Math.min(0.04, 0.0035 * sw));
-                  return (
-                    <Polyline
-                      key={shape.id}
-                      points={coords.map(([nx, ny]) => `${nx},${ny}`).join(" ")}
-                      fill="none"
-                      stroke={stroke}
-                      strokeWidth={normStroke}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  );
-                })}
-              </Svg>
-            </View>
           ) : null}
+          <MapCaptureOverlayOnMap
+            overlay={captureOverlay}
+            width={width}
+            height={height}
+            sourceViewport={captureSourceViewport}
+          />
           <View style={styles.badge}>
             <Text style={styles.badgeText}>ProParcel</Text>
           </View>
         </View>
       </ViewShot>
     );
-  }
+  },
 );
 
 const styles = StyleSheet.create({

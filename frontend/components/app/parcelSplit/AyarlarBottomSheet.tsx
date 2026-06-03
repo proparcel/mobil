@@ -10,6 +10,7 @@ import { BottomPanelContent } from "./BottomPanelContent";
 import type { Piece } from "../../../src/types/parcelSplit";
 import type { SplitProfile, SplitMode, Orientation, UiMode } from "../../../src/types/parcelSplit";
 import type { ImarType } from "./BottomPanelContent";
+import { sheetScrollBottomPadding } from "../../../src/utils/sheetSafeArea";
 
 const SHEET_BG = "#1e293b";
 
@@ -97,7 +98,7 @@ export function AyarlarBottomSheet({
       backgroundStyle={{ backgroundColor: SHEET_BG, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
       handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
     >
-      <View style={[styles.container, { paddingBottom: Math.max(insetsBottom, 16) }]}>
+      <View style={[styles.container, { paddingBottom: sheetScrollBottomPadding(insetsBottom, 16) }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Ayarlar</Text>
           <TouchableOpacity onPress={onClose} accessibilityLabel="Kapat">

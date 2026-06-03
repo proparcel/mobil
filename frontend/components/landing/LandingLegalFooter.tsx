@@ -34,15 +34,6 @@ export function LandingLegalFooter({ variant = 'scroll', tone = 'dark' }: Props)
       style={[styles.wrap, variant === 'dock' && styles.wrapDock]}
       accessibilityRole="list"
     >
-      <Text
-        style={[
-          styles.heading,
-          isLight && { color: lightTone.heading },
-          variant === 'dock' && styles.headingDock,
-        ]}
-      >
-        Hukuki metinler
-      </Text>
       <View style={styles.linksRow}>
         {LEGAL_DOCUMENTS.map((doc, index) => (
           <React.Fragment key={doc.slug}>
@@ -83,18 +74,6 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 0,
     paddingHorizontal: 16,
-  },
-  heading: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: landingColors.textSoft,
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  headingDock: {
-    marginBottom: 6,
-    textAlign: 'center',
   },
   linksRow: {
     flexDirection: 'row',

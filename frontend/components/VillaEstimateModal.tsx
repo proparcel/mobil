@@ -12,6 +12,7 @@ import Slider from '@react-native-community/slider';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
+import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 
 export type VillaParams = {
   area_m2: number;
@@ -162,7 +163,7 @@ const VillaEstimateModal: React.FC<Props> = ({ visible, onClose, onResult, areaM
     >
       <BottomSheetScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: 24 + (insets.bottom || 0) * 2 }}
+        contentContainerStyle={{ paddingBottom: sheetScrollBottomPadding(insets.bottom || 0, 24) }}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>Villa Maliyet Tahmini</Text>

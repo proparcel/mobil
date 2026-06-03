@@ -1,9 +1,9 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
-import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import type { TkgmViewResponse } from '../src/types/parcelResponse';
+import { sheetModalBottomInset, sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 
 type Props = {
   visible: boolean;
@@ -12,7 +12,9 @@ type Props = {
   onCancel: () => void;
 };
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SHEET_EXPANDED_HEIGHT = 248;
+const SHEET_MINIMIZED_HEIGHT = 72;
+const SHEET_LOWER_OFFSET = 40;
 
 function pickValue(source: Record<string, any> | null | undefined, keys: string[]): string {
   for (const k of keys) {
@@ -42,8 +44,33 @@ function formatArea(value: any): string {
 
 export const ProQueryConfirmModal: React.FC<Props> = ({ visible, tkgmData, onConfirm, onCancel }) => {
   const insets = useSafeAreaInsets();
-  
-  console.log('[ProQueryConfirmModal] Render, visible:', visible, 'tkgmData var mı:', !!tkgmData);
+
+  const bottomInset = useMemo(
+    () => Math.max(0, sheetModalBottomInset(insets?.bottom || 0) - SHEET_LOWER_OFFSET),
+    [insets?.bottom],
+  );
+
+  const snapPoints = useMemo(
+    () => [
+      SHEET_MINIMIZED_HEIGHT + sheetScrollBottomPadding(insets?.bottom || 0, 8),
+      SHEET_EXPANDED_HEIGHT + sheetScrollBottomPadding(insets?.bottom || 0, 20),
+    ],
+    [insets?.bottom],
+  );
+
+  const modalProps = useMemo(
+    () => ({
+      bottomInset,
+      ...(Platform.OS === 'ios'
+        ? { containerStyle: { marginBottom: -SHEET_LOWER_OFFSET } }
+        : null),
+    }),
+    [bottomInset],
+  );
+
+  if (__DEV__ && visible) {
+    console.log('[ProQueryConfirmModal] Render, visible:', visible, 'tkgmData var mı:', !!tkgmData);
+  }
 
   const content = useMemo(() => {
     const props = (tkgmData as any)?.properties || {};
@@ -81,74 +108,63 @@ export const ProQueryConfirmModal: React.FC<Props> = ({ visible, tkgmData, onCon
   return (
     <AppBottomSheetModal
       visible={visible}
-      // IMPORTANT: This modal must not close by swipe/backdrop.
-      // Only the explicit "İptal" button should close it.
       onClose={() => {}}
-      snapPoints={['70%', '90%']}
-      initialIndex={0}
+      snapPoints={snapPoints}
+      initialIndex={1}
       enablePanDownToClose={false}
+      backdropOpacity={0}
+      enableBackdropTouchThrough
       backdropPressBehavior="none"
-      modalProps={{ android_keyboardInputMode: 'adjustResize', keyboardBehavior: 'interactive' as any }}
+      modalProps={modalProps}
     >
-      <BottomSheetScrollView
-        style={styles.content}
-        contentContainerStyle={{ paddingBottom: 28 + (insets?.bottom || 0) * 2, flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
-        nestedScrollEnabled={true}
+      <View
+        style={[
+          styles.content,
+          { paddingBottom: sheetScrollBottomPadding(insets?.bottom || 0, 20) },
+        ]}
       >
         <View style={styles.header}>
           <Text style={styles.title}>Parsel Bilgisi</Text>
-          <Text style={styles.subTitle}>
-            {content.row1 || '-'}
-          </Text>
-          <Text style={styles.subTitle}>
-            {content.row2 || '-'}
-          </Text>
-        </View>
-
-        <View style={styles.questionBox}>
-          <Text style={styles.questionText}>Fiyat tahmini öğrenmek istediğiniz yer burası mı?</Text>
-          <Text style={styles.questionText}>Pro Sorguyu onaylıyor musunuz?</Text>
+          <Text style={styles.subTitle}>{content.row1 || '-'}</Text>
+          <Text style={styles.subTitle}>{content.row2 || '-'}</Text>
         </View>
 
         <View style={styles.buttonsRow}>
-          <TouchableOpacity 
-            style={[styles.button, styles.cancelButton]} 
+          <TouchableOpacity
+            style={[styles.button, styles.cancelButton]}
             onPress={() => {
               console.log('[ProQueryConfirmModal] İptal butonu tıklandı');
               onCancel();
-            }} 
+            }}
             activeOpacity={0.8}
           >
             <Text style={[styles.buttonText, styles.cancelText]}>İptal</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.button, styles.confirmButton]} 
+          <TouchableOpacity
+            style={[styles.button, styles.confirmButton]}
             onPress={() => {
               console.log('[ProQueryConfirmModal] Onayla butonu tıklandı');
               onConfirm();
-            }} 
+            }}
             activeOpacity={0.8}
           >
             <Text style={[styles.buttonText, styles.confirmText]}>Onayla</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.hint}>
-          Not: Onayladıktan sonra arazi türü seçimi isteyeceğiz.
-        </Text>
-      </BottomSheetScrollView>
+        <Text style={styles.hint}>Not: Onayladıktan sonra arazi türü seçimi isteyeceğiz.</Text>
+      </View>
     </AppBottomSheetModal>
   );
 };
 
 const styles = StyleSheet.create({
   content: {
-    padding: 18,
-    minHeight: SCREEN_HEIGHT * 0.35,
+    paddingHorizontal: 18,
+    paddingTop: 4,
   },
   header: {
-    marginBottom: 14,
+    marginBottom: 16,
   },
   title: {
     fontSize: 18,
@@ -160,20 +176,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#334155',
-    lineHeight: 20,
-  },
-  questionBox: {
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-  },
-  questionText: {
-    fontSize: 14,
-    color: '#0f172a',
-    fontWeight: '600',
     lineHeight: 20,
   },
   buttonsRow: {
@@ -215,4 +217,3 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 });
-

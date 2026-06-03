@@ -27,6 +27,8 @@ type Args = {
 
   /** Web Araç Takımı ile aynı: renk + kontur kalınlığı yeni şekillere uygulanır */
   drawOptions: DrawShapeOptions;
+  /** İğne/ok yerleştirme sonrası hayalet dokunuşu yoksay (ShapeEditSheet açılmasın) */
+  onAfterInstantPlaced?: (shapeId: string) => void;
 };
 
 function extractCoordinate(e: any): [number, number] | null {
@@ -57,6 +59,7 @@ export function useShapeDrawingHandlers(args: Args) {
     setTextBoxEditShapeId,
     setTextBoxEditInitialText,
     drawOptions,
+    onAfterInstantPlaced,
   } = args;
 
   const opts = (): DrawShapeOptions => {
@@ -68,6 +71,8 @@ export function useShapeDrawingHandlers(args: Args) {
       outlineWidth,
       fillColor: drawOptions.fillColor || fillFromOutline(outlineColor, fillOpacity),
       fillOpacity,
+      pinVariant: drawOptions.pinVariant,
+      arrowVariant: drawOptions.arrowVariant,
     };
   };
 
@@ -144,6 +149,7 @@ export function useShapeDrawingHandlers(args: Args) {
             setShapes((prev) => [...prev, shape]);
             setShapeDrawingPoints([]);
             setShapeDrawingMode(null);
+            onAfterInstantPlaced?.(shape.id);
           }
           return;
         }
@@ -152,6 +158,7 @@ export function useShapeDrawingHandlers(args: Args) {
           const shape = createMarkerShape(c, opts());
           setShapes((prev) => [...prev, shape]);
           setShapeDrawingMode(null);
+          onAfterInstantPlaced?.(shape.id);
           return;
         }
 
@@ -169,7 +176,7 @@ export function useShapeDrawingHandlers(args: Args) {
         setShapeDrawingMode(null);
       }
     },
-    [shapeDrawingMode, shapeDrawingPoints, setShapeDrawingMode, setShapeDrawingPoints, setShapes, drawOptions]
+    [shapeDrawingMode, shapeDrawingPoints, setShapeDrawingMode, setShapeDrawingPoints, setShapes, drawOptions, onAfterInstantPlaced]
   );
 
   const openTextBoxEditor = useCallback(

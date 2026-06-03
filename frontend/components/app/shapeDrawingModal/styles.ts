@@ -8,125 +8,91 @@ export const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#1e293b",
   },
+  headerChrome: {
+    alignSelf: "stretch",
+    width: "100%",
+    backgroundColor: "#1e293b",
+    borderBottomWidth: 3,
+    borderBottomColor: "#3b82f6",
+    zIndex: 2000,
+    elevation: 20,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#1e293b",
-    // Bu sayfada sadece header altında ince accent çizgi
-    borderBottomWidth: 1,
-    borderBottomColor: "#3b82f6",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  headerCenter: {
-    flex: 1,
+  headerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
-  },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
+    backgroundColor: "rgba(255,255,255,0.08)",
   },
   headerTitle: {
+    flex: 1,
+    textAlign: "center",
     color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 20,
+    fontWeight: "bold",
   },
-  creditBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    // 3D sayfasındaki buton ölçüsü ile aynı
-    height: 32,
-    paddingHorizontal: 10,
-    backgroundColor: "#334155",
-    borderRadius: 6,
-    gap: 6,
+  headerBtnActive: {
+    backgroundColor: "#3b82f6",
+    borderColor: "#3b82f6",
   },
-  creditBadgeIcon: {
-    width: 16,
-    height: 16,
-  },
-  creditBadgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  managementButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 0,
-    height: 32,
-    backgroundColor: "#334155",
-    borderRadius: 6,
-    gap: 6,
-  },
-  managementButtonText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "500",
+  headerRight: {
+    width: 36,
+    height: 36,
   },
   closeButton: {
     padding: 4,
   },
-  closeButtonWrapper: {
+  editorToolTabs: {
     flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "stretch",
+    width: "100%",
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(148, 163, 184, 0.2)",
+  },
+  editorToolTab: {
+    flex: 1,
+    flexBasis: 0,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 0,
-    height: 32,
-    backgroundColor: "#334155",
-    borderRadius: 6,
+    paddingVertical: 6,
+    minWidth: 0,
   },
-  /** 3D editör araç çubuğu — tek “İşlemler” menüsü (Yönet / kredi ile aynı yükseklik) */
-  toolbarActionMenuButton: {
-    flexDirection: "row",
+  editorToolTabIcon: {
+    width: 44,
+    flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
-    height: 32,
-    paddingHorizontal: 9,
-    paddingVertical: 0,
-    backgroundColor: "#334155",
-    borderRadius: 6,
-    gap: 5,
-    alignSelf: "flex-start",
-    maxHeight: 32,
+    paddingVertical: 6,
   },
-  toolbarActionMenuButtonActive: {
-    backgroundColor: "#3b82f6",
+  editorToolTabText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#94a3b8",
+    textAlign: "center",
   },
-  toolbarActionMenuTitle: {
-    color: "#cbd5e1",
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.15,
+  editorToolTabTextActive: {
+    color: "#3b82f6",
+    fontWeight: "700",
   },
-  toolbarActionMenuTitleActive: {
-    color: "#fff",
-  },
-  toolbarContainer: {
-    flexDirection: "row",
-    backgroundColor: "#1e293b",
-    // Toolbar altında accent çizgi olmasın (sadece header altında)
-    borderBottomWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    gap: 6,
-    alignItems: "center",
-    // Dropdown menüler, map üstü overlay'lerin de üstünde kalmalı.
-    // (Örn: model yerleştirme bilgi kartı zIndex ~1200)
-    zIndex: 2000,
-    elevation: 20,
+  editorToolTabSep: {
+    width: 12,
+    flexShrink: 0,
+    fontSize: 13,
+    color: "#475569",
+    textAlign: "center",
   },
   dropdownDismissOverlay: {
     position: "absolute",
@@ -666,12 +632,10 @@ export const styles = StyleSheet.create({
     fontWeight: "600",
   },
   tabContent: {
-    flex: 1, // ScrollView'in tüm alanı kullanmasını sağla
-    maxHeight: 280, // ScrollView'in maksimum yüksekliği - footer için yer bırak
+    flex: 1,
   },
   tabContentContainer: {
-    paddingBottom: 150, // Footer için yeterli padding - ScrollView içeriği için
-    flexGrow: 1, // İçeriğin büyümesine izin ver
+    flexGrow: 1,
   },
   tabContentInner: {
     padding: 12,

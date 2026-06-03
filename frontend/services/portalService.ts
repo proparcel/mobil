@@ -224,6 +224,8 @@ export async function getPortalRecentQueries(
   if (filters.city_id != null) params.set('city_id', String(filters.city_id));
   if (filters.town_id != null) params.set('town_id', String(filters.town_id));
   if (filters.quarter_id != null) params.set('quarter_id', String(filters.quarter_id));
+  if (filters.ada) params.set('ada', filters.ada);
+  if (filters.parsel) params.set('parsel', filters.parsel);
   if (filters.proparcel_value) params.set('proparcel_value', filters.proparcel_value);
   if (filters.query_type) params.set('query_type', filters.query_type);
   if (filters.has_expert) params.set('has_expert', filters.has_expert);

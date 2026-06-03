@@ -24,7 +24,17 @@ import type {
   LoginResult,
   RegisterRequest,
   User,
+  UserProfile,
+  LoginResponse,
 } from "../../src/types/auth";
+import {
+  clearStoredHomeMapCityId,
+  pickCityIdFromProfilePayload,
+  pickCityIdFromUser,
+  setStoredHomeMapCityId,
+  fetchProfileCityIdAndStore,
+} from "../../src/utils/homeMapPreferredCity";
+import { parseCustomerFeatureFlags } from "../../src/utils/customerFeatureGates";
 
 // Default context value
 const defaultContextValue: AuthContextValue = {
@@ -35,6 +45,7 @@ const defaultContextValue: AuthContextValue = {
   login: async () => ({ success: false }),
   loginWithOTP: async () => false,
   register: async () => false,
+  syncSessionFromLoginResponse: () => {},
   logout: async () => {},
   refreshToken: async () => false,
   sendOTP: async () => false,
@@ -124,6 +135,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const serverUser = response.success ? response.data?.user : null;
         if (!profile && !serverUser) return;
 
+        const profileCityId = pickCityIdFromProfilePayload(
+          response.success ? response.data : null,
+        );
+        if (profileCityId) {
+          await setStoredHomeMapCityId(profileCityId);
+        }
+
         const derivedFullName =
           String(serverUser?.full_name || "").trim() ||
           [profile?.first_name, profile?.last_name]
@@ -136,13 +154,36 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const serverRole = serverUser?.role || currentUser.role;
         const serverVipStartedAt = serverUser?.vip_started_at ?? currentUser.vip_started_at;
         const serverMemberType = profile?.member_type || serverUser?.member_type;
+        const serverCustomerType = serverUser?.customer_type;
+        const serverFeatures = parseCustomerFeatureFlags(response.success ? response.data?.features : null);
         const nameChanged = derivedFullName && derivedFullName !== (currentUser.full_name || "").trim();
         const roleChanged = serverRole !== currentUser.role;
         const vipChanged = serverVipStartedAt !== currentUser.vip_started_at;
         const memberTypeChanged =
           Boolean(serverMemberType) && serverMemberType !== currentUser.member_type;
+        const customerTypeChanged =
+          Boolean(serverCustomerType) && serverCustomerType !== currentUser.customer_type;
+        const featuresChanged =
+          serverFeatures != null &&
+          serverFeatures.smart_query !== currentUser.features?.smart_query;
+        const prof = profile as UserProfile | null;
+        const cityIdChanged =
+          profileCityId != null && profileCityId !== (currentUser.city_id ?? undefined);
+        const cityNameChanged =
+          Boolean(prof?.city_name) && prof?.city_name !== currentUser.city_name;
 
-        if (!nameChanged && !roleChanged && !vipChanged && !memberTypeChanged) return;
+        if (
+          !nameChanged &&
+          !roleChanged &&
+          !vipChanged &&
+          !memberTypeChanged &&
+          !customerTypeChanged &&
+          !featuresChanged &&
+          !cityIdChanged &&
+          !cityNameChanged
+        ) {
+          return;
+        }
 
         const updatedUser: User = {
           ...currentUser,
@@ -150,6 +191,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
           ...(roleChanged ? { role: serverRole } : {}),
           ...(vipChanged ? { vip_started_at: serverVipStartedAt } : {}),
           ...(memberTypeChanged ? { member_type: serverMemberType } : {}),
+          ...(customerTypeChanged && serverCustomerType ? { customer_type: serverCustomerType } : {}),
+          ...(featuresChanged && serverFeatures
+            ? { features: { ...currentUser.features, ...serverFeatures } }
+            : {}),
+          ...(cityIdChanged && profileCityId
+            ? {
+                city_id: profileCityId,
+                city_name: prof?.city_name ?? currentUser.city_name,
+              }
+            : {}),
+          ...(cityNameChanged && prof?.city_name ? { city_name: prof.city_name } : {}),
         };
 
         setState((prev) => {
@@ -173,6 +225,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
    */
   useEffect(() => {
     setOnSessionExpired(() => {
+      void clearStoredHomeMapCityId();
       setState({
         user: null,
         tokens: null,
@@ -186,12 +239,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
   /**
    * E-posta veya telefon/şifre ile giriş
    */
+  const persistHomeMapCityAfterAuth = useCallback(async (user: User | undefined) => {
+    const fromUser = pickCityIdFromUser(user);
+    if (fromUser) {
+      await setStoredHomeMapCityId(fromUser);
+      return;
+    }
+    await fetchProfileCityIdAndStore();
+  }, []);
+
   const login = useCallback(async (identifier: string, password: string): Promise<LoginResult> => {
     setState((prev) => ({ ...prev, isLoading: true }));
 
     const response = await authService.login({ identifier, password });
 
     if (response.success && response.data) {
+      void persistHomeMapCityAfterAuth(response.data.user);
       setState({
         user: response.data.user,
         tokens: { access: response.data.access, refresh: response.data.refresh },
@@ -206,7 +269,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       success: false,
       message: response.message || "Geçersiz e-posta/telefon veya şifre.",
     };
-  }, []);
+  }, [persistHomeMapCityAfterAuth]);
 
   /**
    * OTP ile giriş
@@ -217,6 +280,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const response = await authService.loginWithOTP({ phone_number, otp });
 
     if (response.success && response.data) {
+      void persistHomeMapCityAfterAuth(response.data.user);
       setState({
         user: response.data.user,
         tokens: { access: response.data.access, refresh: response.data.refresh },
@@ -228,7 +292,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     setState((prev) => ({ ...prev, isLoading: false }));
     return false;
-  }, []);
+  }, [persistHomeMapCityAfterAuth]);
 
   /**
    * Kayıt ol
@@ -239,6 +303,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const response = await authService.register(data);
 
     if (response.success && response.data) {
+      void persistHomeMapCityAfterAuth(response.data.user);
       setState({
         user: response.data.user,
         tokens: { access: response.data.access, refresh: response.data.refresh },
@@ -250,7 +315,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     setState((prev) => ({ ...prev, isLoading: false }));
     return false;
-  }, []);
+  }, [persistHomeMapCityAfterAuth]);
+
+  const syncSessionFromLoginResponse = useCallback((data: NonNullable<LoginResponse["data"]>) => {
+    void persistHomeMapCityAfterAuth(data.user);
+    setState({
+      user: data.user,
+      tokens: { access: data.access, refresh: data.refresh },
+      isLoading: false,
+      isAuthenticated: true,
+    });
+  }, [persistHomeMapCityAfterAuth]);
 
   /**
    * Çıkış yap
@@ -259,7 +334,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setState((prev) => ({ ...prev, isLoading: true }));
     
     await authService.logout();
-    
+    await clearStoredHomeMapCityId();
+
     setState({
       user: null,
       tokens: null,
@@ -321,6 +397,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
    */
   const updateProfile = useCallback(async (data: ProfileUpdateRequest): Promise<boolean> => {
     const response = await authService.updateProfile(data);
+    if (response.success && data.city_id != null && Number(data.city_id) > 0) {
+      await setStoredHomeMapCityId(Number(data.city_id));
+    }
     return response.success;
   }, []);
 
@@ -331,6 +410,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       login,
       loginWithOTP,
       register,
+      syncSessionFromLoginResponse,
       logout,
       refreshToken,
       sendOTP,
@@ -338,7 +418,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       resetPassword,
       updateProfile,
     }),
-    [state, login, loginWithOTP, register, logout, refreshToken, sendOTP, verifyOTP, resetPassword, updateProfile]
+    [state, login, loginWithOTP, register, syncSessionFromLoginResponse, logout, refreshToken, sendOTP, verifyOTP, resetPassword, updateProfile]
   );
 
   return (

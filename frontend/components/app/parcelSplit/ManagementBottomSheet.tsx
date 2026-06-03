@@ -11,6 +11,7 @@ import { BottomPanelContent } from "./BottomPanelContent";
 import { parcelSplitTheme } from "./theme";
 import type { Piece } from "../../../src/types/parcelSplit";
 import type { SplitProfile, SplitMode, Orientation, UiMode } from "../../../src/types/parcelSplit";
+import { sheetScrollBottomPadding } from "../../../src/utils/sheetSafeArea";
 
 type Props = {
   visible: boolean;
@@ -88,7 +89,7 @@ export function ManagementBottomSheet({
     >
       <BottomSheetScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insetsBottom, 24) }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: sheetScrollBottomPadding(insetsBottom, 24) }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >

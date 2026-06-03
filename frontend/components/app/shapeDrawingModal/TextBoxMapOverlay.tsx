@@ -1,14 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { TextBoxMapMarker } from "@/src/maps/drawing/TextBoxMapMarker";
 import { textBoxHitSizePx } from "@/src/maps/drawing/shapePickAtLngLat";
 import type { ShapeProperties } from "@/src/maps/drawing/types";
+import {
+  DEFAULT_MAP_OVERLAY_VIEWPORT,
+  type MapOverlayViewport,
+} from "@/src/maps/drawing/mapOverlayViewport";
+import { projectLngLatsBatch } from "@/src/maps/drawing/shapeScreenProjection";
 
 type Props = {
   shapes: ShapeProperties[];
   mapRef: React.RefObject<any>;
-  /** Kamera / harita hareketinde artırılır — ekran konumu yenilenir */
   layoutTick: number;
+  viewport?: MapOverlayViewport;
   selectedShapeId: string | null;
   onShapePress: (shapeId: string) => void;
   enabled?: boolean;
@@ -16,14 +21,11 @@ type Props = {
 
 type ScreenPos = { x: number; y: number };
 
-/**
- * Metin kutuları MarkerView yerine RN overlay ile çizilir.
- * Android + Fabric'te MarkerView içi Pressable / harita onPress güvenilir değil.
- */
 export function TextBoxMapOverlay({
   shapes,
   mapRef,
   layoutTick,
+  viewport = DEFAULT_MAP_OVERLAY_VIEWPORT,
   selectedShapeId,
   onShapePress,
   enabled = true,
@@ -42,6 +44,7 @@ export function TextBoxMapOverlay({
   );
 
   const [positions, setPositions] = useState<Record<string, ScreenPos>>({});
+  const projectSeqRef = useRef(0);
 
   useEffect(() => {
     if (!enabled || textboxes.length === 0) {
@@ -50,35 +53,25 @@ export function TextBoxMapOverlay({
     }
 
     let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        const map = mapRef?.current;
-        if (!map || typeof map.getPointInView !== "function") return;
+    const seq = ++projectSeqRef.current;
 
-        const next: Record<string, ScreenPos> = {};
-        for (const shape of textboxes) {
-          const coord = shape.geometry.coordinates as [number, number];
-          try {
-            const p = await map.getPointInView(coord);
-            if (!p || p.length < 2) continue;
-            const x = Number(p[0]);
-            const y = Number(p[1]);
-            if (Number.isFinite(x) && Number.isFinite(y)) {
-              next[shape.id] = { x, y };
-            }
-          } catch {
-            /* ignore per-shape */
-          }
-        }
-        if (!cancelled) setPositions(next);
-      })();
-    }, 16);
+    void (async () => {
+      const coords = textboxes.map((s) => s.geometry.coordinates as [number, number]);
+      const projected = await projectLngLatsBatch(mapRef, coords, viewport);
+      const next: Record<string, ScreenPos> = {};
+      textboxes.forEach((shape, i) => {
+        const p = projected[i];
+        if (p) next[shape.id] = { x: p[0], y: p[1] };
+      });
+      if (!cancelled && seq === projectSeqRef.current) {
+        setPositions(next);
+      }
+    })();
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [enabled, textboxes, mapRef, layoutTick]);
+  }, [enabled, textboxes, mapRef, layoutTick, viewport.width, viewport.height]);
 
   if (!enabled || textboxes.length === 0) return null;
 
@@ -95,6 +88,7 @@ export function TextBoxMapOverlay({
         return (
           <Pressable
             key={shape.id}
+            pointerEvents="auto"
             onPress={() => onShapePress(shape.id)}
             style={[
               styles.item,
@@ -108,7 +102,7 @@ export function TextBoxMapOverlay({
             ]}
             hitSlop={12}
           >
-            <TextBoxMapMarker shape={shape} />
+            <TextBoxMapMarker shape={shape} selected={selectedShapeId === shape.id} />
           </Pressable>
         );
       })}

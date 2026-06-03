@@ -5,6 +5,7 @@ import AppBottomSheetModal from "../AppBottomSheetModal";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { type ModelCatalogFlatItem, resolveModelStaticImageUri } from "@/src/maps/models/modelCatalog";
 import { UsageBadge } from "./UsageBadge";
+import { sheetEditorScrollBottomPadding } from "@/src/utils/sheetSafeArea";
 import { isModelUsable } from "@/src/services/modelUsageService";
 import { isFreeRole } from "@/src/maps/models/modelAvailability";
 type ModelGalleryModalProps = {
@@ -97,7 +98,7 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
     <>
       <BottomSheetScrollView
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insetsBottom, 0) + 24, flexGrow: 1 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: sheetEditorScrollBottomPadding(insetsBottom, 12), flexGrow: 1 }]}
         showsVerticalScrollIndicator={true}
         nestedScrollEnabled={true}
       >
@@ -231,6 +232,7 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
       <AppBottomSheetModal
         visible={visible}
         onClose={onClose}
+        flushToScreenBottom
         snapPoints={["90%", "95%"]}
         initialIndex={0}
         backdropPressBehavior="close"

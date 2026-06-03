@@ -127,6 +127,10 @@ export type RemoteModelListEntry = {
   is_yapi?: boolean;
   /** Scale=1 iken referans taban alanı (m²) */
   footprint_base_m2?: number | null;
+  /** Mapbox modelTranslation[2] (m); taban pivotunda 0 */
+  base_translation_z_m?: number | null;
+  /** optimize_glb pivot taban; true ise base_translation_z_m=0 güvenilir */
+  glb_pivot_at_base?: boolean;
 };
 
 export type RemoteModelsListResponse = Partial<Record<ModelType, RemoteModelListEntry[]>>;
@@ -156,6 +160,10 @@ export type ModelCatalogFlatItem = {
   isYapi?: boolean;
   /** Scale=1 iken referans taban alanı (m²); API footprint_base_m2 */
   footprintBaseM2?: number | null;
+  /** Mapbox modelTranslation[2] (m); GLB taban pivotunda 0 */
+  baseTranslationZM?: number | null;
+  /** API glb_pivot_at_base — true ise Z offset 0 kullanılır */
+  glbPivotAtBase?: boolean;
 };
 
 const MODEL_GROUP_META: Array<{ id: ModelType; title: string }> = [
@@ -441,6 +449,11 @@ export async function fetchModelCatalogFlat(): Promise<ModelCatalogFlatItem[]> {
         const rawFp = (e as any)?.footprint_base_m2;
         const footprintBaseM2 =
           typeof rawFp === "number" && Number.isFinite(rawFp) && rawFp > 0 ? rawFp : null;
+        const rawBaseZ = (e as any)?.base_translation_z_m;
+        const baseTranslationZM =
+          typeof rawBaseZ === "number" && Number.isFinite(rawBaseZ) ? rawBaseZ : null;
+        const rawPivot = (e as any)?.glb_pivot_at_base;
+        const glbPivotAtBase = rawPivot === true || rawPivot === "true" || rawPivot === 1;
 
         out.push({
           groupId: meta.id,
@@ -459,6 +472,8 @@ export async function fetchModelCatalogFlat(): Promise<ModelCatalogFlatItem[]> {
           role,
           isYapi,
           footprintBaseM2,
+          baseTranslationZM,
+          glbPivotAtBase,
         });
         processedCount++;
       }

@@ -3,8 +3,14 @@
  */
 
 import React from 'react';
-import { Alert, Platform } from 'react-native';
-import { getCombinedImageDimensions, shareImage, shareImageWithText, cleanupTempFiles } from '../screenshotManager';
+import { Alert } from 'react-native';
+import {
+  getCombinedImageDimensions,
+  shareImage,
+  shareImageWithText,
+  cleanupTempFiles,
+} from '../screenshotManager';
+import type { CombinedScreenshotCaptureRef } from '../../../components/app/CombinedScreenshotContainer';
 import {
   formatParcelShareMessage,
   resolveParcelShareMessageUrlForShare,
@@ -15,6 +21,10 @@ import {
 } from '../shareCaptureFlow';
 import { screenshotShareCompleted } from '../../../services/coinEventService';
 import type { ParcelPolygonDesignConfig } from '../../constants/parcelPolygonDesign';
+import type { MapOverlayViewport } from '../../maps/drawing/mapOverlayViewport';
+import type { ShapeProperties } from '../../maps/drawing/types';
+import type { PreviewSnapCacheEntry } from '../captureSnapCache';
+import { capturePerfMark, capturePerfSince, capturePerfStart } from '../capturePerf';
 
 function hashString(input: string): string {
   let hash = 5381;
@@ -27,7 +37,7 @@ function hashString(input: string): string {
 export interface ShareHandlerParams {
   parcelData: any;
   mapRef: React.RefObject<any>;
-  combinedContainerRef: React.RefObject<{ capture?: () => Promise<string> } | null>;
+  combinedContainerRef: React.RefObject<CombinedScreenshotCaptureRef | null>;
   mapReadyRef: React.MutableRefObject<import('../mapboxSnapshot').MapReadyState>;
   isSharingRef: React.MutableRefObject<boolean>;
   setIsProcessingShare: (processing: boolean) => void;
@@ -35,6 +45,14 @@ export interface ShareHandlerParams {
   setCapturedModalUri: (uri: string | null) => void;
   setShareModalVisible: (visible: boolean) => void;
   parcelDesign?: ParcelPolygonDesignConfig | null;
+  mapViewport?: MapOverlayViewport;
+  shapes?: ShapeProperties[];
+  bumpOverlayLayout?: () => void;
+  prefetchedShareLinkRef?: React.MutableRefObject<Promise<string | null> | null>;
+  previewSnapCacheRef?: React.MutableRefObject<PreviewSnapCacheEntry | null>;
+  previewPrewarmInFlightRef?: React.MutableRefObject<Promise<void> | null>;
+  getCameraFingerprint?: () => string;
+  hasActiveParcel?: boolean;
 }
 
 export const createShareHandler = (params: ShareHandlerParams) => {
@@ -50,6 +68,14 @@ export const createShareHandler = (params: ShareHandlerParams) => {
       setCapturedModalUri,
       setShareModalVisible,
       parcelDesign,
+      mapViewport,
+      shapes,
+      bumpOverlayLayout,
+      prefetchedShareLinkRef,
+      previewSnapCacheRef,
+      previewPrewarmInFlightRef,
+      getCameraFingerprint,
+      hasActiveParcel = Boolean(parcelData),
     } = params;
 
     setIsProcessingShare(true);
@@ -57,28 +83,60 @@ export const createShareHandler = (params: ShareHandlerParams) => {
     let mapUri: string | null = null;
     let combinedUri: string | null = null;
 
+    capturePerfStart();
+
     try {
       const dimensions = getCombinedImageDimensions();
 
+      const prefetched = prefetchedShareLinkRef?.current;
+      if (prefetchedShareLinkRef) {
+        prefetchedShareLinkRef.current = null;
+      }
       const shareLinkPromise = parcelData
-        ? resolveParcelShareMessageUrlForShare(parcelData)
+        ? prefetched ?? resolveParcelShareMessageUrlForShare(parcelData)
         : Promise.resolve(null);
 
-      mapUri = await captureParcelShareMapUri({
+      capturePerfMark('capture:map');
+      const captureResult = await captureParcelShareMapUri({
         parcelData,
         mapRef,
         mapReadyRef,
         dimensions,
         parcelDesign,
+        mapViewport,
+        shapes,
+        bumpOverlayLayout,
+        getCameraFingerprint,
+        previewSnapCacheRef,
+        previewPrewarmInFlightRef,
       });
+      capturePerfSince('capture:map:done', 'capture:map');
 
-      setCapturedMapUri(mapUri || null);
+      if (!captureResult?.mapUri) {
+        throw new Error('Harita görüntüsü alınamadı');
+      }
 
+      mapUri = captureResult.mapUri;
+      const { overlay, sourceViewport } = captureResult;
+      const mapOnly = !hasActiveParcel;
+      const skipCombinedViewShot = mapOnly && !overlay;
+
+      setCapturedMapUri(mapUri);
+
+      capturePerfMark('capture:combined');
       const [combinedUriResult, queryLink] = await Promise.all([
-        captureCombinedScreenshotUri(combinedContainerRef, mapUri),
+        skipCombinedViewShot
+          ? Promise.resolve(mapUri)
+          : captureCombinedScreenshotUri(combinedContainerRef, mapUri, {
+              overlay,
+              sourceViewport,
+              mapOnly,
+              skipViewShot: false,
+            }),
         shareLinkPromise,
       ]);
       combinedUri = combinedUriResult;
+      capturePerfSince('capture:combined:done', 'capture:combined');
 
       const shareText = formatParcelShareMessage(queryLink);
 
@@ -86,9 +144,12 @@ export const createShareHandler = (params: ShareHandlerParams) => {
         throw new Error('Paylaşılacak görüntü bulunamadı');
       }
 
+      capturePerfMark('capture:share');
       const shareResult = shareText
         ? await shareImageWithText(combinedUri, shareText)
         : await shareImage(combinedUri).then((success) => ({ success, linkText: null }));
+      capturePerfSince('capture:share:done', 'capture:share');
+      capturePerfSince('capture:total:done', 'capture:map');
 
       if (!shareResult.success) {
         setShareModalVisible(false);
@@ -118,6 +179,11 @@ export const createShareHandler = (params: ShareHandlerParams) => {
     } finally {
       setCapturedMapUri(null);
       setCapturedModalUri(null);
+
+      if (previewSnapCacheRef?.current?.mapUri === mapUri) {
+        previewSnapCacheRef.current = null;
+      }
+
       await cleanupTempFiles([mapUri, combinedUri]);
       isSharingRef.current = false;
       setIsProcessingShare(false);

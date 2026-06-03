@@ -17,9 +17,9 @@ import { DeviceEventEmitter } from "react-native";
 import { getSavedQueryDisplayRow, getSavedQueryItemId } from "../../src/utils/savedQueryDisplay";
 import AppBottomSheetModal from "./AppBottomSheetModal";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
 import {
   USER_MENU_SHEET_SNAP_POINTS,
-  UserMenuSheetTitleRow,
   userMenuSheetDarkStyles,
 } from "./UserMenuSheet";
 
@@ -41,7 +41,7 @@ export default function MyQueriesModal({ visible, onClose, onSelect, isAuthentic
   const { loading, items, refresh } = useSavedQueriesList(isAuthenticated, visible);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const listBottomPadding = useMemo(() => (insets.bottom || 0) + 24, [insets.bottom]);
+  const listBottomPadding = useMemo(() => sheetScrollBottomPadding(insets.bottom || 0, 24), [insets.bottom]);
 
   useEffect(() => {
     if (!visible) setSelectedIds(new Set());
@@ -139,15 +139,27 @@ export default function MyQueriesModal({ visible, onClose, onSelect, isAuthentic
       backdropOpacity={0.2}
       backdropPressBehavior="close"
     >
-      <View style={{ paddingBottom: insets.bottom, flex: 1 }}>
-        <UserMenuSheetTitleRow title="Sorgularım" variant="dark" />
-        <View style={localStyles.toolbar}>
-          <TouchableOpacity onPress={() => void refresh()} style={localStyles.toolBtn} accessibilityLabel="Yenile">
-            <Ionicons name="refresh" size={18} color="#e2e8f0" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onClose} style={localStyles.toolBtn} accessibilityLabel="Kapat">
-            <Ionicons name="close" size={20} color="#e2e8f0" />
-          </TouchableOpacity>
+      <View style={{ flex: 1 }}>
+        <View style={localStyles.headerRow}>
+          <Text style={localStyles.headerTitle}>Sorgularım</Text>
+          <View style={localStyles.headerActions}>
+            <TouchableOpacity
+              onPress={() => void refresh()}
+              style={localStyles.headerIconBtn}
+              accessibilityLabel="Yenile"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
+            >
+              <Ionicons name="refresh" size={20} color="#e2e8f0" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onClose}
+              style={localStyles.headerIconBtn}
+              accessibilityLabel="Kapat"
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+            >
+              <Ionicons name="close" size={22} color="#e2e8f0" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {loading ? (
@@ -250,20 +262,29 @@ export default function MyQueriesModal({ visible, onClose, onSelect, isAuthentic
 }
 
 const localStyles = {
-  toolbar: {
+  headerRow: {
     flexDirection: "row" as const,
-    justifyContent: "flex-end" as const,
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(51, 65, 85, 0.85)",
   },
-  toolBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#475569",
-    backgroundColor: "#334155",
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "700" as const,
+    color: "#e2e8f0",
+    flex: 1,
+  },
+  headerActions: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 4,
+  },
+  headerIconBtn: {
+    width: 32,
+    height: 32,
     alignItems: "center" as const,
     justifyContent: "center" as const,
   },
@@ -272,15 +293,17 @@ const localStyles = {
   actionsRow: {
     flexDirection: "row" as const,
     flexWrap: "wrap" as const,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
     gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: "#334155",
   },
   actionBtn: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#475569",

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 import locationsJson from '../src/data/locations.json';
 import {
   useKeyboardHeight,
@@ -21,18 +22,15 @@ import {
   useScrollInputIntoView,
 } from '../src/keyboard';
 import type { LocationHierarchySelection } from '../src/utils/locationHierarchyMap';
+import { resolveSidebarSavedQueryLocations } from '../src/utils/resolveSidebarSavedQueryLocations';
+import type { SidebarSavedQuery } from '../src/utils/sidebarSavedQueries';
+import { landingColors, landingRadii } from './landing/landingTheme';
 
 interface AdaParselFormProps {
   onClose: () => void;
-  onSubmit?: (payload: {
-    mahalleTkgmValue: number;
-    mahalle: string;
-    ada: string;
-    parsel: string;
-    proparcelValue?: number;
-    city?: string;
-    town?: string;
-  }) => void | Promise<void>;
+  onSubmit?: (payload: AdaParselSubmitPayload) => void | Promise<void>;
+  /** Sorgula altında — doğrudan pro sorgu akışı */
+  onProSubmit?: (payload: AdaParselSubmitPayload) => void | Promise<void>;
   /**
    * Visual variant for embedding in different sheets.
    * - "light": existing white form (default)
@@ -47,6 +45,10 @@ interface AdaParselFormProps {
   scrollRef?: React.RefObject<ScrollView | null>;
   /** İl / ilçe / mahalle seçildiğinde haritayı güncelle */
   onHierarchySelect?: (selection: LocationHierarchySelection) => void;
+  /** Sidebar Sorgularım — forma doldur (ve isteğe bağlı otomatik sorgula) */
+  formSeed?: SidebarSavedQuery | null;
+  autoSubmitAfterSeed?: boolean;
+  onFormSeedConsumed?: () => void;
 }
 
 export type AdaParselSubmitPayload = {
@@ -55,6 +57,8 @@ export type AdaParselSubmitPayload = {
   ada: string;
   parsel: string;
   proparcelValue?: number;
+  cityId?: number;
+  townId?: number;
   city?: string;
   town?: string;
 };
@@ -113,11 +117,15 @@ const formatQuarterText = (quarter: Quarter): string => {
 const AdaParselForm: React.FC<AdaParselFormProps> = ({
   onClose,
   onSubmit,
+  onProSubmit,
   variant = "light",
   embedded = false,
   inBottomSheet = false,
   scrollRef,
   onHierarchySelect,
+  formSeed,
+  autoSubmitAfterSeed = false,
+  onFormSeedConsumed,
 }) => {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight();
@@ -146,6 +154,58 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
 
   const [pickerMode, setPickerMode] = useState<PickerMode>(null);
   const [pickerSearch, setPickerSearch] = useState('');
+  const lastAppliedSeedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!formSeed) {
+      lastAppliedSeedRef.current = null;
+      return;
+    }
+    const seedKey = String(formSeed.id || `${formSeed.mahalle_tkgm_value}|${formSeed.ada}|${formSeed.parsel}`);
+    if (lastAppliedSeedRef.current === seedKey) return;
+    lastAppliedSeedRef.current = seedKey;
+
+    const resolved = resolveSidebarSavedQueryLocations(formSeed);
+    if (!resolved) {
+      alert('Kayıtlı sorgunun il/ilçe/mahalle bilgisi forma aktarılamadı.');
+      onFormSeedConsumed?.();
+      return;
+    }
+
+    const { city, town, quarter } = resolved;
+    setSelectedCity(city);
+    setSelectedTown(town);
+    setSelectedQuarter(quarter);
+    setAda(String(formSeed.ada || '').trim());
+    setParsel(String(formSeed.parsel || '').trim());
+
+    const pv = Number(quarter.Proparcel_value);
+    onHierarchySelect?.({
+      level: 'quarter',
+      cityId: city.Id,
+      townId: town.Id,
+      proparcelValue: Number.isFinite(pv) ? pv : undefined,
+    });
+
+    if (autoSubmitAfterSeed && onSubmit) {
+      const payload: AdaParselSubmitPayload = {
+        mahalleTkgmValue: Number(quarter.Tkgm_value),
+        mahalle: quarter.Proparcel_text || quarter.Tkgm_text || formSeed.mahalle || '',
+        ada: String(formSeed.ada || '').trim(),
+        parsel: String(formSeed.parsel || '').trim(),
+        cityId: city.Id,
+        townId: town.Id,
+        city: city.Proparcel_text,
+        town: town.Proparcel_text,
+      };
+      if (Number.isFinite(pv)) payload.proparcelValue = pv;
+      setTimeout(() => {
+        void Promise.resolve(onSubmit(payload));
+      }, 0);
+    }
+
+    onFormSeedConsumed?.();
+  }, [formSeed, autoSubmitAfterSeed, onSubmit, onFormSeedConsumed, onHierarchySelect]);
 
   const cityItems = useMemo(() => locations?.cities || [], [locations]);
   const townItems = useMemo(() => selectedCity?.Towns || [], [selectedCity]);
@@ -180,24 +240,36 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
     return out;
   }, [currentPicker, pickerSearch]);
 
-  const handleSorgula = () => {
+  const buildSubmitPayload = (): AdaParselSubmitPayload | null => {
     if (!selectedCity || !selectedTown || !selectedQuarter || !ada || !parsel) {
       alert('Lütfen tüm alanları doldurun');
-      return;
+      return null;
     }
-    const payload = {
+    return {
       mahalleTkgmValue: Number(selectedQuarter.Tkgm_value),
       mahalle: selectedQuarter.Proparcel_text,
       ada: String(ada).trim(),
       parsel: String(parsel).trim(),
       proparcelValue: Number((selectedQuarter as any).Proparcel_value),
+      cityId: selectedCity.Id,
+      townId: selectedTown.Id,
       city: selectedCity.Proparcel_text,
       town: selectedTown.Proparcel_text,
     };
-    if (onSubmit) {
-      onSubmit(payload);
-      return;
-    }
+  };
+
+  const handleSorgula = () => {
+    const payload = buildSubmitPayload();
+    if (!payload) return;
+    onClose();
+    if (onSubmit) onSubmit(payload);
+  };
+
+  const handleProSorgula = () => {
+    const payload = buildSubmitPayload();
+    if (!payload) return;
+    onClose();
+    if (onProSubmit) onProSubmit(payload);
   };
 
   const handleTemizle = () => {
@@ -330,14 +402,27 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
           <View style={styles.buttonContainer}>
             <TouchableOpacity
               testID="submit-query-button"
-              accessibilityLabel="Parsel sorgulamasını başlat"
+              accessibilityLabel="Basit sorgu başlat"
               style={[styles.button, styles.primaryButton]}
               onPress={handleSorgula}
-              activeOpacity={0.9}
+              activeOpacity={0.88}
             >
-              <Ionicons name="search" size={18} color="#fff" />
-              <Text style={styles.buttonText}>Sorgula</Text>
+              <Ionicons name="map" size={18} color="#031426" />
+              <Text style={styles.ctaButtonText}>Basit Sorgu</Text>
             </TouchableOpacity>
+
+            {onProSubmit ? (
+              <TouchableOpacity
+                testID="submit-pro-query-button"
+                accessibilityLabel="Pro sorgu başlat"
+                style={[styles.button, styles.proButton]}
+                onPress={handleProSorgula}
+                activeOpacity={0.88}
+              >
+                <Ionicons name="search" size={18} color="#031426" />
+                <Text style={styles.ctaButtonText}>ProSorgu</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <TouchableOpacity
               testID="clear-form-button"
@@ -394,11 +479,14 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
           <KeyboardAvoidingView
             testID="picker-modal-view"
             behavior={getKeyboardAvoidingBehavior('modal')}
-            style={[
-              styles.pickerModal,
-              { paddingBottom: 12 + (insets.bottom || 0) + keyboardHeight },
-            ]}
+            style={styles.pickerModalWrap}
           >
+            <View
+              style={[
+                styles.pickerModal,
+                { paddingBottom: sheetScrollBottomPadding(insets.bottom || 0, 12) },
+              ]}
+            >
             <View style={styles.pickerHeader}>
               <Text style={styles.pickerTitle}>{currentPicker?.title || ''}</Text>
               <TouchableOpacity testID="picker-close-button" onPress={closePicker} style={styles.pickerCloseBtn}>
@@ -421,6 +509,10 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
 
             <FlatList
               testID="picker-list"
+              style={styles.pickerList}
+              contentContainerStyle={
+                keyboardHeight > 0 ? { paddingBottom: keyboardHeight } : undefined
+              }
               data={filteredItems}
               keyExtractor={(item: any, idx) => String(item?.Id ?? idx)}
               keyboardShouldPersistTaps="handled"
@@ -436,6 +528,7 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
                 </TouchableOpacity>
               )}
             />
+            </View>
           </KeyboardAvoidingView>
         </View>
       </Modal>
@@ -490,15 +583,51 @@ const createStyles = (variant: "light" | "dark") => {
     backgroundColor: COLORS.surface,
   },
   buttonContainer: { marginTop: 12, gap: 10 },
-  button: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 10, gap: 8 },
-  primaryButton: { backgroundColor: isDark ? COLORS.accent : COLORS.accentDark },
-  secondaryButton: { backgroundColor: isDark ? COLORS.surface : "#fff", borderWidth: 1, borderColor: isDark ? COLORS.accent : COLORS.accentDark },
+  button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+    paddingVertical: 14,
+    borderRadius: landingRadii.button,
+    gap: 8,
+  },
+  /** Landing Basit Sorgu kartı — teal */
+  primaryButton: {
+    backgroundColor: landingColors.teal,
+    borderWidth: 1,
+    borderColor: 'rgba(42, 220, 190, 0.55)',
+    shadowColor: landingColors.teal,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  /** Landing ProSorgu kartı + Başla CTA — cyan */
+  proButton: {
+    backgroundColor: landingColors.cyan,
+    borderWidth: 1,
+    borderColor: 'rgba(57, 223, 255, 0.5)',
+    shadowColor: landingColors.cyan,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 10,
+  },
+  ctaButtonText: { fontSize: 16, fontWeight: '800', color: '#031426', letterSpacing: 0.2 },
+  secondaryButton: {
+    backgroundColor: isDark ? COLORS.surface : '#fff',
+    borderWidth: 1,
+    borderColor: isDark ? landingColors.borderGlass : COLORS.accentDark,
+  },
   buttonText: { fontSize: 16, fontWeight: '600', color: '#fff' },
   secondaryButtonText: { fontSize: 16, fontWeight: '600', color: isDark ? "#e2e8f0" : COLORS.accentDark },
   errorContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fef2f2', padding: 12, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#fecaca' },
   errorText: { flex: 1, color: '#dc2626', fontSize: 13, fontWeight: '600' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'flex-end' },
-  pickerModal: { backgroundColor: COLORS.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, height: '75%' },
+  pickerModalWrap: { width: '100%', height: '75%', maxHeight: '85%' },
+  pickerModal: { flex: 1, backgroundColor: COLORS.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  pickerList: { flex: 1, minHeight: 0 },
   pickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   pickerTitle: { fontSize: 18, fontWeight: 'bold', color: COLORS.text },
   pickerCloseBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: COLORS.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.borderSoft },

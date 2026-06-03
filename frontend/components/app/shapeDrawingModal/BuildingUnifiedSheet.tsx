@@ -3,6 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AppBottomSheetModal from "../AppBottomSheetModal";
+import { editSheetScrollPadding, EDIT_SHEET_MODAL_PROPS, editSheetScrollViewProps } from "./editSheetLayout";
 import { BuildingCreateFormBody, type BuildingCreateFormBodyProps } from "./BuildingCreateSheet";
 import { BuildingEditPanel, type BuildingEditPanelProps } from "./BuildingEditPanel";
 
@@ -36,6 +37,7 @@ export const BuildingUnifiedSheet: React.FC<BuildingUnifiedSheetProps> = ({
     <AppBottomSheetModal
       visible={visible}
       onClose={onClose}
+      flushToScreenBottom
       variant="dark"
       snapPoints={["75%", "92%"]}
       initialIndex={0}
@@ -44,14 +46,15 @@ export const BuildingUnifiedSheet: React.FC<BuildingUnifiedSheetProps> = ({
       backdropPressBehavior="close"
       backgroundStyle={styles.sheetBackground}
       modalProps={{
-        /** extend: klavye açıkken içerik yüksekliği klavyeye göre küçülür; interactive ile çift snap çakışması titremeyi artırabilir. */
+        ...EDIT_SHEET_MODAL_PROPS,
+        /** extend: klavye açıkken içerik yüksekliği klavyeye göre küçülür */
         keyboardBehavior: "extend",
         keyboardBlurBehavior: "restore",
         android_keyboardInputMode: "adjustResize",
         enableBlurKeyboardOnGesture: true,
       }}
     >
-      <View style={{ flex: 1, paddingBottom: Math.max(12, insetsBottom) }}>
+      <View style={{ flex: 1, paddingBottom: 12 }}>
         <View style={styles.headerRow}>
           <Text style={styles.title}>Bina</Text>
           <TouchableOpacity onPress={onClose} style={styles.iconBtn} accessibilityLabel="Kapat">
@@ -83,9 +86,11 @@ export const BuildingUnifiedSheet: React.FC<BuildingUnifiedSheetProps> = ({
         ) : (
           <BottomSheetScrollView
             style={styles.scroll}
-            contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + Math.max(0, insetsBottom) }]}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: editSheetScrollPadding(insetsBottom), flexGrow: 1 },
+            ]}
+            {...editSheetScrollViewProps}
           >
             {!hasSelectedBuilding || !editPanel ? (
               <View style={styles.emptyEdit}>

@@ -1,5 +1,7 @@
 import { API_URL } from "../config/api";
 import { authFormFetch, authJsonFetch } from "./apiClient";
+import { authService } from "./authService";
+import { storageService } from "./storageService";
 
 export type MobileUploadImage = {
   uri: string;
@@ -57,6 +59,36 @@ export function imageAnimationResultUrl(jobId: string, slot: number): string {
   return absoluteDroneApiUrl(
     `/api/drone-recording-runway/segment-preflight-file/${encodeURIComponent(jobId)}/${slot}/?t=${Date.now()}`,
   );
+}
+
+/** Web `waitForSegmentPreflightReady` — PNG hazır mı (status API gecikse bile) */
+export async function probeImageAnimationResultReady(jobId: string, slot: number): Promise<boolean> {
+  const url = imageAnimationResultUrl(jobId, slot);
+  let token = await storageService.getAccessToken();
+  if (!token) {
+    const refreshed = await authService.refreshToken();
+    if (refreshed) token = await storageService.getAccessToken();
+  }
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status === 401 && token) {
+      const refreshed = await authService.refreshToken();
+      const retryToken = refreshed ? await storageService.getAccessToken() : null;
+      if (retryToken) {
+        const retry = await fetch(url, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${retryToken}` },
+        });
+        return retry.ok;
+      }
+    }
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function getImageAnimationCreditCosts(): Promise<
@@ -211,21 +243,38 @@ export async function waitForImageAnimationReady(
   jobId: string,
   slot: number,
   pollMs = 1500,
-  maxAttempts = 120,
+  maxAttempts = 240,
+  onProgress?: (info: { step?: string; label?: string; state?: string }) => void,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const interval = Math.max(600, Math.min(5000, pollMs));
   for (let i = 0; i < maxAttempts; i += 1) {
     await new Promise((r) => setTimeout(r, interval));
+
+    if (await probeImageAnimationResultReady(jobId, slot)) {
+      return { ok: true };
+    }
+
     const status = await getRunwayJobStatus(jobId);
     if (!status.ok) return status;
     const step = String(status.progress?.step || "");
     const progressSlot = Number(status.progress?.segment_slot || slot);
+    onProgress?.({
+      step,
+      label: status.progress?.label,
+      state: status.state,
+    });
     if (status.state === "FAILURE" || step === "failed") {
       return { ok: false, error: status.error || status.progress?.label || "Resim canlandırılamadı." };
     }
     if (step === "openai_ready" && (!slot || progressSlot === slot)) {
       return { ok: true };
     }
+    if (status.ready && status.state === "SUCCESS" && step === "openai_ready") {
+      return { ok: true };
+    }
+  }
+  if (await probeImageAnimationResultReady(jobId, slot)) {
+    return { ok: true };
   }
   return { ok: false, error: "Resim canlandırma zaman aşımına uğradı." };
 }

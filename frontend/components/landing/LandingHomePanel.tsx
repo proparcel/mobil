@@ -12,6 +12,7 @@ import type { LandingCapabilityId } from './landingCapabilities';
 import { LandingGiftCard } from './LandingGiftCard';
 import { LandingPartnerBanner } from './LandingPartnerBanner';
 import { LandingNewPlatformBadge } from './LandingNewPlatformBadge';
+import { LandingLegalFooter } from './LandingLegalFooter';
 import { LandingTopBar } from './LandingTopBar';
 import { landingColors, LANDING_BOTTOM_CHROME } from './landingTheme';
 
@@ -21,7 +22,7 @@ type Props = {
   reveal: boolean;
   onMenuPress: () => void;
   onNotificationsPress: () => void;
-  onSignUp: () => void;
+  onStart: () => void;
   onPartnerDetails: () => void;
   onFeaturePress: (id: LandingCapabilityId) => void;
 };
@@ -30,7 +31,7 @@ export function LandingHomePanel({
   reveal,
   onMenuPress,
   onNotificationsPress,
-  onSignUp,
+  onStart,
   onPartnerDetails,
   onFeaturePress,
 }: Props) {
@@ -72,9 +73,10 @@ export function LandingHomePanel({
             </Text>
           </View>
 
-          <LandingGiftCard onSignUp={onSignUp} />
+          <LandingGiftCard onStart={onStart} />
           <LandingFeatureGrid onFeaturePress={onFeaturePress} />
           <LandingPartnerBanner onDetails={onPartnerDetails} />
+          <LandingLegalFooter variant="scroll" tone="dark" />
         </ScrollView>
       </Animated.View>
     </View>

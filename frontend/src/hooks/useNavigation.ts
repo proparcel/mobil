@@ -44,6 +44,8 @@ export type RootStackParamList = {
     image_animation_title?: string;
     license_ref?: string;
   };
+  "ai-drone-hub": undefined;
+  "ai-drone-simple-editor": undefined;
   "ai-drone-video-info": undefined;
   "ai-drone-jobs": undefined;
   "ai-drone-job-detail": { requestId: string };
@@ -143,6 +145,15 @@ export type RootStackParamList = {
   "aranacaklar-picker": undefined;
   "aranacaklar-detail": { contactId: string };
   "aranacaklar-stats": undefined;
+  admin: undefined;
+  "admin-users": undefined;
+  "admin-user-detail": { userId: string };
+  "admin-image-approvals": undefined;
+  "admin-graduation-approvals": undefined;
+  "admin-havale-approvals": undefined;
+  "admin-havale-detail": { paymentRequestId: string };
+  "admin-sales-approvals": undefined;
+  "admin-ai-drone-requests": undefined;
 };
 
 export type NavigationProp = NativeStackNavigationProp<RootStackParamList>;

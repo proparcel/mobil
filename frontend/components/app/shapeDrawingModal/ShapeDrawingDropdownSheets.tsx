@@ -6,6 +6,7 @@ import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityI
 import type { ShapeType } from "@/src/maps/drawing/types";
 import type { ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
 import AppBottomSheetModal from "../AppBottomSheetModal";
+import { sheetEditorScrollBottomPadding } from "@/src/utils/sheetSafeArea";
 import { styles } from "./styles";
 import { UsageBadge } from "./UsageBadge";
 import { fetchOwnedModels, isModelUsable } from "@/src/services/modelUsageService";
@@ -13,35 +14,27 @@ import type { OwnedModel } from "@/src/types/models";
 import { API_URL } from "../../../config/api";
 import { isFreeRole } from "@/src/maps/models/modelAvailability";
 import { ModelGalleryContent } from "./ModelGalleryModal";
-
-type MeasurementMode = "distance" | "area" | null;
+import type { MapPinVariant } from "@/src/maps/drawing/mapPinStyles";
+import type { MapArrowVariant } from "@/src/maps/drawing/mapArrowStyles";
+import { MapToolsSheet } from "../mapTools/MapToolsSheet";
+import type { MeasurementMode } from "@/src/utils/measurementManager";
 
 type Props = {
   insetsBottom: number;
-
-  /** Tek araç çubuğu menüsü: Harita araçları / Nesne / Bina / Resim */
-  mainActionMenuOpen: boolean;
-  onCloseMainActionMenu: () => void;
-  onMainMenuSelectMapTools: () => void;
-  onMainMenuSelectModels: () => void;
-  /** Bina oluştur bottom sheet */
-  onMainMenuSelectBinaOlustur: () => void;
-  onMainMenuSelectResim: () => void;
 
   mapToolsOpen: boolean;
   onCloseMapTools: () => void;
   modelsOpen: boolean;
   onCloseModels: () => void;
 
-  cameraMenuOpen: boolean;
-  onCloseCameraMenu: () => void;
-  onSelectResimCek: () => void;
-  onSelectResimler: () => void;
-
   shapeDrawingMode: ShapeType | null;
   measurementMode: MeasurementMode;
 
   onSelectShape: (next: ShapeType | null) => void;
+  drawPinVariant?: MapPinVariant;
+  onSelectPinVariant?: (variant: MapPinVariant) => void;
+  drawArrowVariant?: MapArrowVariant;
+  onSelectArrowVariant?: (variant: MapArrowVariant) => void;
   onSelectMeasurement: (next: MeasurementMode) => void;
   onClearMeasurements: () => void;
   /** Parsel hariç çizimleri temizle (web «Tümünü Temizle» benzeri, yalnız şekiller) */
@@ -65,21 +58,6 @@ type Props = {
   onModelCatalogRefresh?: () => void;
   onRequestPurchase?: (m: ModelCatalogFlatItem) => void;
 };
-
-const SHAPE_OPTIONS: Array<{ type: ShapeType; label: string; icon: React.ComponentProps<typeof Ionicons>["name"] }> =
-  [
-    { type: "rectangle", label: "Kare", icon: "square-outline" },
-    { type: "triangle", label: "Üçgen", icon: "triangle-outline" },
-    { type: "circle", label: "Yuvarlak", icon: "ellipse-outline" },
-    { type: "ellipse", label: "Elips", icon: "ellipse" },
-    { type: "polygon", label: "Çokgen", icon: "git-merge-outline" },
-    { type: "line", label: "Çizgi", icon: "remove-outline" },
-    { type: "pen", label: "Kalem", icon: "brush-outline" },
-    { type: "freehand", label: "Serbest", icon: "create-outline" },
-    { type: "arrow", label: "Ok", icon: "arrow-forward-outline" },
-    { type: "marker", label: "Nokta", icon: "location-outline" },
-    { type: "textbox", label: "Metin", icon: "text-outline" },
-  ];
 
 const modelSheetStyles = StyleSheet.create({
   tabBar: {
@@ -239,7 +217,7 @@ function BenimModellerimTab({
   return (
     <BottomSheetScrollView
       style={modelSheetStyles.ownedGrid}
-      contentContainerStyle={[modelSheetStyles.ownedScrollContent, { paddingBottom: Math.max(insetsBottom, 0) + 24, flexGrow: 1 }]}
+      contentContainerStyle={[modelSheetStyles.ownedScrollContent, { paddingBottom: sheetEditorScrollBottomPadding(insetsBottom, 12), flexGrow: 1 }]}
       showsVerticalScrollIndicator={true}
       nestedScrollEnabled={true}
     >
@@ -283,23 +261,17 @@ function BenimModellerimTab({
 
 export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
   insetsBottom,
-  mainActionMenuOpen,
-  onCloseMainActionMenu,
-  onMainMenuSelectMapTools,
-  onMainMenuSelectModels,
-  onMainMenuSelectBinaOlustur,
-  onMainMenuSelectResim,
   mapToolsOpen,
   onCloseMapTools,
   modelsOpen,
   onCloseModels,
-  cameraMenuOpen,
-  onCloseCameraMenu,
-  onSelectResimCek,
-  onSelectResimler,
   shapeDrawingMode,
   measurementMode,
   onSelectShape,
+  drawPinVariant,
+  onSelectPinVariant,
+  drawArrowVariant,
+  onSelectArrowVariant,
   onSelectMeasurement,
   onClearMeasurements,
   onClearAllShapes,
@@ -325,17 +297,6 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
     if (m.id == null || isFreeRole(m.role)) return;
     onRequestPurchase?.(m);
   };
-  const [drawGroupOpen, setDrawGroupOpen] = useState(false);
-  const [measureGroupOpen, setMeasureGroupOpen] = useState(false);
-  const [textGroupOpen, setTextGroupOpen] = useState(false);
-
-  useEffect(() => {
-    if (mapToolsOpen) {
-      setDrawGroupOpen(false);
-      setMeasureGroupOpen(false);
-      setTextGroupOpen(false);
-    }
-  }, [mapToolsOpen]);
 
   useEffect(() => {
     if (modelCatalogFlat.length > 0) {
@@ -351,299 +312,38 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
 
   return (
     <>
-      {/* Araç çubuğu: Şekil | Nesne | Bina | Ölçüm | Resim */}
-      <AppBottomSheetModal
-        visible={mainActionMenuOpen}
-        onClose={onCloseMainActionMenu}
-        snapPoints={["50%"]}
-        initialIndex={0}
-        backdropPressBehavior="close"
-        backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
-        handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
-      >
-        <View style={{ flex: 1, paddingBottom: insetsBottom }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: "#334155",
-            }}
-          >
-            <Text style={{ fontSize: 16, fontWeight: "700", color: "#fff" }}>İşlemler</Text>
-            <TouchableOpacity onPress={onCloseMainActionMenu} accessibilityLabel="Kapat">
-              <Ionicons name="close" size={26} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ padding: 12, gap: 8 }}>
-            <TouchableOpacity style={[styles.dropdownMenuItem]} onPress={onMainMenuSelectMapTools}>
-              <Ionicons name="construct-outline" size={18} color="#3b82f6" />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.dropdownMenuItemText, { color: "#fff" }]}>Harita araçları</Text>
-                <Text style={{ color: "#64748b", fontSize: 11, marginTop: 2 }}>Çizim, ölçüm, metin</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem]}
-              onPress={onMainMenuSelectModels}
-            >
-              <Ionicons name="cube-outline" size={18} color="#3b82f6" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#fff" }]}>Nesne Ekle</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem]}
-              onPress={onMainMenuSelectBinaOlustur}
-              accessibilityLabel="Bina Oluştur"
-            >
-              <Ionicons name="business-outline" size={18} color="#3b82f6" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#fff" }]}>Bina Oluştur</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem]}
-              onPress={onMainMenuSelectResim}
-            >
-              <Ionicons name="image-outline" size={18} color="#3b82f6" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#fff" }]}>Resim Kaydet</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </AppBottomSheetModal>
-
-      {/* Kamera Menüsü (Resim Çek | Resimler) */}
-      <AppBottomSheetModal
-        visible={cameraMenuOpen}
-        onClose={onCloseCameraMenu}
-        snapPoints={["70%"]}
-        initialIndex={0}
-        backdropPressBehavior="close"
-        backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
-        handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
-      >
-        <View style={{ flex: 1, paddingBottom: insetsBottom }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: "#334155",
-            }}
-          >
-            <Text style={{ fontSize: 16, fontWeight: "700", color: "#fff" }}>Resim</Text>
-            <TouchableOpacity onPress={onCloseCameraMenu} accessibilityLabel="Kapat">
-              <Ionicons name="close" size={26} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ padding: 12, gap: 8 }}>
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem]}
-              onPress={() => {
-                onSelectResimCek();
-                onCloseCameraMenu();
-              }}
-            >
-              <Ionicons name="camera" size={18} color="#3b82f6" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#fff" }]}>Resim Çek</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem]}
-              onPress={() => {
-                onSelectResimler();
-                onCloseCameraMenu();
-              }}
-            >
-              <Ionicons name="images" size={18} color="#3b82f6" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#fff" }]}>Resimler</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </AppBottomSheetModal>
-
-      {/* Harita araçları — çizim / metin / ölçüm grupları (web index Araçlar) */}
-      <AppBottomSheetModal
+      <MapToolsSheet
         visible={mapToolsOpen}
         onClose={onCloseMapTools}
-        snapPoints={["75%", "92%"]}
-        initialIndex={0}
-        backdropPressBehavior="close"
-        backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
-        handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
-      >
-        <View style={{ flex: 1, paddingBottom: insetsBottom }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: "#334155",
-            }}
-          >
-            <Text style={{ fontSize: 16, fontWeight: "700", color: "#fff" }}>Harita araçları</Text>
-            <TouchableOpacity onPress={onCloseMapTools} accessibilityLabel="Kapat">
-              <Ionicons name="close" size={26} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
-          <BottomSheetScrollView
-            style={{ flex: 1, paddingHorizontal: 10 }}
-            contentContainerStyle={{ paddingBottom: Math.max(insetsBottom, 0) + 24 }}
-          >
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem, { backgroundColor: "rgba(51,65,85,0.5)" }]}
-              onPress={() => setDrawGroupOpen((v) => !v)}
-            >
-              <Ionicons name="pencil-outline" size={18} color="#94a3b8" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#e2e8f0", fontWeight: "700" }]}>Çizim araçları</Text>
-              <Ionicons name={drawGroupOpen ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" style={{ marginLeft: "auto" }} />
-            </TouchableOpacity>
-            {drawGroupOpen &&
-              SHAPE_OPTIONS.filter((o) => o.type !== "textbox").map((opt) => {
-                const active = shapeDrawingMode === opt.type;
-                return (
-                  <TouchableOpacity
-                    key={opt.type}
-                    style={[styles.dropdownMenuItem, active && styles.dropdownMenuItemActive]}
-                    onPress={() => {
-                      onSelectShape(active ? null : opt.type);
-                      onCloseMapTools();
-                    }}
-                  >
-                    <Ionicons name={opt.icon} size={16} color={active ? "#3b82f6" : "#94a3b8"} />
-                    <Text style={[styles.dropdownMenuItemText, active && styles.dropdownMenuItemTextActive]}>{opt.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            {drawGroupOpen && onClearAllShapes ? (
-              <TouchableOpacity
-                style={[styles.dropdownMenuItem, { borderTopWidth: 1, borderTopColor: "#334155", marginTop: 4 }]}
-                onPress={() => {
-                  Alert.alert("Şekilleri temizle", "Tüm çizim şekillerini kaldırmak istiyor musunuz?", [
-                    { text: "İptal", style: "cancel" },
-                    { text: "Temizle", style: "destructive", onPress: () => onClearAllShapes() },
-                  ]);
-                }}
-              >
-                <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                <Text style={styles.dropdownMenuItemText}>Şekilleri temizle</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem, { marginTop: 12, backgroundColor: "rgba(51,65,85,0.5)" }]}
-              onPress={() => setTextGroupOpen((v) => !v)}
-            >
-              <Ionicons name="text-outline" size={18} color="#94a3b8" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#e2e8f0", fontWeight: "700" }]}>Metin</Text>
-              <Ionicons name={textGroupOpen ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" style={{ marginLeft: "auto" }} />
-            </TouchableOpacity>
-            {textGroupOpen ? (
-              <TouchableOpacity
-                style={[styles.dropdownMenuItem, shapeDrawingMode === "textbox" && styles.dropdownMenuItemActive]}
-                onPress={() => {
-                  const active = shapeDrawingMode === "textbox";
-                  onSelectShape(active ? null : "textbox");
-                  onCloseMapTools();
-                }}
-              >
-                <Ionicons name="chatbox-outline" size={16} color={shapeDrawingMode === "textbox" ? "#3b82f6" : "#94a3b8"} />
-                <Text
-                  style={[styles.dropdownMenuItemText, shapeDrawingMode === "textbox" && styles.dropdownMenuItemTextActive]}
-                >
-                  Metin kutusu ekle
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <TouchableOpacity
-              style={[styles.dropdownMenuItem, { marginTop: 12, backgroundColor: "rgba(51,65,85,0.5)" }]}
-              onPress={() => setMeasureGroupOpen((v) => !v)}
-            >
-              <Ionicons name="analytics-outline" size={18} color="#94a3b8" />
-              <Text style={[styles.dropdownMenuItemText, { color: "#e2e8f0", fontWeight: "700" }]}>Ölçüm araçları</Text>
-              <Ionicons name={measureGroupOpen ? "chevron-up" : "chevron-down"} size={18} color="#94a3b8" style={{ marginLeft: "auto" }} />
-            </TouchableOpacity>
-            {measureGroupOpen ? (
-              <>
-                <TouchableOpacity
-                  style={[styles.dropdownMenuItem, hasSingleParcelSelected && styles.dropdownMenuItemActive]}
-                  onPress={() => {
-                    if (!hasSingleParcelSelected) {
-                      Alert.alert("Uyarı", "Parsel seçiniz.");
-                      return;
-                    }
-                    onHisseliParsellereBolPress();
-                  }}
-                >
-                  <Ionicons name="git-branch-outline" size={16} color={hasSingleParcelSelected ? "#3b82f6" : "#94a3b8"} />
-                  <Text style={[styles.dropdownMenuItemText, hasSingleParcelSelected && styles.dropdownMenuItemTextActive]}>
-                    Hisseli Parsellere Böl
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.dropdownMenuItem, measurementMode === "distance" && styles.dropdownMenuItemActive]}
-                  onPress={() => {
-                    onSelectMeasurement(measurementMode === "distance" ? null : "distance");
-                    onCloseMapTools();
-                  }}
-                >
-                  <Ionicons name="resize" size={16} color={measurementMode === "distance" ? "#3b82f6" : "#94a3b8"} />
-                  <Text style={[styles.dropdownMenuItemText, measurementMode === "distance" && styles.dropdownMenuItemTextActive]}>
-                    Mesafe ölçümü
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.dropdownMenuItem, measurementMode === "area" && styles.dropdownMenuItemActive]}
-                  onPress={() => {
-                    onSelectMeasurement(measurementMode === "area" ? null : "area");
-                    onCloseMapTools();
-                  }}
-                >
-                  <Ionicons name="square-outline" size={16} color={measurementMode === "area" ? "#3b82f6" : "#94a3b8"} />
-                  <Text style={[styles.dropdownMenuItemText, measurementMode === "area" && styles.dropdownMenuItemTextActive]}>
-                    Alan ölçümü
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.dropdownMenuItem} onPress={onEdgeMeasures}>
-                  <MaterialCommunityIcons name="vector-square" size={16} color="#94a3b8" />
-                  <Text style={styles.dropdownMenuItemText}>Kenar mesafeleri</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.dropdownMenuItem}
-                  onPress={() => {
-                    onClearMeasurements();
-                    onCloseMapTools();
-                  }}
-                >
-                  <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                  <Text style={styles.dropdownMenuItemText}>Ölçümleri temizle</Text>
-                </TouchableOpacity>
-              </>
-            ) : null}
-          </BottomSheetScrollView>
-        </View>
-      </AppBottomSheetModal>
+        surface="editor"
+        insetsBottom={insetsBottom}
+        shapeDrawingMode={shapeDrawingMode}
+        measurementMode={measurementMode}
+        onSelectShape={onSelectShape}
+        drawPinVariant={drawPinVariant}
+        onSelectPinVariant={onSelectPinVariant}
+        drawArrowVariant={drawArrowVariant}
+        onSelectArrowVariant={onSelectArrowVariant}
+        onSelectMeasurement={onSelectMeasurement}
+        onClearShapes={onClearAllShapes}
+        onClearMeasurements={onClearMeasurements}
+        onHisseliParsellereBol={onHisseliParsellereBolPress}
+        hasSingleParcelSelected={hasSingleParcelSelected}
+        onEdgeMeasures={onEdgeMeasures}
+      />
 
       {/* Models */}
       <AppBottomSheetModal
         visible={modelsOpen}
         onClose={onCloseModels}
+        flushToScreenBottom
         snapPoints={["70%", "90%"]}
         initialIndex={0}
         backdropPressBehavior="close"
         backgroundStyle={{ backgroundColor: "#1e293b", borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 4, borderTopColor: "#3b82f6" }}
         handleIndicatorStyle={{ backgroundColor: "rgba(255,255,255,0.35)" }}
       >
-        <View style={{ flex: 1, paddingBottom: insetsBottom }}>
+        <View style={{ flex: 1 }}>
           <View
             style={{
               flexDirection: "row",
@@ -692,7 +392,7 @@ export const ShapeDrawingDropdownSheets: React.FC<Props> = ({
           {modelTab === "modeller" ? (
             <BottomSheetScrollView
               style={{ flex: 1, paddingHorizontal: 10 }}
-              contentContainerStyle={{ paddingBottom: Math.max(insetsBottom, 0) + 24, flexGrow: 1 }}
+              contentContainerStyle={{ paddingBottom: sheetEditorScrollBottomPadding(insetsBottom, 12), flexGrow: 1 }}
               nestedScrollEnabled={true}
             >
               {isModelCatalogLoading ? (

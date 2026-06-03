@@ -12,6 +12,7 @@ import { getBbox } from "../../../src/utils/parcelSplitTransform";
 import { parcelSplitTheme } from "./theme";
 import type { MetreEdgeFeature } from "./LayerEdgeMeasurements";
 import { pieceToEdgeFeaturesMetre } from "./LayerEdgeMeasurements";
+import { sheetScrollBottomPadding } from "../../../src/utils/sheetSafeArea";
 
 const CARD_SIZE = 88;
 const CARD_PADDING = 8;
@@ -110,7 +111,7 @@ export function SelectedPiecesPanel({
   if (selectedPieces.length === 0) return null;
 
   return (
-    <View style={[styles.panel, { paddingBottom: insetsBottom + 8 }]}>
+    <View style={[styles.panel, { paddingBottom: sheetScrollBottomPadding(insetsBottom, 8) }]}>
       <View style={styles.separator} />
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Seçilen parçalar</Text>

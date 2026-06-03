@@ -1,15 +1,13 @@
 import { useCallback } from "react";
-import type { MeasurementFeature } from "@/src/utils/measurementManager";
+import type { MeasurementFeature, MeasurementMode } from "@/src/utils/measurementManager";
 import { calculateArea, createAreaFeatures, createRulerFeatures } from "@/src/utils/measurementManager";
 
-type Mode = "distance" | "area" | null;
-
 type Args = {
-  measurementMode: Mode;
+  measurementMode: MeasurementMode;
   measurementPoints: [number, number][];
   setMeasurementPoints: React.Dispatch<React.SetStateAction<[number, number][]>>;
   setMeasurementFeatures: React.Dispatch<React.SetStateAction<MeasurementFeature[]>>;
-  setMeasurementMode: (m: Mode) => void;
+  setMeasurementMode: (m: MeasurementMode) => void;
   /** Toolbox’tan — cetvel çizgisi rengi */
   rulerColor: string;
   /** Toolbox’tan — alan kontur/dolgu tonu */
@@ -103,9 +101,12 @@ export function useMeasurementHandlers({
         setMeasurementPoints([]);
         return true;
       }
-      setMeasurementPoints([]);
-      setMeasurementFeatures((prev) => prev.filter((f) => !(f as any)?.properties?.isTemporary));
-      return true;
+      if (measurementPoints.length > 0) {
+        setMeasurementPoints([]);
+        setMeasurementFeatures((prev) => prev.filter((f) => !(f as any)?.properties?.isTemporary));
+        return true;
+      }
+      return false;
     }
     if (measurementMode === "distance" && measurementPoints.length === 1) {
       setMeasurementPoints([]);

@@ -90,7 +90,7 @@ export type ModelManagerActions = {
   ) => void;
   updateModelInstance: (
     id: string,
-    patch: Partial<Pick<ModelInstance, "coordinate" | "modelScale" | "modelRotation">> & {
+    patch: Partial<Pick<ModelInstance, "coordinate" | "modelScale" | "modelRotation" | "modelTranslation">> & {
       rotationDeg?: number;
       scale?: number;
     }
@@ -122,7 +122,7 @@ export function useModelManager(): [ModelManagerState, ModelManagerActions] {
       
       const rotation: [number, number, number] = overrides?.modelRotation || [0, 0, 0];
       
-      // Translation: varsayılan [0,0,0]; sadece pivot merkezde olanlar pipeline'da center(below) ile düzeltilir, uygulama tarafında ek offset yok.
+      // Translation: sabit model-local Z; Mapbox modelScale ile çarpıp world lift üretir (scale² değil).
       const translation: [number, number, number] = overrides?.modelTranslation ?? [0, 0, 0];
 
 
@@ -171,11 +171,13 @@ export function useModelManager(): [ModelManagerState, ModelManagerActions] {
             const deg = rot.length >= 2 ? modelRotationToRotationDeg(rot) : 0;
             modelRotation = rotationDegToModelRotation(normalizeRotationDeg(deg));
           }
+          const modelTranslation = patch.modelTranslation ?? m.modelTranslation;
           return {
             ...m,
             coordinate: patch.coordinate ?? m.coordinate,
             modelScale,
             modelRotation,
+            modelTranslation,
           };
         })
       );

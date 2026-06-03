@@ -8,11 +8,11 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  StatusBar,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { AppStatusBar } from "../../components/app/AppStatusBar";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
@@ -89,7 +89,7 @@ export default function AiDroneJobsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
+      <AppStatusBar />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel="Geri">
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
@@ -131,7 +131,7 @@ export default function AiDroneJobsScreen() {
             <Ionicons name="airplane-outline" size={40} color={COLORS.muted} />
             <Text style={styles.emptyTitle}>Henüz iş yok</Text>
             <Text style={styles.emptyBody}>İlk drone video talebinizi oluşturun.</Text>
-            <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push("ai-drone-video-info")}>
+            <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push("ai-drone-hub")}>
               <Text style={styles.primaryBtnText}>Talep oluştur</Text>
             </TouchableOpacity>
           </View>

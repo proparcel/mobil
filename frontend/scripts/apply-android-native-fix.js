@@ -13,6 +13,15 @@ const androidPackage =
   appConfig.expo?.android?.package || "com.proparcel.mobile";
 const packagePathParts = androidPackage.split(".");
 const gradlePropsPath = path.join(androidRoot, "gradle.properties");
+const stylesXmlPath = path.join(
+  androidRoot,
+  "app",
+  "src",
+  "main",
+  "res",
+  "values",
+  "styles.xml"
+);
 const buildGradlePath = path.join(androidRoot, "build.gradle");
 const mainAppPath = path.join(
   androidRoot,
@@ -54,6 +63,195 @@ const ANDROID_DEV_CLIENT_EXCLUDE = [
   "expo-dev-menu",
   "expo-dev-menu-interface",
 ];
+
+function ensureEdgeToEdgeDisabled() {
+  if (!fs.existsSync(gradlePropsPath)) return true;
+  let text = fs.readFileSync(gradlePropsPath, "utf8");
+  let changed = false;
+  if (/^edgeToEdgeEnabled=/m.test(text)) {
+    if (!/^edgeToEdgeEnabled=false/m.test(text)) {
+      text = text.replace(/^edgeToEdgeEnabled=.*$/m, "edgeToEdgeEnabled=false");
+      changed = true;
+    }
+  } else {
+    text += `\n# Sistem gezinti cubugu rengi icin edge-to-edge kapali\nedgeToEdgeEnabled=false\n`;
+    changed = true;
+  }
+  if (/^expo\.edgeToEdgeEnabled=/m.test(text)) {
+    if (!/^expo\.edgeToEdgeEnabled=false/m.test(text)) {
+      text = text.replace(/^expo\.edgeToEdgeEnabled=.*$/m, "expo.edgeToEdgeEnabled=false");
+      changed = true;
+    }
+  } else {
+    text += `expo.edgeToEdgeEnabled=false\n`;
+    changed = true;
+  }
+  if (changed) {
+    fs.writeFileSync(gradlePropsPath, text);
+    console.warn("[android-native-fix] edgeToEdgeEnabled=false (navigation bar rengi)");
+  }
+  return true;
+}
+
+const NAV_BAR_COLOR_MARKER = "pp-navigation-bar-navy";
+const EDIT_TEXT_COLOR_MARKER = "pp-edittext-text-color";
+const APP_NAV_BAR_COLOR = "#1e293b";
+const APP_EDIT_TEXT_COLOR = "#1e293b";
+const APP_EDIT_TEXT_HINT_COLOR = "#999999";
+
+function ensureAppThemeEdgeToEdge() {
+  if (!fs.existsSync(stylesXmlPath)) return true;
+  let text = fs.readFileSync(stylesXmlPath, "utf8");
+  const before = text;
+  // RN 0.81 edgeToEdgeEnabled gradle flag yeterli; Theme.EdgeToEdge ayri kutuphane gerektirir.
+  text = text.replace(
+    /<style name="AppTheme" parent="[^"]+">/,
+    '<style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">'
+  );
+  text = text.replace(/\s*<item name="android:statusBarColor">[^<]*<\/item>\r?\n?/g, "\n");
+  if (!text.includes("android:enforceNavigationBarContrast")) {
+    text = text.replace(
+      /<style name="AppTheme" parent="[^"]+">/,
+      '<style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">\n    <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>'
+    );
+  } else {
+    text = text.replace(
+      /<item name="android:enforceNavigationBarContrast"[^>]*>[^<]*<\/item>/,
+      '<item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>'
+    );
+  }
+  if (!text.includes(NAV_BAR_COLOR_MARKER)) {
+    text = text.replace(
+      /<item name="android:enforceNavigationBarContrast"[^>]*>[^<]*<\/item>/,
+      `<item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>\n    <!-- ${NAV_BAR_COLOR_MARKER} -->\n    <item name="android:navigationBarColor">${APP_NAV_BAR_COLOR}</item>`
+    );
+  } else if (!text.includes("android:navigationBarColor")) {
+    text = text.replace(
+      new RegExp(`<!-- ${NAV_BAR_COLOR_MARKER} -->`),
+      `<!-- ${NAV_BAR_COLOR_MARKER} -->\n    <item name="android:navigationBarColor">${APP_NAV_BAR_COLOR}</item>`
+    );
+  } else {
+    text = text.replace(
+      /<item name="android:navigationBarColor">[^<]*<\/item>/,
+      `<item name="android:navigationBarColor">${APP_NAV_BAR_COLOR}</item>`
+    );
+  }
+  if (text !== before) {
+    fs.writeFileSync(stylesXmlPath, text);
+    console.warn("[android-native-fix] styles.xml edge-to-edge uyumlu (navigationBarColor=#1e293b)");
+  }
+  return true;
+}
+
+function ensureAppThemeEditTextColors() {
+  if (!fs.existsSync(stylesXmlPath)) return true;
+  let text = fs.readFileSync(stylesXmlPath, "utf8");
+  const before = text;
+
+  if (!text.includes(EDIT_TEXT_COLOR_MARKER)) {
+    text = text.replace(
+      /(<style name="AppTheme" parent="[^"]+">[\s\S]*?)(<\/style>)/,
+      `$1    <!-- ${EDIT_TEXT_COLOR_MARKER}: DayNight temada beyaz sifre noktasi onleme -->\n    <item name="android:textColor">${APP_EDIT_TEXT_COLOR}</item>\n    <item name="android:textColorHint">${APP_EDIT_TEXT_HINT_COLOR}</item>\n  $2`
+    );
+  } else {
+    text = text.replace(
+      /<item name="android:textColor">[^<]*<\/item>/,
+      `<item name="android:textColor">${APP_EDIT_TEXT_COLOR}</item>`
+    );
+    text = text.replace(
+      /<item name="android:textColorHint">[^<]*<\/item>/,
+      `<item name="android:textColorHint">${APP_EDIT_TEXT_HINT_COLOR}</item>`
+    );
+  }
+
+  if (text !== before) {
+    fs.writeFileSync(stylesXmlPath, text);
+    console.warn(
+      `[android-native-fix] styles.xml EditText textColor=${APP_EDIT_TEXT_COLOR} (DayNight sifre noktasi)`
+    );
+  }
+  return true;
+}
+
+function ensureMainActivityNavigationBar() {
+  if (!fs.existsSync(mainActivityPath)) return true;
+  let text = fs.readFileSync(mainActivityPath, "utf8");
+  let changed = false;
+
+  if (!text.includes("import android.graphics.Color")) {
+    text = text.replace(
+      "import android.os.Build",
+      "import android.graphics.Color\nimport android.os.Build"
+    );
+    changed = true;
+  }
+  if (!text.includes("import androidx.core.view.WindowCompat")) {
+    text = text.replace(
+      "import com.facebook.react.ReactActivity",
+      "import androidx.core.view.WindowCompat\nimport com.facebook.react.ReactActivity"
+    );
+    changed = true;
+  }
+
+  const injection = `
+    // ${NAV_BAR_COLOR_MARKER}: kurumsal lacivert sistem gezinti cubugu
+    WindowCompat.setDecorFitsSystemWindows(window, true)
+    window.navigationBarColor = Color.parseColor("${APP_NAV_BAR_COLOR}")
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      window.isNavigationBarContrastEnforced = false
+    }
+    WindowCompat.getInsetsController(window, window.decorView)?.isAppearanceLightNavigationBars = false`;
+
+  if (!text.includes(NAV_BAR_COLOR_MARKER)) {
+    if (!text.includes("super.onCreate(null)")) {
+      console.warn("[android-native-fix] MainActivity onCreate bulunamadi (navigation bar)");
+      return false;
+    }
+    text = text.replace(/super\.onCreate\(null\)/, `super.onCreate(null)${injection}`);
+    changed = true;
+  } else if (!text.includes("setDecorFitsSystemWindows")) {
+    text = text.replace(
+      new RegExp(`// ${NAV_BAR_COLOR_MARKER}[\\s\\S]*?isAppearanceLightNavigationBars = false`),
+      injection.trim()
+    );
+    changed = true;
+  }
+
+  if (changed) {
+    fs.writeFileSync(mainActivityPath, text);
+    console.warn("[android-native-fix] MainActivity navigationBarColor=#1e293b + decorFits");
+  }
+  return true;
+}
+
+const MATERIAL_RESOLUTION_MARKER = "pp-material-edge-to-edge";
+
+function ensureMaterialResolutionStrategy() {
+  if (!fs.existsSync(buildGradlePath)) return true;
+  let text = fs.readFileSync(buildGradlePath, "utf8");
+  if (text.includes(MATERIAL_RESOLUTION_MARKER)) return true;
+
+  const block = `
+  // ${MATERIAL_RESOLUTION_MARKER}: BottomSheet / Material edge-to-edge uyumu
+  configurations.all {
+    resolutionStrategy {
+      force 'com.google.android.material:material:1.12.0'
+    }
+  }`;
+
+  const marker = "allprojects {";
+  const idx = text.indexOf(marker);
+  if (idx === -1) {
+    console.warn("[android-native-fix] allprojects blogu bulunamadi (material resolution)");
+    return false;
+  }
+  const closeIdx = text.indexOf("\n}", idx);
+  if (closeIdx === -1) return false;
+  text = text.slice(0, closeIdx) + block + text.slice(closeIdx);
+  fs.writeFileSync(buildGradlePath, text);
+  console.warn("[android-native-fix] Material 1.14 resolutionStrategy eklendi");
+  return true;
+}
 
 function ensureGradleProperties() {
   if (!fs.existsSync(gradlePropsPath)) {
@@ -187,6 +385,29 @@ function ensureAndroidAppLinkIntentFilters() {
   text = text.replace(mainActivityRe, updated);
   fs.writeFileSync(manifestPath, text);
   console.warn("[android-native-fix] Android App Links intent-filter eklendi");
+  return true;
+}
+
+function ensureManifestRuntimePermissions() {
+  if (!fs.existsSync(manifestPath)) return true;
+  let text = fs.readFileSync(manifestPath, "utf8");
+  const required = [
+    "android.permission.RECORD_AUDIO",
+    "android.permission.CAMERA",
+  ];
+  let changed = false;
+  for (const permission of required) {
+    if (text.includes(permission)) continue;
+    text = text.replace(
+      /(<manifest[^>]*>\s*)/,
+      `$1  <uses-permission android:name="${permission}"/>\n`
+    );
+    changed = true;
+  }
+  if (changed) {
+    fs.writeFileSync(manifestPath, text);
+    console.warn("[android-native-fix] AndroidManifest RECORD_AUDIO / CAMERA eklendi");
+  }
   return true;
 }
 
@@ -356,10 +577,16 @@ if (!fs.existsSync(androidRoot)) {
 const ok =
   ensurePackageJsonAutolinkingExclude() &&
   ensureGradleProperties() &&
+  ensureEdgeToEdgeDisabled() &&
+  ensureAppThemeEdgeToEdge() &&
+  ensureAppThemeEditTextColors() &&
+  ensureMainActivityNavigationBar() &&
   upsertGradleJvmHeap() &&
   ensureBuildGradleExclude() &&
+  ensureMaterialResolutionStrategy() &&
   ensureRnCliNativeEntry() &&
   ensureManifestNoExpoDevScheme() &&
+  ensureManifestRuntimePermissions() &&
   ensureAndroidAppLinkIntentFilters() &&
   ensureSettingsIncludesAssetPacks() &&
   ensureAppBuildGradlePlayRelease() &&

@@ -8,6 +8,7 @@ import { Platform, Text, TouchableOpacity, View } from 'react-native';
 import type { ShapeProperties } from './types';
 import { shapeToFeature } from './ShapeDrawingManager';
 import { getShapeCorners, getShapeBounds } from './shapeResizeUtils';
+import { isOverlayVectorShape } from './overlayShapePolicy';
 
 function hexToRgba(hex: string, alpha: number): string {
   const a = Math.max(0, Math.min(1, alpha));
@@ -90,12 +91,17 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
     if (interactionLocked) return;
     onHandlePress?.(shapeId, handleIndex);
   };
+  const shapePressHandler = interactionLocked ? undefined : (shapeId: string) => () => fireShapePress(shapeId);
+  const handlePressHandler = interactionLocked
+    ? undefined
+    : (shapeId: string, handleIndex: number) => () => fireHandlePress(shapeId, handleIndex);
   if (!Mapbox) return null;
 
   return (
     <>
       {shapes.map((shape) => {
         if (shape.screenSpace) return null;
+        const overlayVector = isOverlayVectorShape(shape);
         const feature = shapeToFeature(shape);
         const isSelected = selectedShapeId === shape.id;
         
@@ -119,27 +125,29 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
         if (shape.geometry.type === 'Polygon') {
           return (
             <React.Fragment key={shape.id}>
-              <Mapbox.ShapeSource
-                id={`shape-${shape.id}`}
-                shape={feature}
-                onPress={() => fireShapePress(shape.id)}
-              >
-                <Mapbox.FillLayer
-                  id={`shape-fill-${shape.id}`}
-                  style={{
-                    fillColor,
-                    fillOpacity,
-                  }}
-                />
-                <Mapbox.LineLayer
-                  id={`shape-stroke-${shape.id}`}
-                  style={{
-                    lineColor: outlineColor,
-                    lineWidth: outlineWidth,
-                  }}
-                />
-              </Mapbox.ShapeSource>
-              
+              {!overlayVector ? (
+                <Mapbox.ShapeSource
+                  id={`shape-${shape.id}`}
+                  shape={feature}
+                  onPress={shapePressHandler?.(shape.id)}
+                >
+                  <Mapbox.FillLayer
+                    id={`shape-fill-${shape.id}`}
+                    style={{
+                      fillColor,
+                      fillOpacity,
+                    }}
+                  />
+                  <Mapbox.LineLayer
+                    id={`shape-stroke-${shape.id}`}
+                    style={{
+                      lineColor: outlineColor,
+                      lineWidth: outlineWidth,
+                    }}
+                  />
+                </Mapbox.ShapeSource>
+              ) : null}
+
               {/* Sadece 2 Handle: Mavi (Resize) ve Yeşil (Rotation) */}
               {isSelected && bounds && corners.length > 0 && resizePos && rotatePos && (
                 <>
@@ -158,10 +166,7 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
                         shapeId: shape.id,
                       },
                     }}
-                      onPress={(e: any) => {
-                      console.log('[ShapesLayer] Resize handle press:', { shapeId: shape.id });
-                      fireHandlePress(shape.id, 0); // 0 = resize mode
-                    }}
+                      onPress={handlePressHandler?.(shape.id, 0)}
                   >
                     {/* Görsel: Kare ikon, Hit area: görünmez büyük circle */}
                     <Mapbox.SymbolLayer
@@ -202,10 +207,7 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
                           shapeId: shape.id,
                         },
                       }}
-                      onPress={(e: any) => {
-                        console.log('[ShapesLayer] Rotation handle press:', { shapeId: shape.id });
-                        fireHandlePress(shape.id, -1); // -1 = rotation mode
-                      }}
+                      onPress={handlePressHandler?.(shape.id, -1)}
                     >
                     {/* Görsel: Daire ikon, Hit area: görünmez büyük circle */}
                     <Mapbox.SymbolLayer
@@ -239,49 +241,61 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
         // LineString şekilleri (line, arrow, pen, freehand)
         if (shape.geometry.type === 'LineString') {
           const isSketch = shape.type === "pen" || shape.type === "freehand";
+          const arrowHead = overlayVector ? (shape as { arrowHead?: GeoJSON.Polygon }).arrowHead : null;
           return (
             <React.Fragment key={shape.id}>
-              <Mapbox.ShapeSource
-                id={`shape-${shape.id}`}
-                shape={feature}
-                onPress={() => fireShapePress(shape.id)}
-              >
-                <Mapbox.LineLayer
-                  id={`shape-line-${shape.id}`}
-                  style={{
-                    lineColor: outlineColor,
-                    lineWidth: outlineWidth,
-                  }}
-                />
-                {/* Arrow için ok başı (eğer arrowHead varsa) */}
-                {shape.type === 'arrow' && shape.arrowHead && (
-                  <Mapbox.ShapeSource
-                    key={`arrowhead-${shape.id}`}
-                    id={`shape-arrowhead-${shape.id}`}
-                    shape={{
-                      type: 'Feature',
-                      geometry: shape.arrowHead,
-                      properties: {},
+              {!overlayVector ? (
+                <Mapbox.ShapeSource
+                  id={`shape-${shape.id}`}
+                  shape={feature}
+                  onPress={shapePressHandler?.(shape.id)}
+                >
+                  <Mapbox.LineLayer
+                    id={`shape-line-${shape.id}`}
+                    style={{
+                      lineColor: outlineColor,
+                      lineWidth: outlineWidth,
                     }}
+                  />
+                </Mapbox.ShapeSource>
+              ) : (
+                <>
+                  <Mapbox.ShapeSource
+                    id={`shape-hit-line-${shape.id}`}
+                    shape={feature}
+                    onPress={shapePressHandler?.(shape.id)}
                   >
-                    <Mapbox.FillLayer
-                      id={`shape-arrowhead-fill-${shape.id}`}
-                      style={{
-                        fillColor: outlineColor,
-                        fillOpacity: 1,
-                      }}
-                    />
                     <Mapbox.LineLayer
-                      id={`shape-arrowhead-stroke-${shape.id}`}
+                      id={`shape-hit-line-layer-${shape.id}`}
                       style={{
-                        lineColor: outlineColor,
-                        lineWidth: outlineWidth,
+                        lineColor: '#000000',
+                        lineWidth: 36,
+                        lineOpacity: 0.01,
                       }}
                     />
                   </Mapbox.ShapeSource>
-                )}
-              </Mapbox.ShapeSource>
-              
+                  {arrowHead ? (
+                    <Mapbox.ShapeSource
+                      id={`shape-hit-head-${shape.id}`}
+                      shape={{
+                        type: 'Feature',
+                        geometry: arrowHead,
+                        properties: { shapeId: shape.id },
+                      }}
+                      onPress={shapePressHandler?.(shape.id)}
+                    >
+                      <Mapbox.FillLayer
+                        id={`shape-hit-head-fill-${shape.id}`}
+                        style={{
+                          fillColor: '#000000',
+                          fillOpacity: 0.01,
+                        }}
+                      />
+                    </Mapbox.ShapeSource>
+                  ) : null}
+                </>
+              )}
+
               {/* LineString için: Sadece 2 Handle (Mavi Resize, Yeşil Rotation); kalem/serbest çok noktada handle yok */}
               {isSelected && !isSketch && bounds && corners.length > 0 && resizePos && rotatePos && (
                 <>
@@ -300,10 +314,7 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
                         shapeId: shape.id,
                       },
                     }}
-                    onPress={(e: any) => {
-                      console.log('[ShapesLayer] LineString resize handle press:', { shapeId: shape.id });
-                      fireHandlePress(shape.id, 0); // 0 = resize mode
-                    }}
+                    onPress={handlePressHandler?.(shape.id, 0)}
                   >
                     <Mapbox.SymbolLayer
                       id={`resize-handle-symbol-${shape.id}`}
@@ -342,10 +353,7 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
                         shapeId: shape.id,
                       },
                     }}
-                    onPress={(e: any) => {
-                      console.log('[ShapesLayer] LineString rotation handle press:', { shapeId: shape.id });
-                      fireHandlePress(shape.id, -1); // -1 = rotation mode
-                    }}
+                    onPress={handlePressHandler?.(shape.id, -1)}
                   >
                     <Mapbox.SymbolLayer
                       id={`rotation-handle-symbol-${shape.id}`}
@@ -396,7 +404,7 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
                         geometry: { type: 'Point', coordinates: boxCenter },
                         properties: { isMoveHandle: true, shapeId: shape.id },
                       }}
-                      onPress={() => fireHandlePress(shape.id, 1)}
+                      onPress={handlePressHandler?.(shape.id, 1)}
                     >
                       {/* Bilerek görünür ikon çizilmez (kullanıcı "sarı nokta" istemiyor) */}
                       <Mapbox.CircleLayer
@@ -414,29 +422,10 @@ export const ShapesLayer: React.FC<ShapesLayerProps> = ({
             );
           }
 
-          return (
-            <Mapbox.ShapeSource
-              key={shape.id}
-              id={`shape-${shape.id}`}
-              shape={feature}
-              onPress={() => fireShapePress(shape.id)}
-            >
-              {/* Marker için circle */}
-              {shape.type === 'marker' && (
-                <Mapbox.CircleLayer
-                  id={`shape-marker-${shape.id}`}
-                  style={{
-                    circleRadius:
-                      (isSelected ? 8 : 6) *
-                      (((shape as any).shapeSizePercent ?? 100) / 100),
-                    circleColor: fillColor,
-                    circleStrokeWidth: 2,
-                    circleStrokeColor: outlineColor,
-                  }}
-                />
-              )}
-            </Mapbox.ShapeSource>
-          );
+          if (shape.type === 'marker') {
+            /* Görsel: PinMapOverlay (ekran billboard). Mapbox katmanı yok. */
+            return null;
+          }
         }
 
         return null;

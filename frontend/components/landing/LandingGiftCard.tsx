@@ -5,10 +5,10 @@ import { LandingGlassCard } from './LandingGlassCard';
 import { landingColors, landingRadii } from './landingTheme';
 
 type Props = {
-  onSignUp: () => void;
+  onStart: () => void;
 };
 
-export function LandingGiftCard({ onSignUp }: Props) {
+export function LandingGiftCard({ onStart }: Props) {
   return (
     <LandingGlassCard glow style={styles.card}>
       <View style={styles.topRow}>
@@ -35,8 +35,8 @@ export function LandingGiftCard({ onSignUp }: Props) {
         <MiniFeature icon="trophy" label="Akıllı Yatırım" />
       </View>
 
-      <TouchableOpacity style={styles.cta} onPress={onSignUp} activeOpacity={0.88}>
-        <Text style={styles.ctaText}>Üye Ol</Text>
+      <TouchableOpacity style={styles.cta} onPress={onStart} activeOpacity={0.88}>
+        <Text style={styles.ctaText}>Başla</Text>
         <Ionicons name="arrow-forward" size={20} color="#031426" />
       </TouchableOpacity>
     </LandingGlassCard>

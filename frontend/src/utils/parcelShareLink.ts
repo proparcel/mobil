@@ -64,7 +64,7 @@ export async function resolveParcelShareMessageUrl(
 
 export function formatParcelShareMessage(link: string | null): string | null {
   if (!link) return null;
-  return `ProParcel'de bu parseli görüntüle:\n${link}`;
+  return link;
 }
 
 /**

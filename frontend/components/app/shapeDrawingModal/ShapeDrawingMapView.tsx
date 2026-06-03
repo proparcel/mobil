@@ -8,6 +8,7 @@ import { BuildingExtrusionLayer } from "./BuildingExtrusionLayer";
 import { BuildingGuideLayer } from "./BuildingGuideLayer";
 import { BuildingWindowFrameLayer } from "./BuildingWindowFrameLayer";
 import { BuildingRoofLayer } from "./BuildingRoofLayer";
+import { ShapeDraftPreviewLayers } from "./ShapeDraftPreviewLayers";
 import type { FeatureCollection, Geometry, Point } from "geojson";
 import type { ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
 import { styles } from "./styles";
@@ -78,6 +79,7 @@ type Props = {
   modelInstances: any[];
   measurementFeatures: any[];
   shapeDraftPreview: any;
+  draftOutlineColor?: string;
   orderedParcels: any[];
   selectedParcelId: any;
   shapes: any[];
@@ -142,6 +144,7 @@ export const ShapeDrawingMapView: React.FC<Props> = ({
   modelInstances,
   measurementFeatures,
   shapeDraftPreview,
+  draftOutlineColor = "#3b82f6",
   orderedParcels,
   selectedParcelId,
   shapes,
@@ -406,7 +409,7 @@ export const ShapeDrawingMapView: React.FC<Props> = ({
                 key={`meas-pt-${i}`}
                 id={`meas-pt-${i}`}
                 shape={f}
-                onPress={hasMeasGroup ? pressMeasGroup : undefined}
+                onPress={hasMeasGroup && !shapeInteractionLocked ? pressMeasGroup : undefined}
               >
                 <Mapbox.CircleLayer
                   id={`meas-pt-layer-${i}`}
@@ -428,7 +431,7 @@ export const ShapeDrawingMapView: React.FC<Props> = ({
                 key={`meas-ln-${i}`}
                 id={`meas-ln-${i}`}
                 shape={f}
-                onPress={hasMeasGroup ? pressMeasGroup : undefined}
+                onPress={hasMeasGroup && !shapeInteractionLocked ? pressMeasGroup : undefined}
               >
                 <Mapbox.LineLayer
                   id={`meas-ln-layer-${i}`}
@@ -448,7 +451,7 @@ export const ShapeDrawingMapView: React.FC<Props> = ({
                 key={`meas-poly-${i}`}
                 id={`meas-poly-${i}`}
                 shape={f}
-                onPress={hasMeasGroup ? pressMeasGroup : undefined}
+                onPress={hasMeasGroup && !shapeInteractionLocked ? pressMeasGroup : undefined}
               >
                 <Mapbox.FillLayer
                   id={`meas-poly-fill-${i}`}
@@ -475,7 +478,7 @@ export const ShapeDrawingMapView: React.FC<Props> = ({
                 key={`meas-label-${i}`}
                 id={`meas-label-${i}`}
                 shape={f}
-                onPress={hasMeasGroup ? pressMeasGroup : undefined}
+                onPress={hasMeasGroup && !shapeInteractionLocked ? pressMeasGroup : undefined}
               >
                 <Mapbox.SymbolLayer
                   id={`meas-label-layer-${i}`}
@@ -495,66 +498,6 @@ export const ShapeDrawingMapView: React.FC<Props> = ({
 
           return null;
         })}
-
-        {/* Shape drawing preview (dokunulan noktalar + polygon/line taslak çizgisi) */}
-        {shapeDraftPreview?.polygonFeature && (
-          <Mapbox.ShapeSource id="shape-draft-poly" shape={shapeDraftPreview.polygonFeature as any}>
-            <Mapbox.FillLayer
-              id="shape-draft-poly-fill"
-              style={{
-                fillColor: "#3b82f6",
-                fillOpacity: 0.15,
-              }}
-            />
-            <Mapbox.LineLayer
-              id="shape-draft-poly-line"
-              style={{
-                lineColor: "#3b82f6",
-                lineWidth: 2,
-                lineDasharray: [1.5, 1.5],
-              }}
-            />
-          </Mapbox.ShapeSource>
-        )}
-
-        {shapeDraftPreview?.lineFeature && (
-          <Mapbox.ShapeSource id="shape-draft-line" shape={shapeDraftPreview.lineFeature as any}>
-            <Mapbox.LineLayer
-              id="shape-draft-line-layer"
-              style={{
-                lineColor: "#3b82f6",
-                lineWidth: 2,
-                lineDasharray: [1.5, 1.5],
-              }}
-            />
-          </Mapbox.ShapeSource>
-        )}
-
-        {(() => {
-          const pointFeatures = shapeDraftPreview?.pointFeatures;
-          if (!pointFeatures?.length) return null;
-          return (
-            <Mapbox.ShapeSource
-              id="shape-draft-points"
-              shape={
-                {
-                  type: "FeatureCollection",
-                  features: pointFeatures,
-                } as any
-              }
-            >
-              <Mapbox.CircleLayer
-                id="shape-draft-points-layer"
-                style={{
-                  circleRadius: 5,
-                  circleColor: "#3b82f6",
-                  circleStrokeWidth: 2,
-                  circleStrokeColor: "#ffffff",
-                }}
-              />
-            </Mapbox.ShapeSource>
-          );
-        })()}
 
         {/* Parsel: yalnızca kırmızı sınır çizgisi (dolgu / çift hat yok) */}
       {(orderedParcels || []).map((parcel: any) => {
@@ -594,6 +537,13 @@ export const ShapeDrawingMapView: React.FC<Props> = ({
           interactionLocked={shapeInteractionLocked}
         />
       )}
+
+        {/* Taslak noktalar/çizgiler — mevcut şekillerin üstünde */}
+        <ShapeDraftPreviewLayers
+          Mapbox={Mapbox}
+          preview={shapeDraftPreview}
+          outlineColor={draftOutlineColor}
+        />
     </Mapbox.MapView>
   );
 };

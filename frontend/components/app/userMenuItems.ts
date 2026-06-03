@@ -2,12 +2,16 @@
  * Ana harita menüsü ile aynı öğe sırası — tüm ekranlarda `getMenuItems` kullanın.
  */
 
+import { isAppAdminUser } from "../../src/utils/adminAccess";
+
 export type HomeMenuItem = {
   id: string;
   title: string;
   icon: string;
   disabled?: boolean;
   hasSubmenu?: boolean;
+  /** Admin panel satırı vurgusu */
+  highlight?: boolean;
 };
 
 export function getMenuItems(
@@ -19,6 +23,7 @@ export function getMenuItems(
   if (!isAuthenticated) {
     return [
       { id: "landing-intro", title: "ProParcel tanıtım", icon: "sparkles-outline", disabled: false },
+      { id: "emlak-vitrini", title: "Emlak Vitrini", icon: "storefront-outline", disabled: false },
       { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
       { id: "hukuki-metinler", title: "Hukuki metinler", icon: "document-text-outline", disabled: false },
       { id: "giris", title: "Giriş", icon: "log-in", disabled: false },
@@ -36,9 +41,14 @@ export function getMenuItems(
     memberType === "expert" ||
     corporateType === "spk";
 
+  const adminUser = isAdmin === true || isAppAdminUser(user);
+
   return [
     { id: "sorgularim", title: "Sorgularım", icon: "time-outline", disabled: false },
     { id: "kullanici", title: "Profil", icon: "person", disabled: false },
+    ...(adminUser
+      ? [{ id: "admin-panel", title: "Admin Panel", icon: "shield-checkmark", highlight: true }]
+      : []),
     { id: "emlak-vitrini", title: "Emlak Vitrini", icon: "storefront-outline", disabled: false },
     { id: "son-30-gun-pro", title: "Son 30 Gün Pro Sorguları", icon: "calendar", disabled: false },
     { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
@@ -57,9 +67,8 @@ export function getMenuItems(
       hasSubmenu: true,
     },
     { id: "dosyalarim", title: "Dosyalarım", icon: "folder", disabled: false, hasSubmenu: true },
-    { id: "kredi-paketleri", title: "Kredi Paketleri", icon: "logo-bitcoin", disabled: false },
+    { id: "kredi-paketleri", title: "Kredi Paketleri", icon: "layers-outline", disabled: false },
     { id: "hukuki-metinler", title: "Hukuki Metinler", icon: "document-text-outline", disabled: false },
-    ...(isAdmin ? [{ id: "admin-panel", title: "Admin Panel", icon: "shield-checkmark" }] : []),
     { id: "cikis", title: "Çıkış", icon: "log-out", disabled: false },
   ];
 }

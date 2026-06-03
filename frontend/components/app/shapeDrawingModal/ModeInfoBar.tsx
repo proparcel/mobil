@@ -73,7 +73,7 @@ export const ModeInfoBar: React.FC<Props> = ({
         {!resizeMode && !rotationMode && shapeDrawingMode === "pen" && "Parmağınızı sürükleyin (kalem)"}
         {!resizeMode && !rotationMode && shapeDrawingMode === "freehand" && "Parmağınızı sürükleyin (serbest çizim)"}
         {!resizeMode && !rotationMode && shapeDrawingMode === "arrow" && "İki nokta tıklayın (başlangıç, bitiş)"}
-        {!resizeMode && !rotationMode && shapeDrawingMode === "marker" && "Bir nokta tıklayın"}
+        {!resizeMode && !rotationMode && shapeDrawingMode === "marker" && "Haritaya dokunarak iğne ekleyin"}
         {!resizeMode && !rotationMode && shapeDrawingMode === "textbox" && "Bir nokta tıklayın"}
         {!resizeMode && !rotationMode && measurementMode === "distance" && "İki nokta tıklayın (mesafe ölçümü)"}
         {!resizeMode && !rotationMode && measurementMode === "area" && "Noktalar tıklayın, uzun basarak bitirin (alan ölçümü)"}

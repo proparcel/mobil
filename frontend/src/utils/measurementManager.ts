@@ -5,7 +5,11 @@
 // Fallback fonksiyonlar (Haversine, Shoelace) kullanılıyor
 // Bu yaklaşım @rnmapbox/maps ile uyumlu ve ek dependency gerektirmiyor
 
-export type MeasurementMode = null | 'ruler' | 'area' | 'pin' | 'text' | 'arrow';
+/** Aktif harita ölçüm modları (mesafe / alan). */
+export type MeasurementMode = null | 'distance' | 'area';
+
+/** DrawingToolbox işaret modları — ölçüm session'ından ayrı. */
+export type ToolboxAnnotationMode = 'pin' | 'text' | 'arrow';
 
 export interface MeasurementFeature {
   type: 'Feature';

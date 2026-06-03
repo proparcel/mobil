@@ -59,7 +59,6 @@
         "NODE_ENV": "production",
         "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
         "IOS_STANDALONE": "1",
-        "IOS_ASSOCIATED_DOMAINS": "1",
         "EAS_SKIP_AUTO_FINGERPRINT": "1",
         "EXPO_PUBLIC_API_URL": "https://www.proparcel.com",
         "EXPO_PUBLIC_AUTH_API_URL": "https://www.proparcel.com",
