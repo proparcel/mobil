@@ -55,29 +55,26 @@ import {
 type MemberType = "individual" | "consultant" | "corporate";
 type RegistrationStep = "info" | "media" | "expertise";
 type CorporateType = "emlak" | "spk" | "lihkab";
-type ConsultantType = "emlak" | "spk" | "lihkab";
 
-function getCompanyDisplayName(company: RegistrationCompanyItem | null): string {
-  if (!company) return "";
-  return (company.company_name || "").trim();
+function consultantEffectiveType(
+  company: RegistrationCompanyItem | null,
+): CorporateType | null {
+  const t = String(company?.corporate_type || "").trim().toLowerCase();
+  if (t === "emlak" || t === "spk" || t === "lihkab") return t;
+  return null;
 }
 
-function isConsultantSpkFlow(
-  consultantType: ConsultantType,
-  company: RegistrationCompanyItem | null
-): boolean {
-  if (consultantType === "lihkab") return false;
-  if (consultantType === "spk") return true;
-  return company?.corporate_type === "spk";
+function isConsultantSpkFlow(company: RegistrationCompanyItem | null): boolean {
+  return consultantEffectiveType(company) === "spk";
 }
 
 function shouldShowExpertiseStep(
   memberType: MemberType,
-  consultantType: ConsultantType,
+  company: RegistrationCompanyItem | null,
   corporateType: CorporateType | null,
 ): boolean {
   if (memberType === "individual") return false;
-  if (memberType === "consultant" && consultantType === "lihkab") return false;
+  if (memberType === "consultant" && consultantEffectiveType(company) === "lihkab") return false;
   if (memberType === "corporate" && corporateType === "lihkab") return false;
   return true;
 }
@@ -94,11 +91,11 @@ function useSpkExpertiseMode(
 
 function resolveEducationLevel(
   memberType: MemberType,
-  consultantType: ConsultantType,
+  company: RegistrationCompanyItem | null,
   corporateType: CorporateType | null,
   educationLevel: number | null
 ): number | undefined {
-  if (memberType === "consultant" && consultantType === "lihkab") return 0;
+  if (memberType === "consultant" && consultantEffectiveType(company) === "lihkab") return 0;
   if (memberType === "corporate" && corporateType === "lihkab") return 0;
   return educationLevel ?? undefined;
 }
@@ -115,12 +112,12 @@ function getGraduationNoteText(isRequired: boolean, variant: "consultant" | "cor
 
 function buildEducationPayload(
   memberType: MemberType,
-  consultantType: ConsultantType,
+  company: RegistrationCompanyItem | null,
   corporateType: CorporateType | null,
   educationLevel: number | null,
   educationDetails: EducationPickerValue,
 ) {
-  const level = resolveEducationLevel(memberType, consultantType, corporateType, educationLevel);
+  const level = resolveEducationLevel(memberType, company, corporateType, educationLevel);
   if (level === undefined) return {};
   return {
     education_level: level,
@@ -133,6 +130,11 @@ function buildEducationPayload(
         ? educationDetails.customDepartment.trim() || undefined
         : undefined,
   };
+}
+
+function getCompanyDisplayName(company: RegistrationCompanyItem | null): string {
+  if (!company) return "";
+  return (company.company_name || "").trim();
 }
 
 function ScrollInputWrap({
@@ -170,7 +172,6 @@ export default function RegisterScreen() {
     cities: [],
   });
   const [memberType, setMemberType] = useState<MemberType>("individual");
-  const [consultantType, setConsultantType] = useState<ConsultantType>("emlak");
   const [consultantLicenseNo, setConsultantLicenseNo] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -265,18 +266,19 @@ export default function RegisterScreen() {
   }, [companySearchText, isCompanyPickerOpen, memberType, selectedCompany]);
 
   const consultantSpkFlow =
-    memberType === "consultant" && isConsultantSpkFlow(consultantType, selectedCompany);
-  const showExpertiseStep = shouldShowExpertiseStep(memberType, consultantType, corporateType);
+    memberType === "consultant" && isConsultantSpkFlow(selectedCompany);
+  const consultantSubtype = consultantEffectiveType(selectedCompany);
+  const showExpertiseStep = shouldShowExpertiseStep(memberType, selectedCompany, corporateType);
   const expertiseMode = useSpkExpertiseMode(memberType, consultantSpkFlow, corporateType)
     ? "cities"
     : "quarters";
 
   useEffect(() => {
-    if (memberType !== "consultant" || consultantType === "lihkab") return;
+    if (memberType !== "consultant" || consultantSubtype === "lihkab") return;
     if (consultantSpkFlow && educationLevel === 0) {
       setEducationLevel(null);
     }
-  }, [memberType, consultantType, consultantSpkFlow, educationLevel]);
+  }, [memberType, consultantSubtype, consultantSpkFlow, educationLevel]);
 
   /**
    * Form validasyonu
@@ -351,7 +353,7 @@ export default function RegisterScreen() {
       if (!selectedCompany?.company_profile_id) {
         newErrors.companyPicker = "Lütfen listeden firma seçiniz";
       }
-      if (consultantType === "spk" && !consultantLicenseNo.trim()) {
+      if (consultantSubtype === "spk" && !consultantLicenseNo.trim()) {
         newErrors.consultantLicenseNo = "SPK Lisanslı Değerleme Uzmanı için Lisans No gereklidir";
       }
       if (!corporateAddress.cityId || !corporateAddress.districtId || !corporateAddress.quarterValue) {
@@ -360,7 +362,7 @@ export default function RegisterScreen() {
       if (!corporateAddress.streetAndNumber.trim()) {
         newErrors.streetAndNumber = "Sokak ve numara bilgisi gereklidir";
       }
-      if (consultantType !== "lihkab" && consultantSpkFlow) {
+      if (consultantSubtype !== "lihkab" && consultantSpkFlow) {
         if (educationLevel !== 1 && educationLevel !== 2) {
           newErrors.educationLevel =
             "SPK Lisanslı firmaya bağlı danışmanlar için Lisans veya Ön Lisans seçiniz";
@@ -388,8 +390,7 @@ export default function RegisterScreen() {
       referral_code: referralCode?.trim() || undefined,
       ...(memberType === "consultant" && selectedCompanyProfileId
         ? {
-            consultant_type: consultantType,
-            consultant_license_no: consultantType === "spk" ? consultantLicenseNo.trim() : undefined,
+            consultant_license_no: consultantSubtype === "spk" ? consultantLicenseNo.trim() : undefined,
             company_profile_id: selectedCompanyProfileId,
             city_id: corporateAddress.cityId || undefined,
             district_id: corporateAddress.districtId || undefined,
@@ -402,7 +403,7 @@ export default function RegisterScreen() {
             postal_code: postalCode.trim() || undefined,
             ...buildEducationPayload(
               memberType,
-              consultantType,
+              selectedCompany,
               corporateType,
               educationLevel,
               educationDetails,
@@ -411,6 +412,7 @@ export default function RegisterScreen() {
         : {}),
       ...(memberType === "corporate" && {
         corporate_type: corporateType || undefined,
+        ...(corporateType && corporateType !== "spk" ? { is_expert: false } : {}),
         company_name: companyName,
         company_license_no: companyLicenseNo,
         office_no: corporateType === "lihkab" ? officeNo.trim() : undefined,
@@ -426,7 +428,7 @@ export default function RegisterScreen() {
         postal_code: postalCode.trim() || undefined,
         ...buildEducationPayload(
           memberType,
-          consultantType,
+          null,
           corporateType,
           educationLevel,
           educationDetails,
@@ -455,7 +457,6 @@ export default function RegisterScreen() {
     if (errs.company_profile_id?.[0]) mapped.companyPicker = errs.company_profile_id[0];
     if (errs.company_vergi_no?.[0]) mapped.companyPicker = errs.company_vergi_no[0];
     if (errs.consultant_license_no?.[0]) mapped.consultantLicenseNo = errs.consultant_license_no[0];
-    if (errs.consultant_type?.[0]) mapped.consultantType = errs.consultant_type[0];
     return mapped;
   };
 
@@ -813,100 +814,10 @@ export default function RegisterScreen() {
             {memberType === "consultant" && (
               <>
                 <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Danışman Tipi *</Text>
-                  <View style={styles.corporateTypeTabs}>
-                    {[
-                      { value: "emlak", label: "Emlak" },
-                      { value: "spk", label: "SPK" },
-                      { value: "lihkab", label: "LİHKAB" },
-                    ].map((item) => (
-                      <TouchableOpacity
-                        key={item.value}
-                        style={[
-                          styles.corporateTypeTab,
-                          consultantType === item.value && styles.corporateTypeTabActive,
-                        ]}
-                        onPress={() => {
-                          setConsultantType(item.value as ConsultantType);
-                          if (item.value !== "spk") setConsultantLicenseNo("");
-                          if (item.value === "lihkab") {
-                            setEducationLevel(null);
-                            setEducationDetails(EMPTY_EDUCATION_PICKER);
-                          }
-                          setErrors((e) => ({
-                            ...e,
-                            consultantType: "",
-                            consultantLicenseNo: "",
-                            educationLevel: "",
-                            universityId: "",
-                            departmentId: "",
-                          }));
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.corporateTypeTabText,
-                            consultantType === item.value && styles.corporateTypeTabTextActive,
-                          ]}
-                        >
-                          {item.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  {errors.consultantType ? (
-                    <Text style={styles.fieldError}>{errors.consultantType}</Text>
-                  ) : null}
-                </View>
-
-                {consultantType === "spk" ? (
-                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
-                    {({ onFocus, onBlur }) => (
-                      <>
-                        <Text style={styles.label}>Lisans No *</Text>
-                        <TextInput
-                          style={[styles.input, errors.consultantLicenseNo && styles.inputError]}
-                          placeholder="SPK lisans numaranız"
-                          placeholderTextColor="#999"
-                          value={consultantLicenseNo}
-                          onChangeText={(text) => {
-                            setConsultantLicenseNo(text);
-                            if (errors.consultantLicenseNo) {
-                              setErrors((e) => ({ ...e, consultantLicenseNo: "" }));
-                            }
-                          }}
-                          onFocus={onFocus}
-                          onBlur={onBlur}
-                        />
-                        {errors.consultantLicenseNo ? (
-                          <Text style={styles.fieldError}>{errors.consultantLicenseNo}</Text>
-                        ) : null}
-                      </>
-                    )}
-                  </ScrollInputWrap>
-                ) : null}
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Adres Bilgileri *</Text>
-                  <Text style={styles.helperText}>
-                    Danışman kaydı için il, ilçe, mahalle ve açık adres bilgileri zorunludur.
-                  </Text>
-                  <AddressFormFields
-                    scrollRef={scrollRef}
-                    value={corporateAddress}
-                    onChange={(addr) => {
-                      setCorporateAddress(addr);
-                      setErrors((e) => ({ ...e, address: "", streetAndNumber: "" }));
-                    }}
-                    errors={{
-                      address: errors.address,
-                      streetAndNumber: errors.streetAndNumber,
-                    }}
-                  />
-                </View>
-
-                <View style={styles.inputContainer}>
                   <Text style={styles.label}>Firma Seç *</Text>
+                  <Text style={styles.helperText}>
+                    Danışman alt tipi seçtiğiniz firmanın kurumsal tipinden otomatik belirlenir.
+                  </Text>
                   <TouchableOpacity
                     style={[styles.select2Button, errors.companyPicker && styles.inputError]}
                     onPress={() => {
@@ -926,6 +837,11 @@ export default function RegisterScreen() {
                     </Text>
                     <Ionicons name="chevron-down" size={18} color="#64748b" />
                   </TouchableOpacity>
+                  {selectedCompany?.corporate_type ? (
+                    <Text style={styles.helperText}>
+                      Firma tipi: {String(selectedCompany.corporate_type).toUpperCase()}
+                    </Text>
+                  ) : null}
                   {isCompanyPickerOpen ? (
                     <View style={styles.select2Dropdown}>
                       <ScrollInputWrap scrollRef={scrollRef}>
@@ -1018,7 +934,53 @@ export default function RegisterScreen() {
                   ) : null}
                 </View>
 
-                {consultantType !== "lihkab" ? (
+                {consultantSubtype === "spk" ? (
+                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                    {({ onFocus, onBlur }) => (
+                      <>
+                        <Text style={styles.label}>Lisans No *</Text>
+                        <TextInput
+                          style={[styles.input, errors.consultantLicenseNo && styles.inputError]}
+                          placeholder="SPK lisans numaranız"
+                          placeholderTextColor="#999"
+                          value={consultantLicenseNo}
+                          onChangeText={(text) => {
+                            setConsultantLicenseNo(text);
+                            if (errors.consultantLicenseNo) {
+                              setErrors((e) => ({ ...e, consultantLicenseNo: "" }));
+                            }
+                          }}
+                          onFocus={onFocus}
+                          onBlur={onBlur}
+                        />
+                        {errors.consultantLicenseNo ? (
+                          <Text style={styles.fieldError}>{errors.consultantLicenseNo}</Text>
+                        ) : null}
+                      </>
+                    )}
+                  </ScrollInputWrap>
+                ) : null}
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Adres Bilgileri *</Text>
+                  <Text style={styles.helperText}>
+                    Danışman kaydı için il, ilçe, mahalle ve açık adres bilgileri zorunludur.
+                  </Text>
+                  <AddressFormFields
+                    scrollRef={scrollRef}
+                    value={corporateAddress}
+                    onChange={(addr) => {
+                      setCorporateAddress(addr);
+                      setErrors((e) => ({ ...e, address: "", streetAndNumber: "" }));
+                    }}
+                    errors={{
+                      address: errors.address,
+                      streetAndNumber: errors.streetAndNumber,
+                    }}
+                  />
+                </View>
+
+                {consultantSubtype !== "lihkab" ? (
                   <View style={styles.inputContainer}>
                     <View style={styles.graduationTitleRow}>
                       <Text style={styles.label}>Mezuniyet Bilgileri</Text>

@@ -1,16 +1,13 @@
 import { Alert } from 'react-native';
 import type { CustomerFeatureFlags, User } from '../types/auth';
 
-const SMART_QUERY_ALLOWED_TYPES = ['business', 'silver', 'gold', 'premium'] as const;
+import { canUseSmartQueryFromMembership } from './membership';
 
 export const SMART_QUERY_UPGRADE_MESSAGE =
   'Bu özellik abonelik paketine dahildir. Paketinizi yükselterek metin, ses ve görsel ile Akıllı Sorgu kullanabilirsiniz.';
 
 export function canUseSmartQuery(user: User | null | undefined): boolean {
-  if (!user) return false;
-  if (user.features?.smart_query === true) return true;
-  const ct = (user.customer_type || 'basic').toLowerCase();
-  return (SMART_QUERY_ALLOWED_TYPES as readonly string[]).includes(ct);
+  return canUseSmartQueryFromMembership(user);
 }
 
 export function parseCustomerFeatureFlags(raw: unknown): CustomerFeatureFlags | undefined {

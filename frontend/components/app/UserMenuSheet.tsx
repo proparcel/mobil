@@ -5,6 +5,7 @@ import React, { useMemo } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import type { User, UserProfile } from "../../src/types/auth";
+import { isExpertUser, isVipCustomer } from "../../src/utils/membership";
 import { sheetMenuListBottomPadding } from "../../src/utils/sheetSafeArea";
 
 const TEPE_CREDIT_ICON_COLORS = {
@@ -93,7 +94,7 @@ export function UserMenuSheetHeader({
           .map((s) => (s!.charAt(0).toUpperCase() + (s!.slice(1) || "").toLowerCase()))
           .join(" ") || user?.full_name || user?.email || "Kullanıcı"
       : user?.full_name || user?.email || "Kullanıcı";
-    const canShowExpert = user?.role === "consultant" || user?.role === "broker";
+    const canShowExpert = isExpertUser(user, profile);
     const current = profile?.expert_score_current ?? 0;
     const peak = profile?.expert_score_peak ?? 0;
     const level = profile?.expert_level;
@@ -115,7 +116,7 @@ export function UserMenuSheetHeader({
       canShowExpert
         ? `Uzmanlık Puanı: ${Number(current || 0)}${levelLabel ? ` (${levelLabel})` : ""} • Peak: ${Number(peak || 0)}`
         : null;
-    return { fullName, canShowExpert: !!canShowExpert, meta, isVip: user?.role === "vip" || user?.role === "vip_limited" };
+    return { fullName, canShowExpert: !!canShowExpert, meta, isVip: isVipCustomer(user) };
   }, [profile, user]);
 
   const avatarUrl = profile?.avatar_url || profile?.avatar;

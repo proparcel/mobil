@@ -23,6 +23,8 @@ import type {
   QueryRatingCreateResponse,
   QueryRatingRaterListResponse,
   QueryRatingStatusResponse,
+  MahalleOrtSignalResponse,
+  PortalKmSectionData,
 } from '../src/types/portal';
 
 async function authDjangoJsonFetch<T>(
@@ -59,7 +61,13 @@ async function authDjangoJsonFetch<T>(
   try {
     const parsed = text ? JSON.parse(text) : null;
     if (!res.ok) {
-      return { ok: false, status, error: parsed?.error || parsed?.detail || parsed?.message || `HTTP ${status}` };
+      return {
+        ok: false,
+        status,
+        error: parsed?.error || parsed?.detail || parsed?.message || `HTTP ${status}`,
+        code: typeof parsed?.code === 'string' ? parsed.code : undefined,
+        payload: parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined,
+      };
     }
     return { ok: true, data: parsed as T };
   } catch {
@@ -359,6 +367,32 @@ export async function getPortalDetailSection(
 ): Promise<ApiResult<Record<string, unknown>>> {
   return authDjangoJsonFetch<Record<string, unknown>>(
     `/api/portal/recent-queries/${snapshotId}/sections/${encodeURIComponent(section)}/`,
+  );
+}
+
+export async function getPortalKmSection(
+  snapshotId: number,
+): Promise<ApiResult<PortalKmSectionData>> {
+  return authDjangoJsonFetch<PortalKmSectionData>(
+    `/api/portal/recent-queries/${snapshotId}/sections/km/`,
+  );
+}
+
+/** Mahalle ortalaması son60 sinyali — DB kayıt / UI-only / expert onay */
+export async function postMahalleOrtSignal(
+  snapshotId: number,
+  m2Price: number,
+  options?: { confirmExtremePrice?: boolean },
+): Promise<ApiResult<MahalleOrtSignalResponse>> {
+  return authDjangoJsonFetch<MahalleOrtSignalResponse>(
+    `/api/portal/recent-queries/${snapshotId}/mahalle-ort-signal/`,
+    {
+      method: 'POST',
+      json: {
+        m2_price: m2Price,
+        ...(options?.confirmExtremePrice ? { confirm_extreme_price: true } : {}),
+      },
+    },
   );
 }
 

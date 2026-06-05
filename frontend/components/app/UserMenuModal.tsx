@@ -56,7 +56,23 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
     }
     try {
       const res = await authService.getProfile();
-      if (res.success && res.data?.profile) setUserProfile(res.data.profile);
+      if (res.success && res.data?.profile) {
+        const { profile, user: profileUser, public: publicProfile } = res.data;
+        setUserProfile({
+          ...profile,
+          is_expert:
+            publicProfile?.is_expert ??
+            profileUser?.is_expert ??
+            profile.is_expert,
+          membership_display:
+            publicProfile?.membership_display ??
+            profile.membership_display ??
+            profileUser?.membership_display,
+          effective_corporate_type:
+            publicProfile?.effective_corporate_type ??
+            profile.effective_corporate_type,
+        });
+      }
     } catch {
       // best-effort
     }
@@ -318,7 +334,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
           }}
         />
         <UserMenuSheetList
-          items={getMenuItems(true, !!isAuthenticated, isAppAdminUser(user), user)}
+          items={getMenuItems(true, !!isAuthenticated, isAppAdminUser(user), user, userProfile)}
           st={userMenuSheetDarkStyles}
           variant="dark"
           submenuOpenId={submenuOpenId}

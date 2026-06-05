@@ -6,7 +6,9 @@ import { API_URL } from "../config/api";
 import { storageService } from "./storageService";
 import { authService } from "./authService";
 
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; status?: number };
+export type ApiResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; status?: number; code?: string; payload?: Record<string, unknown> };
 
 async function getAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
   let accessToken = await storageService.getAccessToken();
@@ -48,7 +50,13 @@ export async function authJsonFetch<T>(
   try {
     const parsed = text ? JSON.parse(text) : null;
     if (!res.ok) {
-      return { ok: false, status, error: parsed?.error || parsed?.detail || parsed?.message || `HTTP ${status}` };
+      return {
+        ok: false,
+        status,
+        error: parsed?.error || parsed?.detail || parsed?.message || `HTTP ${status}`,
+        code: typeof parsed?.code === 'string' ? parsed.code : undefined,
+        payload: parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined,
+      };
     }
     return { ok: true, data: parsed as T };
   } catch {
@@ -82,7 +90,13 @@ export async function authFormFetch<T>(
   try {
     const parsed = text ? JSON.parse(text) : null;
     if (!res.ok) {
-      return { ok: false, status, error: parsed?.error || parsed?.detail || parsed?.message || `HTTP ${status}` };
+      return {
+        ok: false,
+        status,
+        error: parsed?.error || parsed?.detail || parsed?.message || `HTTP ${status}`,
+        code: typeof parsed?.code === 'string' ? parsed.code : undefined,
+        payload: parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined,
+      };
     }
     return { ok: true, data: parsed as T };
   } catch {

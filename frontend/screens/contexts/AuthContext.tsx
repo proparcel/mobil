@@ -25,6 +25,7 @@ import type {
   RegisterRequest,
   User,
   UserProfile,
+  ProfilePublic,
   LoginResponse,
 } from "../../src/types/auth";
 import {
@@ -35,6 +36,7 @@ import {
   fetchProfileCityIdAndStore,
 } from "../../src/utils/homeMapPreferredCity";
 import { parseCustomerFeatureFlags } from "../../src/utils/customerFeatureGates";
+import { normalizeAuthUser } from "../../src/utils/membership";
 
 // Default context value
 const defaultContextValue: AuthContextValue = {
@@ -89,7 +91,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         if (tokens && user) {
           setState({
-            user,
+            user: normalizeAuthUser(user as unknown as Record<string, unknown>),
             tokens,
             isLoading: false,
             isAuthenticated: true,
@@ -118,8 +120,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   /**
    * Hydrate user data from /api/profile in the background.
-   * Updates full_name (if missing) and always syncs role/vip_started_at
-   * so that admin-side VIP assignments are reflected without re-login.
+   * Syncs member_type, customer_type, features and is_admin without re-login.
    */
   useEffect(() => {
     if (!state.isAuthenticated) return;
@@ -133,6 +134,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const response = await authService.getProfile();
         const profile = response.success ? response.data?.profile : null;
         const serverUser = response.success ? response.data?.user : null;
+        const publicProfile = response.success
+          ? (response.data?.public as ProfilePublic | undefined)
+          : undefined;
         if (!profile && !serverUser) return;
 
         const profileCityId = pickCityIdFromProfilePayload(
@@ -150,19 +154,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
             .join(" ")
             .trim();
 
-        // Determine what changed
-        const serverRole = serverUser?.role || currentUser.role;
         const serverVipStartedAt = serverUser?.vip_started_at ?? currentUser.vip_started_at;
-        const serverMemberType = profile?.member_type || serverUser?.member_type;
-        const serverCustomerType = serverUser?.customer_type;
+        const serverMemberType =
+          profile?.member_type || serverUser?.member_type || currentUser.member_type;
+        const serverCustomerType = serverUser?.customer_type ?? currentUser.customer_type;
+        const serverIsAdmin =
+          serverUser?.is_admin ?? currentUser.is_admin;
+        const serverMembershipDisplay =
+          publicProfile?.membership_display ??
+          (profile as UserProfile | null)?.membership_display ??
+          serverUser?.membership_display;
+        const serverCanAccessProSorgu =
+          response.success && response.data?.can_access_prosorgu !== undefined
+            ? response.data.can_access_prosorgu
+            : publicProfile?.can_access_prosorgu;
         const serverFeatures = parseCustomerFeatureFlags(response.success ? response.data?.features : null);
+        const serverIsExpert =
+          serverUser?.is_expert ??
+          publicProfile?.is_expert ??
+          (profile as UserProfile | null)?.is_expert;
         const nameChanged = derivedFullName && derivedFullName !== (currentUser.full_name || "").trim();
-        const roleChanged = serverRole !== currentUser.role;
         const vipChanged = serverVipStartedAt !== currentUser.vip_started_at;
         const memberTypeChanged =
           Boolean(serverMemberType) && serverMemberType !== currentUser.member_type;
         const customerTypeChanged =
           Boolean(serverCustomerType) && serverCustomerType !== currentUser.customer_type;
+        const adminChanged = serverIsAdmin !== currentUser.is_admin;
+        const membershipDisplayChanged =
+          Boolean(serverMembershipDisplay) &&
+          serverMembershipDisplay !== currentUser.membership_display;
         const featuresChanged =
           serverFeatures != null &&
           serverFeatures.smart_query !== currentUser.features?.smart_query;
@@ -171,27 +191,36 @@ export function AuthProvider({ children }: AuthProviderProps) {
           profileCityId != null && profileCityId !== (currentUser.city_id ?? undefined);
         const cityNameChanged =
           Boolean(prof?.city_name) && prof?.city_name !== currentUser.city_name;
+        const isExpertChanged =
+          serverIsExpert !== undefined && serverIsExpert !== currentUser.is_expert;
+        const canAccessProSorguChanged =
+          serverCanAccessProSorgu !== undefined &&
+          serverCanAccessProSorgu !== currentUser.can_access_prosorgu;
 
         if (
           !nameChanged &&
-          !roleChanged &&
           !vipChanged &&
           !memberTypeChanged &&
           !customerTypeChanged &&
+          !adminChanged &&
+          !membershipDisplayChanged &&
           !featuresChanged &&
           !cityIdChanged &&
-          !cityNameChanged
+          !cityNameChanged &&
+          !isExpertChanged &&
+          !canAccessProSorguChanged
         ) {
           return;
         }
 
-        const updatedUser: User = {
+        const updatedUser: User = normalizeAuthUser({
           ...currentUser,
           ...(nameChanged ? { full_name: derivedFullName } : {}),
-          ...(roleChanged ? { role: serverRole } : {}),
           ...(vipChanged ? { vip_started_at: serverVipStartedAt } : {}),
           ...(memberTypeChanged ? { member_type: serverMemberType } : {}),
           ...(customerTypeChanged && serverCustomerType ? { customer_type: serverCustomerType } : {}),
+          ...(adminChanged ? { is_admin: serverIsAdmin } : {}),
+          ...(membershipDisplayChanged ? { membership_display: serverMembershipDisplay } : {}),
           ...(featuresChanged && serverFeatures
             ? { features: { ...currentUser.features, ...serverFeatures } }
             : {}),
@@ -202,7 +231,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
               }
             : {}),
           ...(cityNameChanged && prof?.city_name ? { city_name: prof.city_name } : {}),
-        };
+          ...(isExpertChanged ? { is_expert: serverIsExpert } : {}),
+          ...(canAccessProSorguChanged
+            ? { can_access_prosorgu: serverCanAccessProSorgu }
+            : {}),
+        } as unknown as Record<string, unknown>);
 
         setState((prev) => {
           if (!prev.user || prev.user.id !== currentUser.id) return prev;
@@ -256,7 +289,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (response.success && response.data) {
       void persistHomeMapCityAfterAuth(response.data.user);
       setState({
-        user: response.data.user,
+        user: normalizeAuthUser(response.data.user as unknown as Record<string, unknown>),
         tokens: { access: response.data.access, refresh: response.data.refresh },
         isLoading: false,
         isAuthenticated: true,
@@ -282,7 +315,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (response.success && response.data) {
       void persistHomeMapCityAfterAuth(response.data.user);
       setState({
-        user: response.data.user,
+        user: normalizeAuthUser(response.data.user as unknown as Record<string, unknown>),
         tokens: { access: response.data.access, refresh: response.data.refresh },
         isLoading: false,
         isAuthenticated: true,
@@ -305,7 +338,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (response.success && response.data) {
       void persistHomeMapCityAfterAuth(response.data.user);
       setState({
-        user: response.data.user,
+        user: normalizeAuthUser(response.data.user as unknown as Record<string, unknown>),
         tokens: { access: response.data.access, refresh: response.data.refresh },
         isLoading: false,
         isAuthenticated: true,
@@ -320,7 +353,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const syncSessionFromLoginResponse = useCallback((data: NonNullable<LoginResponse["data"]>) => {
     void persistHomeMapCityAfterAuth(data.user);
     setState({
-      user: data.user,
+      user: normalizeAuthUser(data.user as unknown as Record<string, unknown>),
       tokens: { access: data.access, refresh: data.refresh },
       isLoading: false,
       isAuthenticated: true,

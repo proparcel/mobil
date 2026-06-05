@@ -211,6 +211,23 @@ export interface PortalSummaryPrices {
   valuation_canonical?: PortalValuationCanonical | null;
 }
 
+export interface PortalStructurePriceSummary {
+  structure_age?: number | null;
+  construction_area_m2?: number | null;
+  construction_unit_price_tl?: number | null;
+  structure_cost_tl?: number | null;
+  structure_final_total_tl?: number | null;
+  delivery_total_tl?: number | null;
+  cost_factors?: Array<{
+    label?: string;
+    multiplier?: number;
+    applied_pct?: string;
+    key?: string;
+  }>;
+  age_band?: string | null;
+  formula?: string | null;
+}
+
 /** İlan vitrininde dönen video kaydı (Mongo + portal özet) */
 export interface PortalListingVideoItem {
   video_id?: string | null;
@@ -249,6 +266,8 @@ export interface PortalQueryDetail {
   /** Rapor/PDF özet fiyat yedekleri */
   portal_summary_prices?: PortalSummaryPrices | null;
   building_params: Record<string, string | number | boolean> | null;
+  /** Enrichment API — yapı maliyet özeti (web StructureInfoSummaryCard ile aynı) */
+  structure_price_summary?: PortalStructurePriceSummary | null;
   arsa_fiyati: number | null;
   bina_maliyeti: number | null;
   ramsar_json: PortalRamsarJson | null;
@@ -383,6 +402,42 @@ export interface QueryRatingCreatePayload {
   user_expected_unit_price?: number;
   /** Toplam TL; mobil «Değerlendirilmeli» akışında öncelikli. */
   user_expected_total_price?: number;
+  /** Expert aşırı sapma onayı (409 sonrası ikinci istek) */
+  confirm_extreme_price?: boolean;
+}
+
+export interface MahalleOrtSignalResponse {
+  ok?: boolean;
+  db_saved?: boolean;
+  ui_only?: boolean;
+  message?: string;
+  code?: string;
+  reference_avg_m2?: number;
+  deviation_pct?: number;
+  direction?: 'below' | 'above';
+  km_analysis_invoked?: boolean;
+  km_skip_reason?: string;
+  km_not_performed_message?: string;
+  km_stale_notice?: string;
+  km_live_target_m2?: number;
+  km_live_db_verified?: boolean;
+}
+
+export interface PortalKmSectionData {
+  km_analysis_invoked?: boolean;
+  km_analysis?: Record<string, unknown> | null;
+  km_recommended_price?: number | null;
+  neighbor_quarters?: unknown[];
+  km_skip_reason?: string;
+  km_not_performed_message?: string;
+  km_snapshot_stale?: boolean;
+  km_stale_notice?: string;
+  km_live_target_m2?: number;
+  km_live_db_verified?: boolean;
+  prediction_json?: Record<string, unknown> | null;
+  price_selection_json?: Record<string, unknown> | null;
+  price_selection_commentary_tr?: string;
+  price_selection_commentary_payload?: Record<string, unknown> | null;
 }
 
 export interface QueryRatingCreateResponse {

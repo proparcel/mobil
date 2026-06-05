@@ -27,6 +27,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
 import { useKeyboardHeight, getKeyboardAvoidingBehavior } from "../../src/keyboard";
 import { authService } from "../../services/authService";
+import { isExpertMember, isLihkabSubtype } from "../../src/utils/membership";
 import { AddressPickerModal, type AddressValue } from "../../components/app/AddressPickerModal";
 import locationsJson from "../../src/data/locations.json";
 
@@ -82,14 +83,15 @@ export default function CompleteRegistrationScreen() {
   const [selectedQuarters, setSelectedQuarters] = useState<Array<{ quarter_value: number; label: string }>>([]);
   const [savingExpertise, setSavingExpertise] = useState(false);
 
-  const isConsultantOrBroker = user?.role === "consultant" || user?.role === "broker";
+  const [profileDoc, setProfileDoc] = useState<Record<string, unknown> | null>(null);
+  const isConsultantOrCorporate = isExpertMember(user, profileDoc as any);
 
   useEffect(() => {
     if (!isAuthenticated) {
       router.replace("login");
       return;
     }
-    if (!isConsultantOrBroker) {
+    if (!isConsultantOrCorporate) {
       router.replace("index");
       return;
     }
@@ -100,6 +102,7 @@ export default function CompleteRegistrationScreen() {
         const res = await authService.getProfile();
         if (res.success && res.data) {
           const p = res.data.profile as any;
+          setProfileDoc(p);
           setAddressInitial({
             cityId: p.city_id ?? null,
             cityName: p.city_name ?? "",
@@ -117,7 +120,9 @@ export default function CompleteRegistrationScreen() {
         setLoading(false);
       }
     })();
-  }, [isAuthenticated, isConsultantOrBroker]);
+  }, [isAuthenticated, isConsultantOrCorporate]);
+
+  const skipExpertiseStep = isLihkabSubtype(profileDoc as any);
 
   useEffect(() => {
     if (step === "address") setShowAddressModal(true);
@@ -179,7 +184,11 @@ export default function CompleteRegistrationScreen() {
       });
       if (response.success) {
         setShowAddressModal(false);
-        setStep("expertise");
+        if (skipExpertiseStep) {
+          router.replace("index");
+        } else {
+          setStep("expertise");
+        }
       } else {
         Alert.alert("Hata", response.message || "Adres kaydedilemedi");
       }

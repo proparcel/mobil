@@ -48,6 +48,7 @@ import {
 import UserMenuSheetList from '../../components/app/UserMenuSheetList';
 import { getMenuItems } from '../../components/app/userMenuItems';
 import { isAppAdminUser } from '../../src/utils/adminAccess';
+import { canAccessProSorgu, isVipCustomer } from '../../src/utils/membership';
 import { SavedQuery, upsertSavedQuery } from '../../src/utils/savedQueries';
 import { persistTkgmResponseToMyQueries } from '../../src/utils/persistSimpleQuery';
 import {
@@ -1441,7 +1442,21 @@ export default function Index() {
     try {
       const response = await authService.getProfile();
       if (response.success && response.data?.profile) {
-        setUserProfile(response.data.profile);
+        const { profile, user: profileUser, public: publicProfile } = response.data;
+        setUserProfile({
+          ...profile,
+          is_expert:
+            publicProfile?.is_expert ??
+            profileUser?.is_expert ??
+            profile.is_expert,
+          membership_display:
+            publicProfile?.membership_display ??
+            profile.membership_display ??
+            profileUser?.membership_display,
+          effective_corporate_type:
+            publicProfile?.effective_corporate_type ??
+            profile.effective_corporate_type,
+        });
       }
     } catch (error) {
       console.error('[Index] Profil yükleme hatası:', {
@@ -3776,7 +3791,7 @@ export default function Index() {
         </View>
 
         <View style={styles.headerSideRight}>
-          {isAuthenticated && (user?.role === 'vip' || user?.role === 'vip_limited') && (
+          {isAuthenticated && isVipCustomer(user) && (
             <View style={styles.topbarVipBadge}>
               <Ionicons name="star" size={11} color="#fff" />
               <Text style={styles.topbarVipText}>VIP</Text>
@@ -4626,7 +4641,11 @@ export default function Index() {
           onIncomingFormSeedConsumed={() => setIncomingParcelFormSeed(null)}
           onClose={handleCloseForm}
           onSubmit={handleAdaParselSubmit}
-          onProSubmit={(payload, options) => handleAdaParselSubmit(payload, { forcePro: true, ...options })}
+          onProSubmit={
+            canAccessProSorgu(user, userProfile)
+              ? (payload, options) => handleAdaParselSubmit(payload, { forcePro: true, ...options })
+              : undefined
+          }
           onHierarchySelect={handleLocationHierarchySelect}
           onBeforeSavedQueryRun={() => {
             if (isProMode) setIsProMode(false);
@@ -4985,7 +5004,7 @@ export default function Index() {
             }}
           />
           <UserMenuSheetList
-            items={getMenuItems(isProMode, isAuthenticated, isAppAdminUser(user), user)}
+            items={getMenuItems(isProMode, isAuthenticated, isAppAdminUser(user), user, userProfile)}
             st={userMenuSheetDarkStyles}
             variant="dark"
             submenuOpenId={submenuOpenId}

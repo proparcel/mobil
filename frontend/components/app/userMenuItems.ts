@@ -3,6 +3,8 @@
  */
 
 import { isAppAdminUser } from "../../src/utils/adminAccess";
+import { canSeeEmsalSalesReportMenu } from "../../src/utils/membership";
+import type { User, UserProfile } from "../../src/types/auth";
 
 export type HomeMenuItem = {
   id: string;
@@ -18,7 +20,8 @@ export function getMenuItems(
   _isProMode: boolean,
   isAuthenticated: boolean,
   isAdmin?: boolean,
-  user?: Record<string, unknown> | null,
+  user?: Record<string, unknown> | User | null,
+  profile?: UserProfile | null,
 ): HomeMenuItem[] {
   if (!isAuthenticated) {
     return [
@@ -29,17 +32,10 @@ export function getMenuItems(
       { id: "giris", title: "Giriş", icon: "log-in", disabled: false },
     ];
   }
-  const role = String(user?.role || "").toLowerCase();
-  const memberType = String(user?.member_type || "").toLowerCase();
-  const corporateType = String(user?.corporate_type || "").toLowerCase();
-  const canSeeEmsalSalesReport =
-    role === "admin" ||
-    role === "consultant" ||
-    role === "broker" ||
-    memberType === "corporate" ||
-    memberType === "consultant" ||
-    memberType === "expert" ||
-    corporateType === "spk";
+  const canSeeEmsalSalesReport = canSeeEmsalSalesReportMenu(
+    user as User | null | undefined,
+    profile,
+  );
 
   const adminUser = isAdmin === true || isAppAdminUser(user);
 

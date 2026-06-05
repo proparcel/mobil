@@ -29,13 +29,14 @@ import {
   respondExpertRequest,
 } from "../../services/expertRequestService";
 import { API_URL } from "../../config/api";
+import { isExpertUser } from "../../src/utils/membership";
 
 export default function ExpertRequestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, isAuthenticated } = useAuth();
 
-  const isExpert = user?.role === "consultant" || user?.role === "broker";
+  const isExpert = isExpertUser(user);
 
   const [tab, setTab] = useState<"mine" | "incoming">("mine");
   const [incomingTab, setIncomingTab] = useState<"pending" | "closed">("pending");

@@ -4,7 +4,17 @@ import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScr
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter } from "../../src/hooks/useNavigation";
-import { submitSalesReport } from "../../services/salesReportService";
+import {
+  submitSalesReport,
+  type SalesReportPropertyType,
+} from "../../services/salesReportService";
+
+const PROPERTY_TYPE_OPTIONS: Array<{ label: string; value: SalesReportPropertyType }> = [
+  { label: "Arsa", value: "Arsa" },
+  { label: "Tarla", value: "Tarla" },
+  { label: "Köy içi", value: "Köy içi" },
+  { label: "Ticari", value: "Ticari" },
+];
 import { launchImageLibrary } from "react-native-image-picker";
 
 export default function SalesReportScreen() {
@@ -16,6 +26,9 @@ export default function SalesReportScreen() {
   const [mahalle, setMahalle] = useState("");
   const [ada, setAda] = useState("");
   const [parsel, setParsel] = useState("");
+  const [salePrice, setSalePrice] = useState("");
+  const [areaM2, setAreaM2] = useState("");
+  const [propertyType, setPropertyType] = useState<SalesReportPropertyType>("Arsa");
   const [receipt, setReceipt] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -49,6 +62,10 @@ export default function SalesReportScreen() {
       Alert.alert("Eksik", "Dekont dosyası zorunlu.");
       return;
     }
+    if (!salePrice.trim()) {
+      Alert.alert("Eksik", "Satış fiyatı zorunlu.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await submitSalesReport({
@@ -57,6 +74,9 @@ export default function SalesReportScreen() {
         mahalle,
         ada,
         parsel,
+        sale_price: salePrice.trim(),
+        area_m2: areaM2.trim() || undefined,
+        property_type_value: propertyType,
         deed_fee_receipt: receipt,
       });
       if (!res.ok) throw new Error(res.error);
@@ -67,7 +87,7 @@ export default function SalesReportScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [mahalle, ada, parsel, receipt, cityName, townName, router]);
+  }, [mahalle, ada, parsel, receipt, cityName, townName, salePrice, areaM2, propertyType, router]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -104,6 +124,43 @@ export default function SalesReportScreen() {
               <TextInput value={parsel} onChangeText={setParsel} style={styles.input} placeholder="Parsel" placeholderTextColor="#94a3b8" keyboardType="numeric" />
             </View>
           </View>
+
+          <Text style={[styles.label, { marginTop: 10 }]}>Nitelik *</Text>
+          <View style={styles.chipRow}>
+            {PROPERTY_TYPE_OPTIONS.map((opt) => {
+              const active = propertyType === opt.value;
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => setPropertyType(opt.value)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.label, { marginTop: 10 }]}>Satış fiyatı (TL) *</Text>
+          <TextInput
+            value={salePrice}
+            onChangeText={setSalePrice}
+            style={styles.input}
+            placeholder="Örn. 2500000"
+            placeholderTextColor="#94a3b8"
+            keyboardType="numeric"
+          />
+
+          <Text style={[styles.label, { marginTop: 10 }]}>Parsel alanı (m²)</Text>
+          <TextInput
+            value={areaM2}
+            onChangeText={setAreaM2}
+            style={styles.input}
+            placeholder="Opsiyonel"
+            placeholderTextColor="#94a3b8"
+            keyboardType="numeric"
+          />
 
           <TouchableOpacity style={[styles.pickBtn, { marginTop: 14 }]} onPress={pickReceipt} activeOpacity={0.85}>
             <Ionicons name="attach" size={18} color="#fff" />
@@ -155,5 +212,17 @@ const styles = StyleSheet.create({
   submitBtn: { marginTop: 12, height: 44, borderRadius: 10, backgroundColor: "#3b82f6", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
   submitBtnText: { color: "#fff", fontWeight: "900" },
   muted: { marginTop: 12, color: "#64748b", fontSize: 12 },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+  },
+  chipActive: { borderColor: "#3b82f6", backgroundColor: "#eff6ff" },
+  chipText: { fontSize: 13, fontWeight: "600", color: "#64748b" },
+  chipTextActive: { color: "#1d4ed8" },
 });
 

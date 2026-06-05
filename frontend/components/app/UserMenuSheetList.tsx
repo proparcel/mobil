@@ -6,8 +6,8 @@ import { View, Text, TouchableOpacity } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons";
-import type { User } from "../../src/types/auth";
-import type { UserProfile } from "../../src/types/auth";
+import type { User, UserProfile } from "../../src/types/auth";
+import { isExpertUser } from "../../src/utils/membership";
 import type { HomeMenuItem } from "./userMenuItems";
 import { TepeCreditMenuIcon, userMenuListBottomPadding, userMenuSheetStyles } from "./UserMenuSheet";
 
@@ -216,12 +216,7 @@ export default function UserMenuSheetList({
                       </View>
                     ) : null}
                   </TouchableOpacity>
-                  {user?.role === "consultant" ||
-                  user?.role === "broker" ||
-                  (userProfile as any)?.member_type === "consultant" ||
-                  (((userProfile as any)?.member_type === "corporate" ||
-                    (userProfile as any)?.member_type === "expert") &&
-                    Boolean((userProfile as any)?.is_company_authority)) ? (
+                  {isExpertUser(user, userProfile) ? (
                     <TouchableOpacity
                       style={[st.item, st.itemSub, st.itemSubSub]}
                       onPress={() => onItemPress("uzman-gorusu-gelen")}

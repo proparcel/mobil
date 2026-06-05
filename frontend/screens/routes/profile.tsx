@@ -35,7 +35,23 @@ import { useAuth } from "../contexts/AuthContext";
 import { authService } from "../../services/authService";
 import { companyService } from "../../services/companyService";
 import { creditService } from "../../services/creditService";
-import type { UserProfile, UserExpertiseArea, ProviderCoverageDistrict, RegistrationCompanyItem } from "../../src/types/auth";
+import type {
+  ProfilePublic,
+  UserProfile,
+  UserExpertiseArea,
+  ProviderCoverageDistrict,
+  RegistrationCompanyItem,
+} from "../../src/types/auth";
+import {
+  effectiveCorporateType,
+  isConsultantMember,
+  isCorporateMember,
+  isExpertMember,
+  isExpertUser,
+  isIndividualMember,
+  isVipCustomer,
+  membershipDisplayLabel,
+} from "../../src/utils/membership";
 import { launchImageLibrary } from "react-native-image-picker";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect, useRoute } from "@react-navigation/native";
@@ -207,8 +223,20 @@ export default function ProfileScreen() {
         // Backend payload: { profile, address, company_relation, pending_requests, ... }
         // UI expects these fields on the profile object, so we merge them in.
         // Address verisi ayrı geliyor - city_name, district_name, quarter_name içeriyor
+        const publicData = (data as { public?: ProfilePublic }).public;
         const mergedProfile: UserProfile = {
           ...profileData,
+          is_expert:
+            publicData?.is_expert ??
+            data.user?.is_expert ??
+            (profileData as UserProfile).is_expert,
+          membership_display:
+            publicData?.membership_display ??
+            (profileData as UserProfile).membership_display ??
+            data.user?.membership_display,
+          effective_corporate_type:
+            publicData?.effective_corporate_type ??
+            (profileData as UserProfile).effective_corporate_type,
           // Address verilerini profile'a merge et (isim alanları address'den gelir)
           city_id: addressData?.city_id ?? (profileData as any).city_id,
           city_name: addressData?.city_name ?? (profileData as any).city_name,
@@ -680,7 +708,6 @@ export default function ProfileScreen() {
     
     const response = await authService.updateProfile({
       company_name: companyName,
-      consultant_type: profile?.consultant_type ?? null,
       corporate_type: profile?.corporate_type ?? null,
       company_license_no: profile?.company_license_no || "",
       office_no: profile?.office_no || "",
@@ -1155,20 +1182,22 @@ export default function ProfileScreen() {
     );
   }
 
-  const isIndividual = profile?.member_type === "individual";
-  const isConsultant = profile?.member_type === "consultant";
-  const isCorporate = profile?.member_type === "corporate" || profile?.member_type === "expert" || profile?.role === "broker";
+  const isIndividual = isIndividualMember(user, profile);
+  const isConsultant = isConsultantMember(profile, user);
+  const isCorporate = isCorporateMember(profile, user);
   const isIndividualOrConsultant = isIndividual || isConsultant;
-  const canShowExpert = profile?.role === "consultant" || profile?.role === "broker";
+  const canShowExpert = isExpertUser(user, profile);
+  const corpSubtype = effectiveCorporateType(profile);
   const canManageProviderCoverage =
     profile?.corporate_type === "lihkab" ||
     profile?.corporate_type === "spk" ||
-    profile?.consultant_type === "spk";
-  const providerCoverageTitle = profile?.corporate_type === "lihkab" ? "LIHKAB Coverage İlçeleri" : "SPK Coverage İlçeleri";
-  const providerCoverageHint = profile?.corporate_type === "lihkab"
+    corpSubtype === "spk" ||
+    corpSubtype === "lihkab";
+  const providerCoverageTitle = (profile?.corporate_type === "lihkab" || corpSubtype === "lihkab") ? "LIHKAB Coverage İlçeleri" : "SPK Coverage İlçeleri";
+  const providerCoverageHint = (profile?.corporate_type === "lihkab" || corpSubtype === "lihkab")
     ? "Harita işlemi taleplerinin yönleneceği ilçeleri seçin. Bir kayıt primary olabilir."
     : "SPK değerleme taleplerini almak istediğiniz ilçeleri seçin. Bir kayıt primary olabilir.";
-  const isVip = user?.role === "vip" || user?.role === "vip_limited";
+  const isVip = isVipCustomer(user);
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -1275,7 +1304,12 @@ export default function ProfileScreen() {
                 )}
               </View>
               <Text style={styles.profileSectionUserType}>
-                {isIndividual ? "Bireysel Kullanıcı" : isConsultant ? "Danışman" : "Kurumsal Kullanıcı"}
+                {membershipDisplayLabel(user, profile) ??
+                  (isIndividual
+                    ? "Bireysel Kullanıcı"
+                    : isConsultant
+                      ? "Danışman"
+                      : "Kurumsal Kullanıcı")}
               </Text>
               {canShowExpert ? (
                 <Text style={styles.profileSectionUserType} numberOfLines={1}>
@@ -1651,7 +1685,7 @@ export default function ProfileScreen() {
             {profileSection === "uzmanlik" ? (
             <View>
             {/* Uzmanlık Bölgeleri (Danışman/Kurumsal) */}
-            {(canShowExpert || isCorporate) ? (
+            {isExpertMember(user, profile) ? (
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <Ionicons name="map" size={20} color="#3b82f6" />

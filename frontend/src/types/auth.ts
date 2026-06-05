@@ -4,11 +4,22 @@
  * Kullanıcı kimlik doğrulama ve profil tipleri.
  */
 
-// Kullanıcı rolleri
+/** @deprecated Legacy — API artık role döndürmez; member_type + customer_type kullanın. */
 export type UserRole = "admin" | "user" | "consultant" | "broker" | "vip" | "vip_limited";
 
 /** Abonelik paketi — GET /api/profile/read/ → data.user.customer_type */
-export type CustomerType = 'basic' | 'business' | 'silver' | 'gold' | 'premium';
+export type CustomerType =
+  | 'basic'
+  | 'business'
+  | 'silver'
+  | 'gold'
+  | 'vip'
+  | 'vip_limited'
+  | 'premium';
+
+export type MemberType = 'individual' | 'consultant' | 'corporate' | 'admin' | 'expert';
+
+export type CorporateType = 'emlak' | 'lihkab' | 'spk' | 'editor' | 'none';
 
 /** Özellik kapıları — GET /api/profile/read/ → data.features */
 export interface CustomerFeatureFlags {
@@ -20,10 +31,10 @@ export interface User {
   id: number;
   email: string;
   phone_number?: string;
-  role: UserRole;
-  member_type?: 'individual' | 'consultant' | 'corporate' | 'expert';
-  consultant_type?: 'emlak' | 'spk' | 'lihkab' | null;
-  corporate_type?: 'emlak' | 'spk' | 'lihkab' | null;
+  /** @deprecated Kanonik: member_type + customer_type */
+  role?: UserRole;
+  member_type?: MemberType;
+  corporate_type?: CorporateType | null;
   is_phone_verified: boolean;
   is_email_verified: boolean;
   social_provider?: "google" | "apple" | null;
@@ -35,22 +46,50 @@ export interface User {
   has_seen_welcome?: boolean;
   // İlk giriş tour overlay (ekran görüntüsü + Pro Sorgu)
   has_seen_app_tour?: boolean;
-  // Admin kontrolü (role == admin || is_staff || is_superuser)
+  /** Admin — is_admin || is_staff || is_superuser || member_type=admin */
   is_admin?: boolean;
+  is_staff?: boolean;
+  is_superuser?: boolean;
+  /** GET /api/profile/read/ → data.public.membership_display */
+  membership_display?: string;
   /** Profil adresi — ana harita hızlı il odaklama (yerel önbellek) */
   city_id?: number;
   city_name?: string;
   /** Abonelik seviyesi (varsayılan: basic) */
   customer_type?: CustomerType;
+  /** Lookup catalog ID (API read-only, gelecek) */
+  customer_type_id?: number;
   /** Sunucu özellik kapıları */
   features?: CustomerFeatureFlags;
+  /** Uzman üyelik bayrağı — login/JWT ve profil read ile senkron */
+  is_expert?: boolean;
+  /** GET /api/profile/ → data.can_access_prosorgu */
+  can_access_prosorgu?: boolean;
+}
+
+/** GET /api/profile/ → data.public (mongo-first read model) */
+export interface ProfilePublic {
+  is_expert?: boolean;
+  membership_display?: string;
+  member_type?: MemberType;
+  member_type_id?: number;
+  customer_type?: CustomerType;
+  customer_type_id?: number;
+  effective_corporate_type?: CorporateType | null;
+  can_access_prosorgu?: boolean;
+  /** Backend henüz profile read'e eklemediyse opsiyonel */
+  can_access_vault?: boolean;
+  expert_score_current?: number;
+  expert_score_peak?: number;
+  expert_level?: UserProfile["expert_level"];
 }
 
 // Kullanıcı profili
 export interface UserProfile {
   email: string;
   phone_number?: string;
-  role: UserRole;
+  /** @deprecated Kanonik: member_type */
+  role?: UserRole;
   first_name: string;
   last_name: string;
   avatar?: string;
@@ -71,15 +110,25 @@ export interface UserProfile {
   updated_at: string;
   // Üye tipi ve firma bilgileri
   // `expert` legacy veriler için tutulur; yeni kayıtlarda kanonik kurumsal tip `corporate`tır.
-  member_type?: 'individual' | 'consultant' | 'corporate' | 'expert';
+  member_type?: MemberType;
+  member_type_id?: number;
+  customer_type?: CustomerType;
+  customer_type_id?: number;
+  /** Danışman için parent firma alt tipi (runtime) */
+  effective_corporate_type?: CorporateType | null;
+  membership_display?: string;
   company_relation?: CompanyProfile; // Bireysel için bağlı firma
   company_relation_id?: number;
   parent_company?: CompanyProfile; // Hangi firmaya bağlı
   parent_company_id?: number;
   is_company_authority?: boolean; // Kurumsal yetkili mi?
   // Kurumsal üyelik bilgileri
-  consultant_type?: 'emlak' | 'spk' | 'lihkab';
-  corporate_type?: 'emlak' | 'spk' | 'lihkab';
+  corporate_type?: CorporateType | null;
+  company_meta?: {
+    corporate_type?: CorporateType | null;
+    corporate_type_label?: string | null;
+    effective_corporate_type?: CorporateType | null;
+  };
   company_license_no?: string;
   office_no?: string;
   spk_tc_no?: string;
@@ -102,12 +151,12 @@ export interface UserProfile {
   quarter_id?: number;
   quarter_name?: string;
   quarter_value?: number;
-  // Uzmanlık puanı (sadece consultant/broker için anlamlı)
+  // Uzmanlık puanı (is_expert üyeler için anlamlı)
   expert_score_current?: number;
   expert_score_peak?: number;
   expert_score_updated_at?: string;
   expert_level?: "first_experience" | "advisor" | "bronze" | "silver" | "gold" | "platinum" | null;
-  // Uzmanlık bölgeleri (consultant/broker/kurumsal için)
+  // Uzmanlık bölgeleri (danışman/kurumsal için)
   expertise_areas?: UserExpertiseArea[];
   provider_coverages?: ProviderCoverageDistrict[];
   // Bekleyen istekler (bireysel için)
@@ -116,6 +165,8 @@ export interface UserProfile {
   pending_membership_requests?: CompanyMembershipRequest[];
   // Alt kullanıcılar (kurumsal yetkili için)
   sub_users?: ProfileSubUser[];
+  /** GET /api/profile/read/ → data.public.is_expert */
+  is_expert?: boolean;
 }
 
 /** Kurumsal firma alt kullanıcısı — GET /api/profile/ */
@@ -203,10 +254,9 @@ export interface RegisterRequest {
   /** @deprecated legacy — danışman kayıtta kullanılmaz */
   company_vergi_no?: string;
   emlak_yetki_belge_no?: string;
-  consultant_type?: 'emlak' | 'spk' | 'lihkab';
   consultant_license_no?: string;
   company_name?: string; // kurumsal için zorunlu
-  corporate_type?: 'emlak' | 'spk' | 'lihkab'; // Emlak Firması, SPK Lisanslı Değerleme Firması veya Lihkab Büro
+  corporate_type?: CorporateType; // Emlak Firması, SPK Lisanslı Değerleme Firması veya Lihkab Büro
   company_license_no?: string; // kurumsal için zorunlu; emlak: 7 haneli TTBS yetki belge no
   city_id?: number; // opsiyonel; kurumsal emlak TTBS sorgusunda il_id
   district_id?: number;
@@ -227,6 +277,8 @@ export interface RegisterRequest {
   otp?: string; // verify_otp adımında
   expertise_quarters?: string; // virgülle ayrılmış quarter_value listesi
   expertise_cities?: string; // virgülle ayrılmış city_id listesi (SPK)
+  /** Kurumsal emlak/lihkab için isteğe bağlı; SPK kayıtta backend otomatik true yapar */
+  is_expert?: boolean;
 }
 
 // Login Request
@@ -272,8 +324,7 @@ export interface ProfileUpdateRequest {
   first_name?: string;
   last_name?: string;
   company_name?: string;
-  consultant_type?: 'emlak' | 'spk' | 'lihkab' | null;
-  corporate_type?: 'emlak' | 'spk' | 'lihkab' | null;
+  corporate_type?: CorporateType | null;
   company_license_no?: string;
   office_no?: string;
   spk_tc_no?: string;
@@ -349,7 +400,7 @@ export interface CompanyProfile {
   company_name: string;
   vergi_no?: string | null;
   vergi_dairesi?: string;
-  corporate_type?: 'emlak' | 'spk' | 'lihkab' | null;
+  corporate_type?: CorporateType | null;
   company_logo?: string;
   is_company_authority?: boolean;
 }

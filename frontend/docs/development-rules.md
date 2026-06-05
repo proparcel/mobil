@@ -118,6 +118,12 @@ Her doküman kendi proje klasöründe ilgili yerde oluşturulur:
 - Ortak kullanım yerine bağımsız yapı tercih edilir
 - Bir yapı başka dosyaya taşındığında eski dosya ile bağ kesilir
 
+## Üyelik ve erişim kuralları
+
+Kullanıcı rolü, VIP veya uzman görünürlüğü için **`user.role` veya `consultant_type` kullanılmaz**. Yeni kod `src/utils/membership.ts` helper'larını kullanmalıdır.
+
+Referans: `mobile/doc/components/membership_model_mobile.md`, `mobile/doc/components/customer_type_feature_gates_mobile.md`.
+
 ## Referanslar
 
 - Ana mimari dokümantasyon: `myapp/static/docs/architecture.md`

@@ -12,7 +12,10 @@ import {
   TouchableOpacity,
   Keyboard,
   ScrollView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
+import { postMahalleOrtSignal } from '../../services/portalService';
 import { useScrollInputIntoView } from '../../src/keyboard';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { PortalDfaStep, PortalQueryDetail } from '../../src/types/portal';
@@ -60,6 +63,8 @@ type Props = {
   hasElectricOverrideNote?: boolean;
   onOpenRoadModal?: () => void;
   onOpenElectricModal?: () => void;
+  /** DB kaydı sonrası detay + KM sekmesi yenileme */
+  onMahalleOrtSaved?: () => void;
 };
 
 export default function PortalDfaTableCard({
@@ -69,9 +74,13 @@ export default function PortalDfaTableCard({
   hasElectricOverrideNote = false,
   onOpenRoadModal,
   onOpenElectricModal,
+  onMahalleOrtSaved,
 }: Props) {
   const [mahalleOrtInput, setMahalleOrtInput] = useState('');
   const [simulatedFooter, setSimulatedFooter] = useState<PortalDfaSimulatedFooter | null>(null);
+  const [mahalleOrtNotice, setMahalleOrtNotice] = useState<string | null>(null);
+  const [mahalleOrtSubmitting, setMahalleOrtSubmitting] = useState(false);
+  const [mahalleOrtDbSaved, setMahalleOrtDbSaved] = useState(false);
   const mahalleOrtWrapRef = useRef<View>(null);
 
   const steps = Array.isArray(detail.dfa_json) ? detail.dfa_json : [];
@@ -88,6 +97,8 @@ export default function PortalDfaTableCard({
   useEffect(() => {
     setMahalleOrtInput('');
     setSimulatedFooter(null);
+    setMahalleOrtNotice(null);
+    setMahalleOrtDbSaved(false);
   }, [detail.snapshot_id]);
 
   const displayFooter = simulatedFooter ?? dfaFooter;
@@ -103,15 +114,77 @@ export default function PortalDfaTableCard({
     [dfaRows, areaM2],
   );
 
-  const handleMahalleOrtHesapla = useCallback(() => {
+  const handleMahalleOrtHesapla = useCallback(async () => {
     const unit = parseMahalleOrtInput(mahalleOrtInput);
     if (unit == null) {
       setSimulatedFooter(null);
       return;
     }
+
     applyMahalleOrtUnit(unit);
-    Keyboard.dismiss();
-  }, [mahalleOrtInput, applyMahalleOrtUnit]);
+    setMahalleOrtNotice(null);
+    setMahalleOrtSubmitting(true);
+
+    const snapshotId = Number(detail.snapshot_id);
+    if (!Number.isFinite(snapshotId) || snapshotId <= 0) {
+      setMahalleOrtSubmitting(false);
+      Keyboard.dismiss();
+      return;
+    }
+
+    const runSignal = async (confirmExtremePrice: boolean) =>
+      postMahalleOrtSignal(snapshotId, unit, { confirmExtremePrice });
+
+    try {
+      let res = await runSignal(false);
+
+      if (!res.ok && res.status === 409 && res.code === 'confirm_extreme_price') {
+        const message =
+          res.error ||
+          String(res.payload?.message || '') ||
+          'Girdiğiniz fiyat mahalle ortalamasından önemli ölçüde farklı. Onaylıyor musunuz?';
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert('Onay', message, [
+            { text: 'İptal', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Evet', onPress: () => resolve(true) },
+          ]);
+        });
+        if (!confirmed) {
+          setMahalleOrtSubmitting(false);
+          Keyboard.dismiss();
+          return;
+        }
+        res = await runSignal(true);
+      }
+
+      if (!res.ok) {
+        Alert.alert('Uyarı', res.error || 'Mahalle ortalaması kaydedilemedi.');
+        setMahalleOrtSubmitting(false);
+        Keyboard.dismiss();
+        return;
+      }
+
+      const body = res.data;
+      if (body.ui_only) {
+        setMahalleOrtNotice(
+          body.message ||
+            'Yalnızca ekranda hesaplandı; mahalle ortalaması veritabanına kaydedilmedi.',
+        );
+        setMahalleOrtDbSaved(false);
+      } else if (body.db_saved) {
+        setMahalleOrtNotice(null);
+        setMahalleOrtDbSaved(true);
+        onMahalleOrtSaved?.();
+      } else if (body.message) {
+        setMahalleOrtNotice(body.message);
+      }
+    } catch {
+      Alert.alert('Uyarı', 'Mahalle ortalaması isteği gönderilemedi.');
+    } finally {
+      setMahalleOrtSubmitting(false);
+      Keyboard.dismiss();
+    }
+  }, [mahalleOrtInput, applyMahalleOrtUnit, detail.snapshot_id, onMahalleOrtSaved]);
 
   /** Orijinal (API başlangıç) mahalle birim fiyatı ile yeniden hesapla */
   const handleMahalleOrtReset = useCallback(() => {
@@ -237,12 +310,21 @@ export default function PortalDfaTableCard({
               autoCorrect={false}
             />
             <TouchableOpacity
-              style={[styles.mahalleOrtBtn, !mahalleOrtValid && styles.mahalleOrtBtnDisabled]}
+              style={[
+                styles.mahalleOrtBtn,
+                (!mahalleOrtValid || mahalleOrtSubmitting) && styles.mahalleOrtBtnDisabled,
+              ]}
               onPress={handleMahalleOrtHesapla}
-              disabled={!mahalleOrtValid}
+              disabled={!mahalleOrtValid || mahalleOrtSubmitting}
               activeOpacity={0.85}
             >
-              <Text style={styles.mahalleOrtBtnText}>Hesapla</Text>
+              {mahalleOrtSubmitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.mahalleOrtBtnText}>
+                  {simulatedFooter || mahalleOrtDbSaved ? 'Yeniden Hesapla' : 'Hesapla'}
+                </Text>
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.mahalleOrtRefreshBtn, !canResetMahalleOrt && styles.mahalleOrtBtnDisabled]}
@@ -254,6 +336,9 @@ export default function PortalDfaTableCard({
               <Ionicons name="refresh" size={22} color={COLORS.accentBlue} />
             </TouchableOpacity>
           </View>
+          {mahalleOrtNotice ? (
+            <Text style={styles.mahalleOrtNotice}>{mahalleOrtNotice}</Text>
+          ) : null}
         </View>
       </View>
 
@@ -408,6 +493,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff6ff',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  mahalleOrtNotice: {
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#b45309',
+    fontWeight: '600',
   },
   tableWrap: { borderRadius: 6, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.borderSoft },
   headerRow: { flexDirection: 'row', backgroundColor: COLORS.headerBg },

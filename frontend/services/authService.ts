@@ -28,11 +28,19 @@ import type {
   ProviderCoverageDistrict,
   UserBadge,
   CustomerFeatureFlags,
+  ProfilePublic,
 } from "../src/types/auth";
 import type {
   BadgeCelebrationPayload,
   BadgeOverviewPayload,
 } from "../src/types/badges";
+import { normalizeAuthUser } from "../src/utils/membership";
+
+function persistAuthUser(raw: User): User {
+  const user = normalizeAuthUser(raw as unknown as Record<string, unknown>);
+  void storageService.setUser(user);
+  return user;
+}
 
 /**
  * Ngrok ücretsiz katmanı: bu header olmadan bazı istekler uyarı/HTML veya beklenmeyen HTTP kodları döndürebilir.
@@ -128,7 +136,7 @@ async function registerVerifyMultipart(
         access: payload.data.access,
         refresh: payload.data.refresh,
       });
-      await storageService.setUser(payload.data.user);
+      persistAuthUser(payload.data.user);
     }
 
     return payload as LoginResponse;
@@ -441,7 +449,7 @@ class AuthService {
           access: response.data.access,
           refresh: response.data.refresh,
         });
-        await storageService.setUser(response.data.user);
+        persistAuthUser(response.data.user);
       }
     }
 
@@ -569,7 +577,7 @@ class AuthService {
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      await storageService.setUser(response.data.user);
+      persistAuthUser(response.data.user);
     }
 
     return response as LoginResponse;
@@ -692,7 +700,7 @@ class AuthService {
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      await storageService.setUser(response.data.user);
+      persistAuthUser(response.data.user);
     }
 
     return response as LoginResponse;
@@ -792,6 +800,7 @@ class AuthService {
   async getProfile(): Promise<ApiResponse<{
     user: User;
     profile: UserProfile;
+    public?: ProfilePublic;
     subscription: Subscription | null;
     features?: CustomerFeatureFlags;
     company_relation?: CompanyProfile | null;
@@ -801,6 +810,7 @@ class AuthService {
     expertise_areas?: UserExpertiseArea[];
     provider_coverages?: ProviderCoverageDistrict[];
     badges?: UserBadge[];
+    can_access_prosorgu?: boolean;
   }>> {
     return authFetch(AUTH_ENDPOINTS.PROFILE, {
       method: "GET",
@@ -849,7 +859,7 @@ class AuthService {
   }
 
   /**
-   * Kullanıcının rozetlerini getir (consultant/broker)
+   * Kullanıcının rozetlerini getir (uzman üyeler)
    */
   async getMyBadges(): Promise<ApiResponse<{ badges: UserBadge[] }>> {
     return authFetch(AUTH_ENDPOINTS.PROFILE_BADGES, {
@@ -1071,7 +1081,7 @@ class AuthService {
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      await storageService.setUser(response.data.user);
+      persistAuthUser(response.data.user);
     }
 
     return response as LoginResponse;
@@ -1097,7 +1107,7 @@ class AuthService {
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      await storageService.setUser(response.data.user);
+      persistAuthUser(response.data.user);
     }
 
     return response as LoginResponse;

@@ -40,6 +40,12 @@ import PortalSlopeTerrainCard from '../../components/app/PortalSlopeTerrainCard'
 import PortalParcelSplitDetailCard from '../../components/app/PortalParcelSplitDetailCard';
 import PortalDfaTableCard from '../../components/app/PortalDfaTableCard';
 import { formatListingAttributeValueTr, listingAttributeLabelTr } from '../../src/utils/listingAttributeLabels';
+import {
+  buildParcelInfoRows,
+  buildPriceInfoRows,
+  buildStructureInfoRows,
+  isStructurePortalQueryType,
+} from '../../src/utils/portalDetailCardContract';
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
 import {
   isProfileReturn,
@@ -51,6 +57,7 @@ import {
   type PortalRecentQueriesChangedPayload,
 } from '../../src/constants/portalEvents';
 import { useAuth } from '../contexts/AuthContext';
+import { isExpertMember } from '../../src/utils/membership';
 import {
   createPortalQueryComment,
   createPortalQueryReply,
@@ -71,6 +78,7 @@ import {
   getPortalSolarEnergyScore,
   getPortalWindEnergyScore,
   getPortalDetailSection,
+  getPortalKmSection,
 } from '../../services/portalService';
 import { authJsonFetch } from '../../services/apiClient';
 import { authService } from '../../services/authService';
@@ -81,6 +89,7 @@ import type {
   PortalExpertResponse,
   PortalRatingsResponse,
   QueryRatingCreatePayload,
+  PortalKmSectionData,
   PortalSolarEnergyScoreResponse,
   PortalWindEnergyScoreResponse,
 } from '../../src/types/portal';
@@ -175,8 +184,17 @@ const COLORS = {
 } as const;
 
 const QUERY_TYPE_LABELS: Record<string, string> = {
-  arsa: 'Arsa', tarla: 'Tarla', villa: 'Villa', fabrika: 'Fabrika',
-  bina: 'Bina', konut: 'Konut', mustakil_ev: 'Müstakil Ev',
+  arsa: 'Arsa',
+  tarla: 'Tarla',
+  villa: 'Villa',
+  fabrika: 'Fabrika',
+  bina: 'Bina',
+  konut: 'Konut',
+  konut_daire: 'Konut Daire',
+  mustakil_ev: 'Müstakil Ev',
+  ciftlik_ev: 'Çiftlik Ev',
+  ticari: 'Ticari',
+  commercial: 'Ticari',
 };
 
 /** Web `PortalRecentQueryDetailApp` mapOperationItems — LİHKAB / harita işlemleri alt menü */
@@ -195,17 +213,6 @@ const MAP_OPERATION_MENU_ITEMS = [
   'İrtifak Hakkı Tesisi',
   'Zemin Tespit Tutanağı',
 ] as const;
-
-const BUILDING_TYPES = ['villa', 'fabrika', 'bina', 'konut', 'mustakil_ev'];
-
-/** Web `PortalRecentQueryDetailApp.jsx` ile aynı yapı sorgu tipleri */
-const STRUCTURE_PORTAL_QUERY_TYPES = new Set([
-  'bina', 'villa', 'mustakil_ev', 'ciftlik_ev', 'fabrika', 'konut', 'konut_daire', 'ticari', 'commercial',
-]);
-
-function isStructurePortalQueryType(qt: string | undefined): boolean {
-  return STRUCTURE_PORTAL_QUERY_TYPES.has(String(qt || '').trim().toLowerCase());
-}
 
 type RoadOverrideSelectionMobile = { edge_id: number; road_type_id: 9 | 13 | null };
 type ElectricOverrideLineMobile = {
@@ -464,11 +471,6 @@ function mergeParcelAndListingDetailRows(
   if (detail.listing_category_leaf_label?.trim()) push('Alt kategori', detail.listing_category_leaf_label.trim());
   if (detail.listing_price_amount != null) push('İlan fiyatı', formatPrice(detail.listing_price_amount));
   if (detail.listing_area_m2 != null) push('İlan alanı', formatArea(detail.listing_area_m2));
-
-  const la = detail.listing_attributes && typeof detail.listing_attributes === 'object' ? (detail.listing_attributes as Record<string, unknown>) : {};
-  for (const [k, v] of Object.entries(la)) {
-    push(listingAttributeLabelTr(k), formatListingAttributeValueTr(v));
-  }
 
   return sortDetailRowsHead(out);
 }
@@ -1159,6 +1161,10 @@ export default function Son30GunDetayScreen() {
   const [splitAnalysis, setSplitAnalysis] = useState<Record<string, unknown> | null>(null);
   const [splitLoading, setSplitLoading] = useState(false);
   const [splitErr, setSplitErr] = useState<string | null>(null);
+  const [kmSectionData, setKmSectionData] = useState<PortalKmSectionData | null>(null);
+  const [kmSectionLoading, setKmSectionLoading] = useState(false);
+  const [kmSectionErr, setKmSectionErr] = useState<string | null>(null);
+  const kmSectionFetchedRef = useRef(false);
   const splitFetchedRef = useRef(false);
 
   const scrollToSection = useCallback((tabId: string, ref: React.RefObject<View>) => {
@@ -1446,8 +1452,45 @@ export default function Son30GunDetayScreen() {
     setSplitAnalysis(null);
     setSplitErr(null);
     splitFetchedRef.current = false;
+    setKmSectionData(null);
+    setKmSectionErr(null);
+    kmSectionFetchedRef.current = false;
     setHeroVideoMuted(true);
   }, [snapshotId]);
+
+  const loadKmSection = useCallback(async (opts?: { force?: boolean }) => {
+    const sid = Number(data?.snapshot_id ?? snapshotId);
+    if (!Number.isFinite(sid) || sid <= 0) return;
+    if (!opts?.force && kmSectionFetchedRef.current) return;
+    kmSectionFetchedRef.current = true;
+    setKmSectionLoading(true);
+    setKmSectionErr(null);
+    try {
+      const res = await getPortalKmSection(sid);
+      if (res.ok && res.data) {
+        setKmSectionData(res.data);
+      } else {
+        setKmSectionErr(res.error || 'KM analizi yüklenemedi');
+        kmSectionFetchedRef.current = false;
+      }
+    } catch (e: unknown) {
+      setKmSectionErr(e instanceof Error ? e.message : 'KM analizi yüklenemedi');
+      kmSectionFetchedRef.current = false;
+    } finally {
+      setKmSectionLoading(false);
+    }
+  }, [data?.snapshot_id, snapshotId]);
+
+  const handleMahalleOrtSaved = useCallback(() => {
+    void loadDetail({ silent: true });
+    kmSectionFetchedRef.current = false;
+    void loadKmSection({ force: true });
+  }, [loadDetail, loadKmSection]);
+
+  useEffect(() => {
+    if (activeDetailTabId !== 'km') return;
+    void loadKmSection();
+  }, [activeDetailTabId, loadKmSection]);
 
   useEffect(() => {
     if (activeDetailTabId !== 'solar_energy') return;
@@ -1665,7 +1708,6 @@ export default function Son30GunDetayScreen() {
   // Derived values
   const queryType = (data?.query_type || 'arsa').toLowerCase();
   const typeLabel = QUERY_TYPE_LABELS[queryType] || queryType.charAt(0).toUpperCase() + queryType.slice(1);
-  const isBuildingType = BUILDING_TYPES.includes(queryType);
   const likeCount = Math.max(
     0,
     Number(data?.rating_summary?.success_count ?? (data as any)?.rating_success_count ?? 0) || 0,
@@ -1705,15 +1747,7 @@ export default function Son30GunDetayScreen() {
   );
   const shouldDetailBackOpenHome = useMemo(() => {
     if (!isAuthenticated) return true;
-    const memberType = String(user?.member_type || '').toLowerCase();
-    const role = String(user?.role || '').toLowerCase();
-    const isBusinessUser =
-      memberType === 'consultant' ||
-      memberType === 'corporate' ||
-      memberType === 'expert' ||
-      role === 'admin' ||
-      role === 'consultant' ||
-      role === 'broker';
+    const isBusinessUser = isExpertMember(user);
     return !isBusinessUser;
   }, [isAuthenticated, user]);
 
@@ -2085,6 +2119,21 @@ export default function Son30GunDetayScreen() {
 
   const submitEvaluation = useCallback(async (action: 'SUCCESS' | 'NEEDS_REVIEW') => {
     if (!data) return;
+
+    const buildPayload = (confirmExtremePrice?: boolean): QueryRatingCreatePayload => {
+      const payload: QueryRatingCreatePayload = {
+        snapshot_id: data.snapshot_id,
+        source_page: 'mobile_portal_detail',
+        action,
+      };
+      if (action === 'NEEDS_REVIEW') {
+        const total = parseTurkishTotalAmount(evalExpectedPrice);
+        if (total != null) payload.user_expected_total_price = total;
+      }
+      if (confirmExtremePrice) payload.confirm_extreme_price = true;
+      return payload;
+    };
+
     if (action === 'NEEDS_REVIEW') {
       const val = parseTurkishTotalAmount(evalExpectedPrice);
       if (val == null) {
@@ -2092,6 +2141,7 @@ export default function Son30GunDetayScreen() {
         return;
       }
     }
+
     const confirmed = await new Promise<boolean>((resolve) => {
       Alert.alert('Onay', 'Emin misiniz? Bu sorgu için bir daha puanlama yapamazsınız.', [
         { text: 'İptal', style: 'cancel', onPress: () => resolve(false) },
@@ -2102,17 +2152,27 @@ export default function Son30GunDetayScreen() {
 
     setEvalSubmitting(true);
     setEvalError('');
+
     try {
-      const payload: QueryRatingCreatePayload = {
-        snapshot_id: data.snapshot_id,
-        source_page: 'mobile_portal_detail',
-        action,
-      };
-      if (action === 'NEEDS_REVIEW') {
-        const total = parseTurkishTotalAmount(evalExpectedPrice);
-        if (total != null) payload.user_expected_total_price = total;
+      let res = await createPortalQueryRating(buildPayload());
+
+      if (!res.ok && res.status === 409 && res.code === 'confirm_extreme_price') {
+        const priceOk = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            'Onay',
+            res.error ||
+              String(res.payload?.message || '') ||
+              'Girdiğiniz fiyat mahalle ortalamasından önemli ölçüde farklı. Onaylıyor musunuz?',
+            [
+              { text: 'İptal', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Evet', onPress: () => resolve(true) },
+            ],
+          );
+        });
+        if (!priceOk) return;
+        res = await createPortalQueryRating(buildPayload(true));
       }
-      const res = await createPortalQueryRating(payload);
+
       if (res.ok) {
         setEvalModalVisible(false);
         const coins = res.data?.coin_awarded ?? 5;
@@ -2122,6 +2182,8 @@ export default function Son30GunDetayScreen() {
       } else if (res.status === 409) {
         setEvalModalVisible(false);
         Alert.alert('Bilgi', 'Bu sorgu daha önce puanlandı.');
+      } else if (res.status === 400) {
+        setEvalError(res.error || 'Girdiğiniz fiyat kabul edilmedi.');
       } else {
         setEvalError(res.error || 'Bir hata oluştu. Lütfen tekrar deneyin.');
       }
@@ -2275,16 +2337,60 @@ export default function Son30GunDetayScreen() {
 
   const renderTahminModule = () => {
     if (!data) return null;
-    const km = (data.km_analysis || {}) as Record<string, any>;
-    const pred = (data.prediction_json || {}) as Record<string, any>;
-    const ps = (data.price_selection_json || {}) as Record<string, any>;
+
+    if (kmSectionLoading && !kmSectionData) {
+      return (
+        <View style={s.card}>
+          <ActivityIndicator size="small" color={COLORS.accentBlue} />
+          <Text style={s.detailEmptyTabText}>KM analizi yükleniyor…</Text>
+        </View>
+      );
+    }
+
+    const kmPayload = kmSectionData;
+    const kmInvoked = kmPayload?.km_analysis_invoked;
+    const kmNotPerformedMsg = String(kmPayload?.km_not_performed_message || '').trim();
+    const kmStaleNotice = String(kmPayload?.km_stale_notice || '').trim();
+    const kmSnapshotStale = kmPayload?.km_snapshot_stale === true;
+
+    if (kmInvoked === false && kmNotPerformedMsg) {
+      return (
+        <View ref={kmSectionRef} style={s.card}>
+          <View style={s.cardTitleRow}>
+            <Ionicons name="analytics" size={16} color={COLORS.accentBlue} />
+            <Text style={s.cardTitle}>KM Analizi</Text>
+          </View>
+          <View style={sec.kmNoticeBox}>
+            <Text style={sec.kmNoticeText}>{kmNotPerformedMsg}</Text>
+          </View>
+          {kmSnapshotStale && kmStaleNotice ? (
+            <View style={sec.kmStaleBox}>
+              <Text style={sec.kmStaleText}>{kmStaleNotice}</Text>
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+
+    if (kmSectionErr && !kmSectionData) {
+      return (
+        <View style={s.card}>
+          <Text style={s.detailEmptyTabText}>{kmSectionErr}</Text>
+        </View>
+      );
+    }
+
+    const km = (kmPayload?.km_analysis ?? data.km_analysis ?? {}) as Record<string, any>;
+    const pred = (kmPayload?.prediction_json ?? data.prediction_json ?? {}) as Record<string, any>;
+    const ps = (kmPayload?.price_selection_json ?? data.price_selection_json ?? {}) as Record<string, any>;
     const details = ps.details || {};
     const reason = ps.reason || null;
     const model = ps.model || null;
     const hasPred = pred && Object.keys(pred).length > 0;
     const hasPs = ps && Object.keys(ps).length > 0;
     const hasKm = km && Object.keys(km).length > 0;
-    if (!hasPred && !hasPs && !hasKm && data.km_recommended_price == null) return null;
+    const kmRecommendedPrice = kmPayload?.km_recommended_price ?? data.km_recommended_price;
+    if (!hasPred && !hasPs && !hasKm && kmRecommendedPrice == null) return null;
 
     const MODEL_LABELS: Record<string, string> = {
       DB: 'Veritabanı', PREDICTION: 'ProParcel Akıllı Tahmin', KM: 'KM Tahmin', NONE: '-',
@@ -2321,7 +2427,13 @@ export default function Son30GunDetayScreen() {
 
     const dbVerified = details.db_verified;
     const dbPrice = toNum(details.db_price || details.db_unit_price || (model === 'DB' ? details.price : null));
-    const kmPrice = toNum(details.km_price || details.km_recommended_price || details.km_estimated_price || ((model === 'KM' || (reason && String(reason).indexOf('KM_') === 0)) ? details.price : null) || data.km_recommended_price);
+    const kmPrice = toNum(
+      details.km_price ||
+        details.km_recommended_price ||
+        details.km_estimated_price ||
+        ((model === 'KM' || (reason && String(reason).indexOf('KM_') === 0)) ? details.price : null) ||
+        kmRecommendedPrice,
+    );
     const predPrice = toNum(details.prediction_price || details.prediction_first_price) || (pred.arsa ? toNum(pred.arsa.estimated_price || pred.arsa.estimatedPrice) : null) || (pred.tarla ? toNum(pred.tarla.estimated_price || pred.tarla.estimatedPrice) : null);
     const arsaEst = toNum(pred.arsa && (pred.arsa.estimated_price || pred.arsa.estimatedPrice));
     const tarlaEst = toNum(pred.tarla && (pred.tarla.estimated_price || pred.tarla.estimatedPrice));
@@ -2344,6 +2456,12 @@ export default function Son30GunDetayScreen() {
           <Ionicons name="analytics" size={16} color={COLORS.accentBlue} />
           <Text style={s.cardTitle}>Tahmin Modülü</Text>
         </View>
+
+        {kmSnapshotStale && kmStaleNotice ? (
+          <View style={sec.kmStaleBox}>
+            <Text style={sec.kmStaleText}>{kmStaleNotice}</Text>
+          </View>
+        ) : null}
 
         {(modelLabel || detailText) && (
           <View style={sec.modelBox}>
@@ -2869,8 +2987,7 @@ export default function Son30GunDetayScreen() {
   const hasExpertResponses = expertResponses.length > 0;
   const expertStatus = expertRequest?.status?.toLowerCase();
 
-  // ── Build info rows ──
-  const infoRows: [string, string, boolean?][] = [];
+  // ── Build info rows (parsel / yapı / fiyat kartları) ──
   const parcelShapeRaw =
     data.parcel_shape_type_label ||
     data.parcel_shape_type ||
@@ -2884,60 +3001,63 @@ export default function Son30GunDetayScreen() {
     data.road_frontage_values?.total_road_frontage_edge_length_m ??
     data.edge_measure_data?.total_road_frontage_edge_length_m ??
     null;
-  infoRows.push(['Konum', data.quarter_name || '—']);
-  infoRows.push(['Ada / Parsel', `${data.ada || '0'}/${data.parsel || '0'}`]);
-  infoRows.push(['Tip', typeLabel]);
-  if (parcelShapeText) infoRows.push(['Parsel Formu', String(parcelShapeText)]);
-  infoRows.push(['Arazi Alanı', formatArea(data.arazi_m2 ?? data.area_m2)]);
-  if (totalRoadFrontageLength != null && !data.listing_id) {
-    infoRows.push(['Toplam Yola Cephe', formatMeters(totalRoadFrontageLength)]);
-  }
-  if (data.building_params && typeof data.building_params === 'object') {
-    Object.entries(data.building_params).forEach(([k, v]) => {
-      if (v != null && v !== '') infoRows.push([k, String(v)]);
-    });
-  }
-  if (isBuildingType && data.arsa_fiyati != null && data.arsa_fiyati > 0) {
-    infoRows.push(['Arsa Fiyatı', formatPrice(data.arsa_fiyati)]);
-  }
-  if (isBuildingType && data.bina_maliyeti != null && data.bina_maliyeti > 0) {
-    const maliyetLabel = queryType === 'villa' ? 'Villa Maliyeti' : queryType === 'fabrika' ? 'Fabrika Maliyeti' : 'Bina Maliyeti';
-    infoRows.push([maliyetLabel, formatPrice(data.bina_maliyeti)]);
-  }
-  const canSeeExpertDetail = Boolean(
-    data.viewer_is_staff || data.viewer_is_expert_for_this_query || data.viewer_is_expert_user
-  );
-  if (canSeeExpertDetail && data.expert_price_detail && typeof data.expert_price_detail === "object") {
-    const expertPriceDetail = data.expert_price_detail as any;
-    const details = expertPriceDetail?.price_selection?.details || {};
-    const parcelValues = expertPriceDetail?.parcel_values || {};
-    const formatExpertPrice = (v: unknown) => {
-      if (v == null || v === "") return "—";
-      const n = Number(v);
-      return Number.isFinite(n) ? formatPrice(n) : String(v);
-    };
-    if (details.db_price != null || details.db_unit_price != null) infoRows.push(["DB Birim Fiyat", formatExpertPrice(details.db_price ?? details.db_unit_price)]);
-    if (details.km_price != null || details.km_recommended_price != null) infoRows.push(["KM Birim Fiyat", formatExpertPrice(details.km_price ?? details.km_recommended_price)]);
-    if (details.prediction_price != null || details.prediction_first_price != null) infoRows.push(["Tahmin Birim Fiyat", formatExpertPrice(details.prediction_price ?? details.prediction_first_price)]);
-    const parcelUnit = parcelValues.parcel_unit_from_dfa ?? parcelValues.unite_price ?? parcelValues.parcel_uniteprice;
-    if (parcelUnit != null) infoRows.push(["Parsel Birim Fiyat", formatExpertPrice(parcelUnit)]);
-  }
-  if (canSeeExpertDetail || !isBuildingType) {
-    infoRows.push(['Birim Fiyat', formatPrice(data.unit_price)]);
-  }
-  infoRows.push(['ProParcel Tahmin', formatPrice(data.total_price), true]);
-  infoRows.push([
-    'Toplam',
-    data.listing_price_amount != null && Number.isFinite(Number(data.listing_price_amount))
-      ? formatPrice(data.listing_price_amount)
-      : '—',
-    true,
-  ]);
-  infoRows.push(['Tarih', formatDate(data.created_at)]);
 
-  const mergedFullRows = dedupeDetailRowsFinal(mergeParcelAndListingDetailRows(infoRows, data));
+  const parcelRowsBase = buildParcelInfoRows(data, {
+    queryTypeLabel: typeLabel,
+    parcelShapeText,
+    totalRoadFrontageLength: totalRoadFrontageLength as number | null,
+  });
+  const structureRows = buildStructureInfoRows(data);
+  const canSeeExpertDetail = Boolean(
+    data.viewer_is_staff || data.viewer_is_expert_for_this_query || data.viewer_is_expert_user,
+  );
+  const priceRows = buildPriceInfoRows(data, { canSeeExpertDetail });
+
+  const parcelRows = dedupeDetailRowsFinal(
+    mergeParcelAndListingDetailRows(
+      parcelRowsBase.map(([label, value]) => [label, value] as [string, string, boolean?]),
+      data,
+    ),
+  );
+  const mergedPriceRows = dedupeDetailRowsFinal(priceRows);
+  const mergedFullRows = dedupeDetailRowsFinal([...parcelRows, ...mergedPriceRows]);
   const primaryListingRows = data.listing_id ? buildListingInfoPrimaryRows(data) : [];
   const listingOzellikRows = data.listing_id ? buildListingOzellikRows(data, mergedFullRows) : [];
+
+  const renderDetailKvCard = (
+    title: string,
+    icon: React.ComponentProps<typeof Ionicons>['name'],
+    rows: [string, string, boolean?][],
+    cardKey: string,
+    topMargin = 0,
+  ) => {
+    if (!rows.length) return null;
+    return (
+      <View style={[s.card, topMargin > 0 ? { marginTop: topMargin } : null]} key={cardKey}>
+        <View style={s.cardTitleRow}>
+          <Ionicons name={icon} size={16} color={COLORS.accentBlue} />
+          <Text style={s.cardTitle}>{title}</Text>
+        </View>
+        <View style={s.detailInfoKvBox}>
+          {rows.map(([lab, val, prominent], ri) => (
+            <View
+              key={`${cardKey}-${ri}-${normalizeDetailLabelKey(lab)}`}
+              style={[
+                s.detailInfoKvRow,
+                prominent ? s.detailInfoKvRowProminent : null,
+                ri === rows.length - 1 ? s.detailInfoKvRowLast : null,
+              ]}
+            >
+              <Text style={[s.detailInfoKvLabel, prominent ? s.detailInfoKvLabelProminent : null]}>{lab}</Text>
+              <Text style={[s.detailInfoKvVal, prominent ? s.detailInfoKvValProminent : null]} numberOfLines={6}>
+                {val}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
 
   // ── Owner card ──
   const oc = data.owner_card;
@@ -4029,6 +4149,15 @@ export default function Son30GunDetayScreen() {
             {activeDetailTabId === 'overview' && (
               <>
                 <View ref={bilgiSectionRef}>
+                  {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info')}
+                  {renderDetailKvCard(
+                    'Yapı bilgileri',
+                    'business-outline',
+                    structureRows.map(([label, value]) => [label, value] as [string, string, boolean?]),
+                    'structure-info',
+                    12,
+                  )}
+                  {renderDetailKvCard('Fiyat', 'cash-outline', mergedPriceRows, 'price-info', 12)}
                   <PortalInsightSummaryCard detail={data} data={scores.insightData} />
                 </View>
                 <View ref={dfaSectionRef}>
@@ -4039,6 +4168,7 @@ export default function Son30GunDetayScreen() {
                     hasElectricOverrideNote={hasElectricOverrideNote}
                     onOpenRoadModal={() => setRoadReportModalVisible(true)}
                     onOpenElectricModal={() => setElectricOverrideMapVisible(true)}
+                    onMahalleOrtSaved={handleMahalleOrtSaved}
                   />
                 </View>
               </>
@@ -5742,6 +5872,24 @@ const sec = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4,
   },
   verifiedText: { fontSize: 11, fontWeight: '600', color: '#15803d' },
+  kmNoticeBox: {
+    backgroundColor: '#fff7ed',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+  },
+  kmNoticeText: { fontSize: 13, color: '#9a3412', lineHeight: 20 },
+  kmStaleBox: {
+    backgroundColor: '#fefce8',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#fde047',
+  },
+  kmStaleText: { fontSize: 13, color: '#854d0e', lineHeight: 20 },
   summaryBox: {
     backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, marginBottom: 12,
     borderWidth: 1, borderColor: COLORS.borderSoft,
