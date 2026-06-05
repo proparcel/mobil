@@ -228,6 +228,35 @@ export interface PortalStructurePriceSummary {
   formula?: string | null;
 }
 
+export interface PortalFxPortal {
+  price_usd?: number | null;
+  price_eur?: number | null;
+  price_gold_grams?: number | null;
+}
+
+export interface PortalValuationLayerSlice {
+  label?: string;
+  start_unit_m2?: number | null;
+  end_unit_m2?: number | null;
+  applied_pct?: string | null;
+  total_tl?: number | null;
+  cost_tl?: number | null;
+  structure_share_tl?: number | null;
+}
+
+export interface PortalValuationLayersSummary {
+  land?: PortalValuationLayerSlice | null;
+  structure?: PortalValuationLayerSlice | null;
+  delivery?: PortalValuationLayerSlice | null;
+  merge_adjustment?: {
+    label?: string;
+    applied_pct?: string | null;
+    total_tl?: number | null;
+  } | null;
+  adjustments?: Array<{ label?: string; applied_pct?: string | null }> | null;
+  structure_age_note?: string | null;
+}
+
 /** İlan vitrininde dönen video kaydı (Mongo + portal özet) */
 export interface PortalListingVideoItem {
   video_id?: string | null;
@@ -268,6 +297,12 @@ export interface PortalQueryDetail {
   building_params: Record<string, string | number | boolean> | null;
   /** Enrichment API — yapı maliyet özeti (web StructureInfoSummaryCard ile aynı) */
   structure_price_summary?: PortalStructurePriceSummary | null;
+  /** Yapı sorgularında arazi TL/m² (portal kart alt satırı) */
+  arazi_birim_fiyati?: number | null;
+  /** USD / EUR / altın karşılığı (ProParcel fiyat kartı) */
+  fx_portal?: PortalFxPortal | null;
+  /** Arazi + yapı + birleştirme katman özeti (yapı DFA üstü) */
+  valuation_layers_summary?: PortalValuationLayersSummary | null;
   arsa_fiyati: number | null;
   bina_maliyeti: number | null;
   ramsar_json: PortalRamsarJson | null;

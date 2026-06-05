@@ -2,6 +2,7 @@
  * Portal detay kart sözleşmesi — web `portal-detail-card-contract.js` ile aynı parsel / yapı / fiyat ayrımı.
  */
 import type { PortalQueryDetail, PortalStructurePriceSummary } from '../types/portal';
+import { formatTotalAppliedPercent } from './portalDfaHelpers';
 import { formatListingAttributeValueTr, listingAttributeLabelTr } from './listingAttributeLabels';
 
 export const STRUCTURE_PORTAL_QUERY_TYPES = new Set([
@@ -20,32 +21,24 @@ export function isStructurePortalQueryType(qt: unknown): boolean {
   return STRUCTURE_PORTAL_QUERY_TYPES.has(String(qt || '').trim().toLowerCase());
 }
 
-/** Parsel (arazi) kartında gösterilecek listing_attributes anahtarları */
+/** Parsel (arazi) kartında gösterilecek listing_attributes — web ile aynı whitelist */
 export const LISTING_ATTR_KEYS_PARCEL_CARD = new Set([
-  'open_area_m2',
   'land_plot_type',
-  'kaks_emsal',
-  'gabari',
-  'pafta_no',
   'has_road',
   'has_power_line',
   'has_municipal_water',
   'has_well_water',
   'has_drilling',
+  'parcel_slope_percent',
+  'parcel_altitude_m',
   'has_planted_trees',
   'planted_tree_species',
-  'parcel_altitude_m',
-  'parcel_slope_percent',
-  'title_deed_status',
-  'deed_status',
-  'seller_type',
-  'barter',
-  'exchange',
-  'credit_eligible',
-  'zoning_status',
+  'pafta_no',
+  'kaks_emsal',
+  'gabari',
+  'open_area_m2',
 ]);
 
-/** Yapı bilgileri kartında gösterilecek listing_attributes anahtarları */
 export const LISTING_ATTR_KEYS_STRUCTURE_CARD = new Set([
   'building_gross_m2',
   'dwelling_gross_m2',
@@ -54,25 +47,22 @@ export const LISTING_ATTR_KEYS_STRUCTURE_CARD = new Set([
   'closed_area_m2',
   'building_age',
   'building_age_years',
+  'building_permitted',
+  'parking_type',
   'heating',
+  'title_deed_status',
+  'building_title_deed_status',
+  'room_count_label',
   'property_condition',
-  'floor_level',
   'structural_condition',
   'usage_status',
-  'ground_survey',
+  'floor_level',
   'tenanted',
+  'credit_eligible',
   'dues_tl',
   'entrance_height_m',
   'building_count',
-  'table_count',
-  'person_capacity',
-  'energy_plant_subtype',
   'section_room_count',
-  'room_count_label',
-  'pump_count',
-  'daily_sales_liters',
-  'building_permitted',
-  'building_title_deed_status',
   'factory_type_code',
   'factory_ceiling_height_m',
   'factory_mep_level',
@@ -85,10 +75,16 @@ export const LISTING_ATTR_KEYS_STRUCTURE_CARD = new Set([
   'factory_fire_system',
   'factory_office_ratio_pct',
   'factory_age_years',
-  'parking_type',
+  'pump_count',
+  'daily_sales_liters',
+  'table_count',
+  'person_capacity',
+  'energy_plant_subtype',
+  'ground_survey',
+  'seller_type',
+  'barter',
 ]);
 
-/** Alt konfor kartına / ilan özelliklerine taşınan anahtarlar — yapı kartında gösterilmez */
 export const LISTING_ATTR_KEYS_BOTTOM_COMFORT = new Set([
   'has_swimming_pool',
   'has_sauna',
@@ -100,19 +96,20 @@ export const LISTING_ATTR_KEYS_BOTTOM_COMFORT = new Set([
   'has_fireplace',
 ]);
 
-/** Detay kartlarında gösterilmeyecek listing_attributes */
 export const LISTING_ATTR_KEYS_SUPPRESS_DETAIL = new Set(['has_landscaping']);
 
-const BUILDING_PARAMS_SKIP_STRUCTURE = new Set(['Bina Yaşı', 'İnşaat Alanı (m²)', 'Arazi Tipi']);
+const BUILDING_PARAMS_SKIP_WHEN_COST_FACTOR = new Set([
+  'kalite',
+  'peyzaj',
+  'havuz',
+  'alt tip / maliyet',
+]);
 
-const BUILDING_PARAM_COST_FACTOR_LABELS: Record<string, string[]> = {
-  Kalite: ['Kalite çarpanı', 'quality_multiplier'],
-  Peyzaj: ['Peyzaj çarpanı', 'landscape_multiplier'],
-  Havuz: ['Havuz çarpanı', 'pool_multiplier'],
-};
+const BP_SKIP_ALWAYS = new Set(['bina yaşı', 'inşaat alanı (m²)']);
 
 export type PortalDetailRow = [string, string];
-export type PortalDetailPriceRow = [string, string, boolean?];
+/** [label, value, prominent?, sublineLabel?, sublineValue?] */
+export type PortalDetailPriceRow = [string, string, boolean?, string?, string?];
 
 export interface BuildPortalDetailRowsOptions {
   queryTypeLabel?: string;
@@ -127,6 +124,18 @@ function formatPrice(n: number | null | undefined): string {
     currency: 'TRY',
     maximumFractionDigits: 0,
   }).format(Number(n));
+}
+
+function formatFxUsd(n: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(n);
+}
+
+function formatFxEur(n: number): string {
+  return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(n);
+}
+
+function formatFxGoldGrams(n: number): string {
+  return new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 
 function formatArea(n: number | null | undefined): string {
@@ -157,43 +166,145 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function structureCostLabel(queryType: string): string {
-  const qt = String(queryType || '').trim().toLowerCase();
-  if (qt === 'villa') return 'Villa maliyeti';
-  if (qt === 'fabrika') return 'Fabrika maliyeti';
-  return 'Yapı maliyeti';
+function normLabelKey(label: string): string {
+  return String(label || '')
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+    .replace(/ çarpanı$/i, '');
 }
 
-function structureCostLabelPriceBlock(queryType: string): string {
-  const qt = String(queryType || '').trim().toLowerCase();
+function hasRowLabel(rows: PortalDetailRow[], label: string): boolean {
+  const key = normLabelKey(label);
+  return rows.some(([l]) => normLabelKey(l) === key);
+}
+
+export function structureCostLabelTitleCase(queryType: string): string {
+  const qt = String(queryType || '').toLowerCase();
   if (qt === 'villa') return 'Villa Maliyeti';
   if (qt === 'fabrika') return 'Fabrika Maliyeti';
   return 'Yapı Maliyeti';
 }
 
-function formatCostFactorMultiplier(mult: number): string {
-  return `×${mult.toFixed(mult >= 1.01 ? 2 : 4)}`;
+function structureCostLabel(queryType: string): string {
+  const qt = String(queryType || '').toLowerCase();
+  if (qt === 'villa') return 'Villa maliyeti';
+  if (qt === 'fabrika') return 'Fabrika maliyeti';
+  return 'Yapı maliyeti';
 }
 
-function activeCostFactorLabels(factors: PortalStructurePriceSummary['cost_factors']): Set<string> {
+function resolveStructureConstructionM2(data: PortalQueryDetail): number | null {
+  const listingAttrs =
+    data.listing_attributes && typeof data.listing_attributes === 'object'
+      ? (data.listing_attributes as Record<string, unknown>)
+      : {};
+  let n = numOrNull(listingAttrs.building_gross_m2);
+  if (n != null) return n;
+  n = numOrNull(listingAttrs.closed_area_m2);
+  if (n != null) return n;
+  const bp = data.building_params;
+  if (bp && typeof bp === 'object') {
+    n = numOrNull(bp['İnşaat Alanı (m²)']);
+    if (n != null) return n;
+  }
+  n = numOrNull(data.structure_price_summary?.construction_area_m2);
+  return n;
+}
+
+function resolveStructureFloorCount(data: PortalQueryDetail): number | null {
+  const listingAttrs =
+    data.listing_attributes && typeof data.listing_attributes === 'object'
+      ? (data.listing_attributes as Record<string, unknown>)
+      : {};
+  let n = numOrNull(listingAttrs.floor_count);
+  if (n != null) return n;
+  const bp = data.building_params;
+  if (bp && typeof bp === 'object') {
+    n = numOrNull(bp['Kat Sayısı']);
+  }
+  return n;
+}
+
+function costFactorRowsFromSps(sps: PortalStructurePriceSummary | null | undefined): PortalDetailRow[] {
+  const rows: PortalDetailRow[] = [];
+  const factors = Array.isArray(sps?.cost_factors) ? sps.cost_factors : [];
+  const coveredLabels = new Set<string>();
+  for (const f of factors) {
+    if (!f?.label) continue;
+    const baseLabel = String(f.label).replace(/ çarpanı$/i, '');
+    coveredLabels.add(normLabelKey(baseLabel));
+    const pct = f.applied_pct;
+    if (pct && pct !== '—' && pct !== '%0') {
+      rows.push([baseLabel, pct]);
+      continue;
+    }
+    const mult = Number(f.multiplier);
+    if (!Number.isFinite(mult) || Math.abs(mult - 1) < 1e-6) continue;
+    const pctVal = Math.abs((mult - 1) * 100);
+    const rounded = pctVal >= 1 ? Math.round(pctVal) : Number(pctVal.toFixed(1));
+    const sign = mult > 1 ? '+' : '-';
+    rows.push([baseLabel, `${sign}%${rounded}`]);
+  }
+  return rows;
+}
+
+function activeCostFactorLabelKeys(sps: PortalStructurePriceSummary | null | undefined): Set<string> {
   const out = new Set<string>();
-  const list = Array.isArray(factors) ? factors : [];
-  for (const f of list) {
-    const mult = numOrNull(f?.multiplier);
+  const factors = Array.isArray(sps?.cost_factors) ? sps.cost_factors : [];
+  for (const f of factors) {
+    if (!f?.label) continue;
+    const mult = numOrNull(f.multiplier);
     if (mult == null || Math.abs(mult - 1) < 1e-6) continue;
-    if (f?.label) out.add(String(f.label));
-    if (f && typeof f === 'object' && 'key' in f && f.key) out.add(String(f.key));
+    out.add(normLabelKey(String(f.label).replace(/ çarpanı$/i, '')));
+    if (f.key) out.add(normLabelKey(String(f.key)));
   }
   return out;
 }
 
-function shouldSkipBuildingParamForCostFactor(
-  paramLabel: string,
-  activeFactors: Set<string>,
-): boolean {
-  const aliases = BUILDING_PARAM_COST_FACTOR_LABELS[paramLabel];
-  if (!aliases) return false;
-  return aliases.some((a) => activeFactors.has(a));
+function buildingParamsRows(
+  bp: Record<string, string | number | boolean> | null | undefined,
+  existingRows: PortalDetailRow[],
+  costFactorCovered: Set<string>,
+): PortalDetailRow[] {
+  const rows: PortalDetailRow[] = [];
+  if (!bp || typeof bp !== 'object') return rows;
+  for (const [label, value] of Object.entries(bp)) {
+    if (value == null || value === '') continue;
+    const norm = normLabelKey(label);
+    if (BP_SKIP_ALWAYS.has(norm)) continue;
+    if (norm === 'arazi tipi') continue;
+    if (costFactorCovered.has(norm)) continue;
+    if (BUILDING_PARAMS_SKIP_WHEN_COST_FACTOR.has(norm)) continue;
+    if (hasRowLabel(existingRows, label) || hasRowLabel(rows, label)) continue;
+    rows.push([label, String(value)]);
+  }
+  return rows;
+}
+
+function appendListingAttrRows(
+  rows: PortalDetailRow[],
+  data: PortalQueryDetail,
+  allowedKeys: Set<string>,
+): void {
+  const la =
+    data.listing_attributes && typeof data.listing_attributes === 'object'
+      ? (data.listing_attributes as Record<string, unknown>)
+      : null;
+  if (!la) return;
+
+  const skipKeys = new Set(['building_gross_m2', 'dwelling_gross_m2', 'dwelling_net_m2', 'floor_count', 'closed_area_m2', 'area_m2']);
+  const seen = new Set(rows.map(([label]) => label));
+  for (const [k, v] of Object.entries(la)) {
+    if (!allowedKeys.has(k)) continue;
+    if (skipKeys.has(k)) continue;
+    if (LISTING_ATTR_KEYS_SUPPRESS_DETAIL.has(k)) continue;
+    if (LISTING_ATTR_KEYS_BOTTOM_COMFORT.has(k)) continue;
+    if (LISTING_ATTR_KEYS_PARCEL_CARD.has(k) && allowedKeys !== LISTING_ATTR_KEYS_PARCEL_CARD) continue;
+    if (v == null || String(v).trim() === '') continue;
+    const label = listingAttributeLabelTr(k);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    rows.push([label, formatListingAttributeValueTr(v)]);
+  }
 }
 
 function resolveRoadFrontageM(data: PortalQueryDetail, override?: number | null): number | null {
@@ -208,28 +319,37 @@ function resolveRoadFrontageM(data: PortalQueryDetail, override?: number | null)
   return null;
 }
 
-function appendListingAttrRows(
-  rows: PortalDetailRow[],
-  data: PortalQueryDetail,
-  allowedKeys: Set<string>,
-): void {
-  const la =
-    data.listing_attributes && typeof data.listing_attributes === 'object'
-      ? (data.listing_attributes as Record<string, unknown>)
-      : null;
-  if (!la) return;
-
-  const seen = new Set(rows.map(([label]) => label));
-  for (const [k, v] of Object.entries(la)) {
-    if (!allowedKeys.has(k)) continue;
-    if (LISTING_ATTR_KEYS_SUPPRESS_DETAIL.has(k)) continue;
-    if (LISTING_ATTR_KEYS_BOTTOM_COMFORT.has(k)) continue;
-    if (v == null || String(v).trim() === '') continue;
-    const label = listingAttributeLabelTr(k);
-    if (seen.has(label)) continue;
-    seen.add(label);
-    rows.push([label, formatListingAttributeValueTr(v)]);
+export function getAraziLandUnitSubline(data: PortalQueryDetail): { label: string; value: string } | null {
+  let v = data.arazi_birim_fiyati;
+  if (v == null || v === '') {
+    const ar = data.arsa_fiyati;
+    const am = data.arazi_m2;
+    if (ar != null && ar !== '' && am != null && am !== '' && Number(am) > 0) {
+      v = Number(ar) / Number(am);
+    }
   }
+  if (v == null || v === '' || Number.isNaN(Number(v))) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return {
+    label: 'Arazi birim fiyatı (TL/m²)',
+    value: formatPrice(n),
+  };
+}
+
+export function buildFxPortalTotalsLine(fx: PortalQueryDetail['fx_portal']): string | null {
+  if (!fx || typeof fx !== 'object') return null;
+  const parts: string[] = [];
+  if (fx.price_usd != null && fx.price_usd !== '' && !Number.isNaN(Number(fx.price_usd))) {
+    parts.push(`USD ${formatFxUsd(Number(fx.price_usd))}`);
+  }
+  if (fx.price_eur != null && fx.price_eur !== '' && !Number.isNaN(Number(fx.price_eur))) {
+    parts.push(`EUR ${formatFxEur(Number(fx.price_eur))}`);
+  }
+  if (fx.price_gold_grams != null && fx.price_gold_grams !== '' && !Number.isNaN(Number(fx.price_gold_grams))) {
+    parts.push(`Altın ${formatFxGoldGrams(Number(fx.price_gold_grams))}`);
+  }
+  return parts.length ? parts.join(' · ') : null;
 }
 
 export function buildParcelInfoRows(
@@ -276,14 +396,45 @@ export function buildStructureInfoRows(data: PortalQueryDetail): PortalDetailRow
   const rows: PortalDetailRow[] = [];
   const sps = data.structure_price_summary;
   const canSeeCost = data.viewer_can_see_structure_cost_breakdown === true;
-  const activeFactors = activeCostFactorLabels(sps?.cost_factors);
+  const qtLower = String(data.query_type || '').toLowerCase();
+  const ageLabel = qtLower === 'fabrika' ? 'Fabrika yaşı' : 'Bina yaşı';
 
   if (sps?.structure_age != null && sps.structure_age !== '') {
-    rows.push(['Bina yaşı', `${sps.structure_age} yıl`]);
+    rows.push([ageLabel, `${sps.structure_age} yıl`]);
+  } else {
+    const bp = data.building_params;
+    const fabAge = bp?.['Fabrika Yaşı'];
+    if (fabAge != null && fabAge !== '') {
+      rows.push(['Fabrika yaşı', `${fabAge} yıl`]);
+    }
   }
-  if (sps?.construction_area_m2 != null) {
-    rows.push(['İnşaat m²', formatArea(sps.construction_area_m2)]);
+
+  const constructionM2 =
+    sps?.construction_area_m2 != null
+      ? sps.construction_area_m2
+      : resolveStructureConstructionM2(data);
+  if (constructionM2 != null) {
+    rows.push(['İnşaat m²', formatArea(constructionM2)]);
   }
+
+  const listingAttrs =
+    data.listing_attributes && typeof data.listing_attributes === 'object'
+      ? (data.listing_attributes as Record<string, unknown>)
+      : {};
+  const dwellingGross = numOrNull(listingAttrs.dwelling_gross_m2);
+  if (dwellingGross != null) {
+    rows.push(['Daire Brüt m²', formatArea(dwellingGross)]);
+  }
+  const dwellingNet = numOrNull(listingAttrs.dwelling_net_m2);
+  if (dwellingNet != null) {
+    rows.push(['Daire Net m²', formatArea(dwellingNet)]);
+  }
+
+  const floorCount = resolveStructureFloorCount(data);
+  if (floorCount != null) {
+    rows.push(['Kat Sayısı', String(floorCount)]);
+  }
+
   if (sps?.construction_unit_price_tl != null) {
     rows.push(['Yapı birim fiyatı (TL/m²)', formatPrice(sps.construction_unit_price_tl)]);
   }
@@ -294,28 +445,11 @@ export function buildStructureInfoRows(data: PortalQueryDetail): PortalDetailRow
     rows.push(['Nihai yapı değeri (TL)', formatPrice(sps.structure_final_total_tl)]);
   }
 
-  const factors = Array.isArray(sps?.cost_factors) ? sps!.cost_factors! : [];
-  for (const f of factors) {
-    if (!f?.label || f.multiplier == null) continue;
-    const mult = numOrNull(f.multiplier);
-    if (mult == null || Math.abs(mult - 1) < 1e-6) continue;
-    rows.push([String(f.label), formatCostFactorMultiplier(mult)]);
-  }
-
-  const bp = data.building_params;
-  if (bp && typeof bp === 'object') {
-    const seen = new Set(rows.map(([label]) => label));
-    for (const [label, value] of Object.entries(bp)) {
-      if (value == null || value === '') continue;
-      if (BUILDING_PARAMS_SKIP_STRUCTURE.has(label)) continue;
-      if (shouldSkipBuildingParamForCostFactor(label, activeFactors)) continue;
-      if (seen.has(label)) continue;
-      seen.add(label);
-      rows.push([label, String(value)]);
-    }
-  }
-
+  rows.push(...costFactorRowsFromSps(sps));
+  const covered = activeCostFactorLabelKeys(sps);
+  rows.push(...buildingParamsRows(data.building_params, rows, covered));
   appendListingAttrRows(rows, data, LISTING_ATTR_KEYS_STRUCTURE_CARD);
+
   return rows;
 }
 
@@ -326,12 +460,24 @@ export function buildPriceInfoRows(
   const rows: PortalDetailPriceRow[] = [];
   const queryType = String(data.query_type || '').trim().toLowerCase();
   const isStructure = isStructurePortalQueryType(queryType);
+  const canSeeStructureCost =
+    !isStructure || data.viewer_can_see_structure_cost_breakdown === true;
 
-  if (isStructure && data.arsa_fiyati != null && data.arsa_fiyati > 0) {
-    rows.push(['Arsa Fiyatı', formatPrice(data.arsa_fiyati)]);
+  rows.push(['Uygulanan Toplam % Oran', formatTotalAppliedPercent(data)]);
+
+  if (isStructure && canSeeStructureCost && data.bina_maliyeti != null && data.bina_maliyeti > 0) {
+    rows.push([structureCostLabelTitleCase(queryType), formatPrice(data.bina_maliyeti)]);
   }
-  if (isStructure && data.bina_maliyeti != null && data.bina_maliyeti > 0) {
-    rows.push([structureCostLabelPriceBlock(queryType), formatPrice(data.bina_maliyeti)]);
+  const arsaFiyatNum =
+    data.arsa_fiyati != null && data.arsa_fiyati !== '' ? Number(data.arsa_fiyati) : null;
+  if (
+    isStructure &&
+    canSeeStructureCost &&
+    arsaFiyatNum != null &&
+    Number.isFinite(arsaFiyatNum) &&
+    arsaFiyatNum > 0
+  ) {
+    rows.push(['Arazi maliyeti', formatPrice(arsaFiyatNum)]);
   }
 
   if (options.canSeeExpertDetail && data.expert_price_detail && typeof data.expert_price_detail === 'object') {
@@ -367,11 +513,18 @@ export function buildPriceInfoRows(
     rows.push(['Birim Fiyat', formatPrice(data.unit_price)]);
   }
 
-  rows.push(['ProParcel Tahmin', formatPrice(data.total_price), true]);
-
-  if (data.listing_price_amount != null && Number.isFinite(Number(data.listing_price_amount))) {
-    rows.push(['İlan fiyatı', formatPrice(data.listing_price_amount)]);
-  }
+  const landUnit = getAraziLandUnitSubline(data);
+  rows.push([
+    'Toplam fiyat (TL)',
+    formatPrice(data.total_price),
+    true,
+    landUnit?.label,
+    landUnit?.value,
+  ]);
 
   return rows;
+}
+
+export function shouldRenderStructureInfoCard(data: PortalQueryDetail): boolean {
+  return buildStructureInfoRows(data).length > 0;
 }

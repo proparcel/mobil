@@ -230,3 +230,61 @@ export function formatTotalAppliedPercent(
 
   return formatDfaPercent(totalFactor, false);
 }
+
+/** Başlangıç → bitiş birim fiyat değişimi (web unitDeltaToAppliedPct). */
+export function unitDeltaToAppliedPct(start: unknown, end: unknown): string {
+  const s = Number(start);
+  const e = Number(end);
+  if (!Number.isFinite(s) || !Number.isFinite(e) || s <= 0) return '—';
+  const ratio = e / s;
+  return formatDfaPercent(ratio, false);
+}
+
+export type SimulatedLandFooter = {
+  startUnit: number;
+  endUnit: number;
+  total: number | null;
+};
+
+/** Mahalle ort simülasyonu — arazi katmanını günceller (web applySimulatedLandToValuationLayers). */
+export function applySimulatedLandToValuationLayers(
+  baseLayers: NonNullable<PortalQueryDetail['valuation_layers_summary']>,
+  simulatedLand: SimulatedLandFooter | null | undefined,
+  opts: { structureCost?: number | null; deliveryTotal?: number | null } = {},
+) {
+  if (!baseLayers || typeof baseLayers !== 'object') return null;
+  const out = JSON.parse(JSON.stringify(baseLayers)) as NonNullable<PortalQueryDetail['valuation_layers_summary']>;
+  if (simulatedLand) {
+    const land = { ...(out.land || {}) };
+    land.start_unit_m2 = simulatedLand.startUnit;
+    land.end_unit_m2 = simulatedLand.endUnit;
+    if (simulatedLand.total != null) {
+      land.total_tl = simulatedLand.total;
+    }
+    land.applied_pct = unitDeltaToAppliedPct(simulatedLand.startUnit, simulatedLand.endUnit);
+    out.land = land;
+    if (opts.deliveryTotal != null) {
+      out.delivery = { ...(out.delivery || {}), total_tl: opts.deliveryTotal };
+    }
+  }
+  if (opts.structureCost != null && out.structure) {
+    out.structure = { ...out.structure, cost_tl: opts.structureCost };
+  }
+  return out;
+}
+
+/** Yapı sorgularında arazi DFA adımlarından clamp_final / birleştirme satırlarını filtrele. */
+export function filterLandDfaStepsForStructureQuery(
+  steps: PortalDfaStep[] | null | undefined,
+  isStructure: boolean,
+): PortalDfaStep[] {
+  const list = Array.isArray(steps) ? steps : [];
+  if (!isStructure) return list;
+  return list.filter((step) => {
+    const key = String(step?.key || '').trim().toLowerCase();
+    if (key === 'clamp_final' || key === 'merge_structure_land') return false;
+    const title = String(step?.title || step?.note || '').toLocaleLowerCase('tr-TR');
+    if (title.includes('birleştir') && title.includes('bina yaşı')) return false;
+    return true;
+  });
+}

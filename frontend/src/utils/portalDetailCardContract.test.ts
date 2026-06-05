@@ -114,7 +114,7 @@ describe('buildStructureInfoRows', () => {
         viewer_can_see_structure_cost_breakdown: true,
         structure_price_summary: {
           construction_area_m2: 220,
-          cost_factors: [{ label: 'Peyzaj çarpanı', multiplier: 1.08 }],
+          cost_factors: [{ label: 'Peyzaj', multiplier: 1.08, applied_pct: '+%8' }],
         },
         building_params: {
           Peyzaj: 'Evet',
@@ -124,8 +124,8 @@ describe('buildStructureInfoRows', () => {
     );
     const map = Object.fromEntries(rows);
     assert.equal(map['İnşaat m²'], '220 m²');
-    assert.equal(map['Peyzaj çarpanı'], '×1.08');
-    assert.equal(map.Peyzaj, undefined);
+    assert.equal(map.Peyzaj, '+%8');
+    assert.equal(map['Peyzaj çarpanı'], undefined);
     assert.equal(map['İnşaat Alanı (m²)'], undefined);
   });
 

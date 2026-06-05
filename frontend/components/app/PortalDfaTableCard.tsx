@@ -22,12 +22,15 @@ import type { PortalDfaStep, PortalQueryDetail } from '../../src/types/portal';
 import {
   buildDfaRowsFromSteps,
   computeDfaPriceFromMahalleOrt,
+  filterLandDfaStepsForStructureQuery,
   formatTotalAppliedPercent,
   getPortalDfaPriceFooter,
   parseMahalleOrtInput,
   type PortalDfaRow,
   type PortalDfaSimulatedFooter,
 } from '../../src/utils/portalDfaHelpers';
+import { isStructurePortalQueryType } from '../../src/utils/portalDetailCardContract';
+import PortalValuationLayersSummary from './PortalValuationLayersSummary';
 
 const COLORS = {
   headerBg: '#1e293b',
@@ -83,9 +86,17 @@ export default function PortalDfaTableCard({
   const [mahalleOrtDbSaved, setMahalleOrtDbSaved] = useState(false);
   const mahalleOrtWrapRef = useRef<View>(null);
 
-  const steps = Array.isArray(detail.dfa_json) ? detail.dfa_json : [];
-  const dfaRows = useMemo(() => buildDfaRowsFromSteps(steps), [steps]);
+  const isStructure = isStructurePortalQueryType(detail.query_type);
+  const rawSteps = Array.isArray(detail.dfa_json) ? detail.dfa_json : [];
+  const landSteps = useMemo(
+    () => filterLandDfaStepsForStructureQuery(rawSteps, isStructure),
+    [rawSteps, isStructure],
+  );
+  const buildingSteps = Array.isArray(detail.building_dfa_json) ? detail.building_dfa_json : [];
+  const dfaRows = useMemo(() => buildDfaRowsFromSteps(landSteps), [landSteps]);
+  const buildingDfaRows = useMemo(() => buildDfaRowsFromSteps(buildingSteps), [buildingSteps]);
   const dfaFooter = useMemo(() => getPortalDfaPriceFooter(detail), [detail]);
+  const hasValuationLayers = Boolean(detail.valuation_layers_summary);
 
   const areaM2 = useMemo(() => {
     const raw = detail.arazi_m2 ?? detail.area_m2;
@@ -240,7 +251,7 @@ export default function PortalDfaTableCard({
     return raw != null ? formatRoadFrontageMeters(raw) : null;
   }, [detail.road_frontage_values?.total_road_frontage_edge_length_m]);
 
-  if (!steps.length) {
+  if (!rawSteps.length && !buildingSteps.length) {
     return (
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Detaylı Fiyat Analizi Tablosu</Text>
@@ -251,11 +262,81 @@ export default function PortalDfaTableCard({
     );
   }
 
+  const renderDfaTable = (rows: PortalDfaRow[], tableKey: string) => (
+    <View style={styles.tableWrap} key={tableKey}>
+      <View style={styles.headerRow}>
+        <Text style={[styles.cell, styles.cellDesc, styles.headerText]}>Açıklama</Text>
+        <Text style={[styles.cell, styles.cellPctCol, styles.headerText]}>Yüzde</Text>
+      </View>
+      {rows.map((row, i) => {
+        const isPositive = row.tone === 'positive';
+        const isNegative = row.tone === 'negative';
+        const descLower = String(row.description || '').toLowerCase();
+        const isRoadFrontageRow = row.key === 'road-frontage-dfa-row';
+        const canReportRoad = descLower.includes('yola bağlantısı yok');
+        const canReportElectric =
+          descLower.includes('yüksek gerilim hattı') || descLower.includes('elektrik hattı');
+        const isElectricRelatedRow =
+          descLower.includes('yüksek gerilim') || descLower.includes('elektrik hattı');
+
+        return (
+          <View
+            key={`${tableKey}-${row.key}`}
+            style={[
+              styles.row,
+              i % 2 === 0 && styles.rowAlt,
+              isPositive && styles.rowPos,
+              isNegative && styles.rowNeg,
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.cell, styles.cellDesc]}>
+                {isRoadFrontageRow && roadFrontageDisplay
+                  ? `${row.description}: ${roadFrontageDisplay}`
+                  : row.description}
+              </Text>
+              {isElectricRelatedRow && hasElectricOverrideNote ? (
+                <Text style={styles.userNote}>Hat bildirimi kullanıcı tarafından yapılmıştır.</Text>
+              ) : null}
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text
+                style={[
+                  styles.cell,
+                  styles.cellPctCol,
+                  styles.pctText,
+                  isPositive && styles.pctPos,
+                  isNegative && styles.pctNeg,
+                ]}
+              >
+                {row.percent}
+              </Text>
+              {canReportRoad && onOpenRoadModal ? (
+                <TouchableOpacity onPress={onOpenRoadModal} style={styles.actionBtn} activeOpacity={0.8}>
+                  <Text style={styles.actionBtnText}>Yol Bildir</Text>
+                </TouchableOpacity>
+              ) : null}
+              {canReportElectric && onOpenElectricModal ? (
+                <TouchableOpacity onPress={onOpenElectricModal} style={styles.actionBtn} activeOpacity={0.8}>
+                  <Text style={styles.actionBtnText}>Hat Bildir</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+
   return (
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Detaylı Fiyat Analizi Tablosu</Text>
 
-      {/* Web: özet fiyatlar tablonun üstünde */}
+      {isStructure && hasValuationLayers ? (
+        <PortalValuationLayersSummary detail={detail} simulatedLand={simulatedFooter} />
+      ) : null}
+
+      {!isStructure || !hasValuationLayers ? (
       <View style={styles.summaryWrap}>
         <Text style={styles.summaryTitle}>Değerleme özeti (özet API)</Text>
         {simulatedFooter ? (
@@ -341,78 +422,78 @@ export default function PortalDfaTableCard({
           ) : null}
         </View>
       </View>
-
-      <View style={styles.tableWrap}>
-        <View style={styles.headerRow}>
-          <Text style={[styles.cell, styles.cellDesc, styles.headerText]}>Açıklama</Text>
-          <Text style={[styles.cell, styles.cellPctCol, styles.headerText]}>Yüzde</Text>
-        </View>
-        {mergedRows.map((row, i) => {
-          const isPositive = row.tone === 'positive';
-          const isNegative = row.tone === 'negative';
-          const descLower = String(row.description || '').toLowerCase();
-          const isRoadFrontageRow = row.key === 'road-frontage-dfa-row';
-          const canReportRoad = descLower.includes('yola bağlantısı yok');
-          const canReportElectric =
-            descLower.includes('yüksek gerilim hattı') || descLower.includes('elektrik hattı');
-          const isElectricRelatedRow =
-            descLower.includes('yüksek gerilim') || descLower.includes('elektrik hattı');
-
-          return (
-            <View
-              key={row.key}
-              style={[
-                styles.row,
-                i % 2 === 0 && styles.rowAlt,
-                isPositive && styles.rowPos,
-                isNegative && styles.rowNeg,
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.cell, styles.cellDesc]}>
-                  {isRoadFrontageRow && roadFrontageDisplay
-                    ? `${row.description}: ${roadFrontageDisplay}`
-                    : row.description}
-                </Text>
-                {isElectricRelatedRow && hasElectricOverrideNote ? (
-                  <Text style={styles.userNote}>Hat bildirimi kullanıcı tarafından yapılmıştır.</Text>
-                ) : null}
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text
-                  style={[
-                    styles.cell,
-                    styles.cellPctCol,
-                    styles.pctText,
-                    isPositive && styles.pctPos,
-                    isNegative && styles.pctNeg,
-                  ]}
-                >
-                  {row.percent}
-                </Text>
-                {canReportRoad && onOpenRoadModal ? (
-                  <TouchableOpacity
-                    onPress={onOpenRoadModal}
-                    style={styles.actionBtn}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionBtnText}>Yol Bildir</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {canReportElectric && onOpenElectricModal ? (
-                  <TouchableOpacity
-                    onPress={onOpenElectricModal}
-                    style={styles.actionBtn}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.actionBtnText}>Hat Bildir</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
+      ) : (
+        <View style={styles.summaryWrap}>
+          <Text style={styles.summaryTitle}>Mahalle ortalaması simülasyonu</Text>
+          {simulatedFooter ? (
+            <Text style={styles.simulatedHint}>Mahalle ortalamasına göre simüle edilmiş fiyatlar</Text>
+          ) : null}
+          <View ref={mahalleOrtWrapRef} style={styles.mahalleOrtWrap}>
+            <Text style={styles.mahalleOrtLabel}>Mahalle Ortalaması</Text>
+            <View style={styles.mahalleOrtRow}>
+              <TextInput
+                style={styles.mahalleOrtInput}
+                placeholder={
+                  dfaFooter.startUnit != null ? String(Math.round(dfaFooter.startUnit)) : 'TL/m²'
+                }
+                placeholderTextColor={COLORS.textSecondary}
+                keyboardType="decimal-pad"
+                value={mahalleOrtInput}
+                onChangeText={(t) => {
+                  setMahalleOrtInput(t);
+                  setSimulatedFooter(null);
+                }}
+                onFocus={handleMahalleInputFocus}
+                onBlur={handleMahalleInputBlur}
+                onSubmitEditing={handleMahalleOrtHesapla}
+                returnKeyType="done"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.mahalleOrtBtn,
+                  (!mahalleOrtValid || mahalleOrtSubmitting) && styles.mahalleOrtBtnDisabled,
+                ]}
+                onPress={handleMahalleOrtHesapla}
+                disabled={!mahalleOrtValid || mahalleOrtSubmitting}
+                activeOpacity={0.85}
+              >
+                {mahalleOrtSubmitting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.mahalleOrtBtnText}>
+                    {simulatedFooter || mahalleOrtDbSaved ? 'Yeniden Hesapla' : 'Hesapla'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.mahalleOrtRefreshBtn, !canResetMahalleOrt && styles.mahalleOrtBtnDisabled]}
+                onPress={handleMahalleOrtReset}
+                disabled={!canResetMahalleOrt}
+                activeOpacity={0.85}
+                accessibilityLabel="Orijinal mahalle ortalaması ile yeniden hesapla"
+              >
+                <Ionicons name="refresh" size={22} color={COLORS.accentBlue} />
+              </TouchableOpacity>
             </View>
-          );
-        })}
-      </View>
+            {mahalleOrtNotice ? <Text style={styles.mahalleOrtNotice}>{mahalleOrtNotice}</Text> : null}
+          </View>
+        </View>
+      )}
+
+      {buildingDfaRows.length ? (
+        <>
+          <Text style={styles.sectionSubtitle}>Yapı metrikleri açıklama</Text>
+          {renderDfaTable(buildingDfaRows, 'building-dfa')}
+        </>
+      ) : null}
+
+      {dfaRows.length || roadExtra ? (
+        <>
+          {isStructure ? <Text style={styles.sectionSubtitle}>Arazi metrikleri açıklama</Text> : null}
+          {renderDfaTable(mergedRows, 'land-dfa')}
+        </>
+      ) : null}
     </View>
   );
 }
@@ -501,7 +582,14 @@ const styles = StyleSheet.create({
     color: '#b45309',
     fontWeight: '600',
   },
-  tableWrap: { borderRadius: 6, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.borderSoft },
+  sectionSubtitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  tableWrap: { borderRadius: 6, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.borderSoft, marginBottom: 12 },
   headerRow: { flexDirection: 'row', backgroundColor: COLORS.headerBg },
   headerText: { color: '#fff', fontWeight: '700', fontSize: 11 },
   row: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.borderSoft },

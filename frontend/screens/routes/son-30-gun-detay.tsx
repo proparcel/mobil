@@ -44,6 +44,7 @@ import {
   buildParcelInfoRows,
   buildPriceInfoRows,
   buildStructureInfoRows,
+  buildFxPortalTotalsLine,
   isStructurePortalQueryType,
 } from '../../src/utils/portalDetailCardContract';
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
@@ -3020,6 +3021,7 @@ export default function Son30GunDetayScreen() {
     ),
   );
   const mergedPriceRows = dedupeDetailRowsFinal(priceRows);
+  const fxPortalLine = buildFxPortalTotalsLine(data.fx_portal);
   const mergedFullRows = dedupeDetailRowsFinal([...parcelRows, ...mergedPriceRows]);
   const primaryListingRows = data.listing_id ? buildListingInfoPrimaryRows(data) : [];
   const listingOzellikRows = data.listing_id ? buildListingOzellikRows(data, mergedFullRows) : [];
@@ -3027,9 +3029,10 @@ export default function Son30GunDetayScreen() {
   const renderDetailKvCard = (
     title: string,
     icon: React.ComponentProps<typeof Ionicons>['name'],
-    rows: [string, string, boolean?][],
+    rows: [string, string, boolean?, string?, string?][],
     cardKey: string,
     topMargin = 0,
+    footerText?: string | null,
   ) => {
     if (!rows.length) return null;
     return (
@@ -3039,22 +3042,32 @@ export default function Son30GunDetayScreen() {
           <Text style={s.cardTitle}>{title}</Text>
         </View>
         <View style={s.detailInfoKvBox}>
-          {rows.map(([lab, val, prominent], ri) => (
+          {rows.map(([lab, val, prominent, sublineLabel, sublineValue], ri) => (
             <View
               key={`${cardKey}-${ri}-${normalizeDetailLabelKey(lab)}`}
               style={[
                 s.detailInfoKvRow,
                 prominent ? s.detailInfoKvRowProminent : null,
-                ri === rows.length - 1 ? s.detailInfoKvRowLast : null,
+                ri === rows.length - 1 && !footerText ? s.detailInfoKvRowLast : null,
               ]}
             >
               <Text style={[s.detailInfoKvLabel, prominent ? s.detailInfoKvLabelProminent : null]}>{lab}</Text>
-              <Text style={[s.detailInfoKvVal, prominent ? s.detailInfoKvValProminent : null]} numberOfLines={6}>
-                {val}
-              </Text>
+              <View style={s.detailInfoKvValueCol}>
+                <Text style={[s.detailInfoKvVal, prominent ? s.detailInfoKvValProminent : null]} numberOfLines={6}>
+                  {val}
+                </Text>
+                {sublineLabel && sublineValue ? (
+                  <Text style={s.detailInfoKvSubline} numberOfLines={2}>
+                    {sublineLabel}: {sublineValue}
+                  </Text>
+                ) : null}
+              </View>
             </View>
           ))}
         </View>
+        {footerText ? (
+          <Text style={s.detailInfoKvFooter}>{footerText}</Text>
+        ) : null}
       </View>
     );
   };
@@ -4151,13 +4164,20 @@ export default function Son30GunDetayScreen() {
                 <View ref={bilgiSectionRef}>
                   {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info')}
                   {renderDetailKvCard(
+                    'ProParcel fiyatı',
+                    'cash-outline',
+                    mergedPriceRows,
+                    'price-info',
+                    12,
+                    fxPortalLine,
+                  )}
+                  {renderDetailKvCard(
                     'Yapı bilgileri',
                     'business-outline',
                     structureRows.map(([label, value]) => [label, value] as [string, string, boolean?]),
                     'structure-info',
                     12,
                   )}
-                  {renderDetailKvCard('Fiyat', 'cash-outline', mergedPriceRows, 'price-info', 12)}
                   <PortalInsightSummaryCard detail={data} data={scores.insightData} />
                 </View>
                 <View ref={dfaSectionRef}>
@@ -5366,6 +5386,26 @@ const s = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: COLORS.accentBlue,
+  },
+  detailInfoKvValueCol: {
+    flex: 1,
+    maxWidth: '52%',
+    alignItems: 'flex-end' as const,
+  },
+  detailInfoKvSubline: {
+    marginTop: 3,
+    fontSize: 10,
+    color: COLORS.textSecondary,
+    textAlign: 'right' as const,
+  },
+  detailInfoKvFooter: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.borderSoft,
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    textAlign: 'right' as const,
   },
   listingDesc: { fontSize: 14, color: COLORS.textPrimary, lineHeight: 21 },
 
