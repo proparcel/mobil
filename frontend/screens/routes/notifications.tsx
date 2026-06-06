@@ -98,6 +98,15 @@ export default function NotificationsScreen() {
           await load();
         }
       }
+      if (n.type === "pro_query_complete") {
+        const data = (n.data_json || {}) as { dfa_snapshot_id?: number | string; snapshotId?: number | string };
+        const snapshotIdRaw = data.dfa_snapshot_id ?? data.snapshotId;
+        const sid = String(snapshotIdRaw || "").trim();
+        if (sid) {
+          router.push("son-30-gun-detay", { snapshotId: sid });
+          return;
+        }
+      }
       if (n.type === "listing_ai_video_ready") {
         const data = (n.data_json || {}) as { job_id?: string; video_id?: string; source?: string };
         const jobId = String(data.job_id || data.video_id || "").trim();

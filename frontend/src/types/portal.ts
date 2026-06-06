@@ -194,6 +194,8 @@ export interface PortalDfaStep {
   new_total?: number;
   prev_total?: number;
   details?: Array<string | { message?: string; text?: string; code?: string }>;
+  portal_report_road?: boolean;
+  portal_report_electric?: boolean;
 }
 
 /** full_report.parameters_data.valuation_canonical — portal özet fiyat tek kaynağı */
@@ -208,7 +210,15 @@ export interface PortalValuationCanonical {
 export interface PortalSummaryPrices {
   unit_price?: number | null;
   total_price?: number | null;
+  area_m2?: number | null;
+  arazi_m2?: number | null;
   valuation_canonical?: PortalValuationCanonical | null;
+}
+
+export interface PortalLandPriceSummary {
+  unit_price_m2?: number | null;
+  total_tl?: number | null;
+  area_m2?: number | null;
 }
 
 export interface PortalStructurePriceSummary {
@@ -257,6 +267,15 @@ export interface PortalValuationLayersSummary {
   structure_age_note?: string | null;
 }
 
+/** Shell / enrichment — KM tahmini fiyat uyarısı (portal detay fiyat chip). */
+export interface PortalPriceEstimationWarning {
+  show?: boolean;
+  variant?: string;
+  title?: string;
+  message?: string;
+  detail_tab?: string;
+}
+
 /** İlan vitrininde dönen video kaydı (Mongo + portal özet) */
 export interface PortalListingVideoItem {
   video_id?: string | null;
@@ -292,11 +311,15 @@ export interface PortalQueryDetail {
   dfa_json: PortalDfaStep[];
   /** Motor canonical fiyatlar (web portal detay ile aynı) */
   valuation_canonical?: PortalValuationCanonical | null;
+  /** KM tahmini birim fiyat uyarısı (shell + enrichment) */
+  price_estimation_warning?: PortalPriceEstimationWarning | null;
   /** Rapor/PDF özet fiyat yedekleri */
   portal_summary_prices?: PortalSummaryPrices | null;
   building_params: Record<string, string | number | boolean> | null;
   /** Enrichment API — yapı maliyet özeti (web StructureInfoSummaryCard ile aynı) */
   structure_price_summary?: PortalStructurePriceSummary | null;
+  /** Enrichment API — arazi maliyet özeti */
+  land_price_summary?: PortalLandPriceSummary | null;
   /** Yapı sorgularında arazi TL/m² (portal kart alt satırı) */
   arazi_birim_fiyati?: number | null;
   /** USD / EUR / altın karşılığı (ProParcel fiyat kartı) */
@@ -456,6 +479,25 @@ export interface MahalleOrtSignalResponse {
   km_stale_notice?: string;
   km_live_target_m2?: number;
   km_live_db_verified?: boolean;
+}
+
+export interface PortalKmPriceMapItem {
+  quarter_name?: string | null;
+  m2_price?: number | null;
+  distance_m?: number | null;
+  verified?: boolean;
+  generated?: boolean;
+  is_target?: boolean;
+  coordinates?: number[][];
+}
+
+export interface PortalKmPriceMapResponse {
+  success?: boolean;
+  price_map?: {
+    data?: PortalKmPriceMapItem[];
+    [key: string]: unknown;
+  };
+  error?: string;
 }
 
 export interface PortalKmSectionData {

@@ -25,6 +25,7 @@ import type {
   QueryRatingStatusResponse,
   MahalleOrtSignalResponse,
   PortalKmSectionData,
+  PortalKmPriceMapResponse,
 } from '../src/types/portal';
 
 async function authDjangoJsonFetch<T>(
@@ -289,6 +290,15 @@ export async function getPortalRecentQueryDetail(
   return authDjangoJsonFetch<PortalQueryDetail>(`/api/portal/recent-queries/${snapshotId}/`);
 }
 
+/** GET /api/portal/recent-queries/<id>/enrichment/ — yapı DFA, katman özeti, zenginleştirilmiş dfa_json */
+export async function getPortalRecentQueryEnrichment(
+  snapshotId: number,
+): Promise<ApiResult<Partial<PortalQueryDetail>>> {
+  return authDjangoJsonFetch<Partial<PortalQueryDetail>>(
+    `/api/portal/recent-queries/${snapshotId}/enrichment/`,
+  );
+}
+
 /** GET /api/portal/recent-queries/<id>/summary/ — sosyal şablon / özet alanları */
 export async function getPortalRecentQuerySummary(
   snapshotId: number,
@@ -376,6 +386,18 @@ export async function getPortalKmSection(
   return authDjangoJsonFetch<PortalKmSectionData>(
     `/api/portal/recent-queries/${snapshotId}/sections/km/`,
   );
+}
+
+/** GET /api/portal/km-price-map/?proparcel_value=&property_type= */
+export async function getPortalKmPriceMap(
+  proparcelValue: string | number,
+  propertyType?: string | null,
+): Promise<ApiResult<PortalKmPriceMapResponse>> {
+  const params = new URLSearchParams({
+    proparcel_value: String(proparcelValue),
+    property_type: String(propertyType || 'arsa'),
+  });
+  return authDjangoJsonFetch<PortalKmPriceMapResponse>(`/api/portal/km-price-map/?${params.toString()}`);
 }
 
 /** Mahalle ortalaması son60 sinyali — DB kayıt / UI-only / expert onay */

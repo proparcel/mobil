@@ -29,6 +29,8 @@ import ListingFavoriteMenuMobile from '../../components/app/ListingFavoriteMenuM
 import QueryFavoriteMenuMobile from '../../components/app/QueryFavoriteMenuMobile';
 import { usePortalDetailScoresData } from '../../components/app/PortalDetailScoresBlock';
 import PortalInsightSummaryCard from '../../components/app/PortalInsightSummaryCard';
+import PortalInsightPriceCard from '../../components/app/PortalInsightPriceCard';
+import PortalKmTab from '../../components/app/PortalKmTab';
 import PortalMulkScoreDetailCard, { PortalAraziScoreDetailCard } from '../../components/app/PortalMulkScoreDetailCard';
 import PortalFruitInvestmentCard from '../../components/app/PortalFruitInvestmentCard';
 import PortalSolarEnergyCard from '../../components/app/PortalSolarEnergyCard';
@@ -39,12 +41,12 @@ import ListingFullscreenVideo from '../../components/app/ListingFullscreenVideo'
 import PortalSlopeTerrainCard from '../../components/app/PortalSlopeTerrainCard';
 import PortalParcelSplitDetailCard from '../../components/app/PortalParcelSplitDetailCard';
 import PortalDfaTableCard from '../../components/app/PortalDfaTableCard';
+import PortalProParcelPriceCard from '../../components/app/PortalProParcelPriceCard';
 import { formatListingAttributeValueTr, listingAttributeLabelTr } from '../../src/utils/listingAttributeLabels';
 import {
   buildParcelInfoRows,
   buildPriceInfoRows,
   buildStructureInfoRows,
-  buildFxPortalTotalsLine,
   isStructurePortalQueryType,
 } from '../../src/utils/portalDetailCardContract';
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
@@ -65,6 +67,7 @@ import {
   createPortalQueryRating,
   deletePortalQueryComment,
   getPortalRecentQueryDetail,
+  getPortalRecentQueryEnrichment,
   getPortalQueryCommentLikes,
   getPortalQueryRatings,
   getPortalQueryRaters,
@@ -363,6 +366,18 @@ function parseTurkishTotalAmount(raw: string): number | null {
 function formatArea(n: number | null | undefined): string {
   if (n == null) return '—';
   return new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n) + ' m²';
+}
+
+/** Web `buildDetailModeNoticeTitle` — il / ilçe / mahalle · ada/parsel · alan */
+function buildDetailModeNoticeTitle(d: PortalQueryDetail): string {
+  const location = [d.city_name, d.town_name, d.quarter_name].filter(Boolean).join(' / ');
+  const adaParsel = `${d.ada || '0'}/${d.parsel || '0'}`;
+  const areaRaw = d.arazi_m2 ?? d.area_m2;
+  let areaPart: string | null = null;
+  if (areaRaw != null && Number.isFinite(Number(areaRaw)) && Number(areaRaw) > 0) {
+    areaPart = formatArea(Number(areaRaw));
+  }
+  return [location, adaParsel, areaPart].filter(Boolean).join(' · ');
 }
 
 function formatMeters(n: number | null | undefined): string {
@@ -1186,6 +1201,18 @@ export default function Son30GunDetayScreen() {
     }
   }, [activeDetailTabId]);
 
+  const openKmTab = useCallback(() => {
+    setActiveDetailTabId('km');
+    setDetailMenuVisible(false);
+    setTimeout(() => {
+      kmSectionRef.current?.measureLayout(
+        scrollRef.current?.getInnerViewRef?.() as any,
+        (_x: number, y: number) => scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true }),
+        () => {},
+      );
+    }, 450);
+  }, []);
+
   const [data, setData] = useState<PortalQueryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const detailLoadedRef = useRef(false);
@@ -1274,9 +1301,10 @@ export default function Son30GunDetayScreen() {
     () => Boolean(String(effectiveListingId || '').trim()),
     [effectiveListingId],
   );
-  const detailModeNoticeText = isListingDetailView
-    ? 'Emlak Ilan Detayi Goruntulenmektedir'
-    : 'Son 30 Gun Icinde Yapilan Pro Sorgu Detayi Goruntulenmektedir';
+  const detailModeNoticeTitle = useMemo(
+    () => (data ? buildDetailModeNoticeTitle(data) : ''),
+    [data],
+  );
 
   // Full-screen image viewer
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
@@ -1360,21 +1388,27 @@ export default function Son30GunDetayScreen() {
     if (!silent) {
       setError(null);
     }
-    const res = await getPortalRecentQueryDetail(snapshotId);
+    const [detailRes, enrichRes] = await Promise.all([
+      getPortalRecentQueryDetail(snapshotId),
+      getPortalRecentQueryEnrichment(snapshotId),
+    ]);
     if (seq !== detailFetchSeqRef.current) {
       return;
     }
-    if (res.ok) {
-      setData(res.data);
+    if (detailRes.ok) {
+      const merged: PortalQueryDetail = enrichRes.ok
+        ? { ...detailRes.data, ...enrichRes.data }
+        : detailRes.data;
+      setData(merged);
       setError(null);
       detailLoadedRef.current = true;
       detailFetchSnapshotRef.current = snapshotId;
     } else if (!detailLoadedRef.current || !silent) {
-      if (isPortalRateLimited(res.status, res.error)) {
-        setError(res.error || 'Çok fazla istek. Lütfen bir dakika bekleyin.');
+      if (isPortalRateLimited(detailRes.status, detailRes.error)) {
+        setError(detailRes.error || 'Çok fazla istek. Lütfen bir dakika bekleyin.');
         return;
       }
-      if (isPortalAuthRequired(res.status, res.error)) {
+      if (isPortalAuthRequired(detailRes.status, detailRes.error)) {
         if (!isAuthenticated) {
           redirectToLoginForDetailRef.current();
         } else {
@@ -1383,7 +1417,7 @@ export default function Son30GunDetayScreen() {
         return;
       }
       if (!detailLoadedRef.current) {
-        setError(res.error || 'Bir hata oluştu');
+        setError(detailRes.error || 'Bir hata oluştu');
       }
     }
   }, [snapshotId, isAuthenticated]);
@@ -2334,216 +2368,6 @@ export default function Son30GunDetayScreen() {
     setParticipantModalVisible(true);
   }, [data]);
 
-  // ── Render Helpers ──
-
-  const renderTahminModule = () => {
-    if (!data) return null;
-
-    if (kmSectionLoading && !kmSectionData) {
-      return (
-        <View style={s.card}>
-          <ActivityIndicator size="small" color={COLORS.accentBlue} />
-          <Text style={s.detailEmptyTabText}>KM analizi yükleniyor…</Text>
-        </View>
-      );
-    }
-
-    const kmPayload = kmSectionData;
-    const kmInvoked = kmPayload?.km_analysis_invoked;
-    const kmNotPerformedMsg = String(kmPayload?.km_not_performed_message || '').trim();
-    const kmStaleNotice = String(kmPayload?.km_stale_notice || '').trim();
-    const kmSnapshotStale = kmPayload?.km_snapshot_stale === true;
-
-    if (kmInvoked === false && kmNotPerformedMsg) {
-      return (
-        <View ref={kmSectionRef} style={s.card}>
-          <View style={s.cardTitleRow}>
-            <Ionicons name="analytics" size={16} color={COLORS.accentBlue} />
-            <Text style={s.cardTitle}>KM Analizi</Text>
-          </View>
-          <View style={sec.kmNoticeBox}>
-            <Text style={sec.kmNoticeText}>{kmNotPerformedMsg}</Text>
-          </View>
-          {kmSnapshotStale && kmStaleNotice ? (
-            <View style={sec.kmStaleBox}>
-              <Text style={sec.kmStaleText}>{kmStaleNotice}</Text>
-            </View>
-          ) : null}
-        </View>
-      );
-    }
-
-    if (kmSectionErr && !kmSectionData) {
-      return (
-        <View style={s.card}>
-          <Text style={s.detailEmptyTabText}>{kmSectionErr}</Text>
-        </View>
-      );
-    }
-
-    const km = (kmPayload?.km_analysis ?? data.km_analysis ?? {}) as Record<string, any>;
-    const pred = (kmPayload?.prediction_json ?? data.prediction_json ?? {}) as Record<string, any>;
-    const ps = (kmPayload?.price_selection_json ?? data.price_selection_json ?? {}) as Record<string, any>;
-    const details = ps.details || {};
-    const reason = ps.reason || null;
-    const model = ps.model || null;
-    const hasPred = pred && Object.keys(pred).length > 0;
-    const hasPs = ps && Object.keys(ps).length > 0;
-    const hasKm = km && Object.keys(km).length > 0;
-    const kmRecommendedPrice = kmPayload?.km_recommended_price ?? data.km_recommended_price;
-    if (!hasPred && !hasPs && !hasKm && kmRecommendedPrice == null) return null;
-
-    const MODEL_LABELS: Record<string, string> = {
-      DB: 'Veritabanı', PREDICTION: 'ProParcel Akıllı Tahmin', KM: 'KM Tahmin', NONE: '-',
-    };
-    const modelLabel = model ? (MODEL_LABELS[model] || model) : (hasPs ? '-' : 'Akıllı Tahmin');
-
-    const isVillage = reason && String(reason).indexOf('VILLAGE_') === 0;
-    let detailText = '';
-    if (isVillage) detailText = 'Köy içi multiplier kuralı ile hesaplandı';
-    else if (reason === 'PREDICTION_HIGH_CONFIDENCE' || reason === 'PREDICTION_HIGH_CONFIDENCE_UNVERIFIED_DB') detailText = 'Yüksek güven — Öncelikli seçildi';
-    else if (reason && reason.indexOf('DB_PREDICTION_') === 0) detailText = 'DB fiyatı akıllı tahmin ile doğrulandı';
-    else if (reason && reason.indexOf('DB_NO_PREDICTION') === 0) detailText = 'Veritabanı fiyatı kullanıldı';
-    else if (reason && reason.indexOf('KM_') === 0) detailText = reason.indexOf('VALIDATED') >= 0 ? 'KM tahmini akıllı tahmin ile doğrulandı' : 'KM tahmini kullanıldı';
-    else if (reason === 'PREDICTION_FIRST') detailText = 'Akıllı tahmin ilk sonucu kullanıldı';
-    else if (reason === 'FALLBACK_QUARTER_PRICE') detailText = 'Fallback: Mahalle fiyatı kullanıldı';
-    else if (reason === 'NO_DATA') detailText = 'Veri bulunamadı';
-    else if (reason) detailText = 'Neden: ' + reason;
-    else if (hasPred && !hasPs) detailText = 'Vertex AI tahmin sonuçları';
-
-    const kmQuality = km.quality || {};
-    const kmMeta = km.analysis_meta || {};
-    let kmSummaryTr = kmQuality.summary_text_tr ? String(kmQuality.summary_text_tr).trim() : '';
-    const kmScore = kmQuality.score != null ? Number(kmQuality.score) : null;
-    const kmLabel = kmQuality.label ? String(kmQuality.label) : '';
-    const totalExamined = kmMeta.total_examined_count != null ? Number(kmMeta.total_examined_count) : 0;
-    if (!kmSummaryTr && (Number.isFinite(kmScore) || Number.isFinite(totalExamined))) {
-      const tail = (Number.isFinite(kmScore) && (kmScore as number) < 30) ? 'Tahmin fiyatı bu koşullarda zayıf görülmektedir.'
-        : (Number.isFinite(kmScore) && (kmScore as number) < 60) ? 'Mahallenin tahmin edilen birim fiyatı oldukça güvenilir seviyelere yakındır.'
-        : 'Mahallenin tahmin edilen birim fiyatı çok güvenilir seviyededir.';
-      kmSummaryTr = `Sorgulanan mahallenin birim fiyatını tahmin etmek için ${Number.isFinite(totalExamined) ? totalExamined : 0} mahalle analiz edilmiştir. ${tail}`;
-    }
-
-    const toNum = (v: any): number | null => { if (v == null) return null; const n = Number(v); return isFinite(n) ? n : null; };
-
-    const dbVerified = details.db_verified;
-    const dbPrice = toNum(details.db_price || details.db_unit_price || (model === 'DB' ? details.price : null));
-    const kmPrice = toNum(
-      details.km_price ||
-        details.km_recommended_price ||
-        details.km_estimated_price ||
-        ((model === 'KM' || (reason && String(reason).indexOf('KM_') === 0)) ? details.price : null) ||
-        kmRecommendedPrice,
-    );
-    const predPrice = toNum(details.prediction_price || details.prediction_first_price) || (pred.arsa ? toNum(pred.arsa.estimated_price || pred.arsa.estimatedPrice) : null) || (pred.tarla ? toNum(pred.tarla.estimated_price || pred.tarla.estimatedPrice) : null);
-    const arsaEst = toNum(pred.arsa && (pred.arsa.estimated_price || pred.arsa.estimatedPrice));
-    const tarlaEst = toNum(pred.tarla && (pred.tarla.estimated_price || pred.tarla.estimatedPrice));
-    const nearestPrice = toNum(details.prediction_nearest_price || details.nearest_price);
-
-    type PriceRow = { label: string; value: number | null; highlight: boolean };
-    const priceRows: PriceRow[] = [
-      { label: 'Veritabanı' + (dbVerified === true || dbVerified === 1 ? ' \u2713' : dbVerified === false || dbVerified === 0 ? ' \u2717' : ''), value: dbPrice, highlight: model === 'DB' && !isVillage },
-      { label: 'KM Tahmin', value: kmPrice, highlight: (model === 'KM' || (reason != null && String(reason).indexOf('KM_') === 0)) && !isVillage },
-      { label: 'ProParcel Akıllı Tahmin', value: predPrice, highlight: (model === 'PREDICTION' || (reason != null && String(reason).indexOf('PREDICTION_') === 0)) && !isVillage },
-      { label: 'Akıllı Tahmin Arsa', value: arsaEst, highlight: false },
-      { label: 'Akıllı Tahmin Tarla', value: tarlaEst, highlight: false },
-      { label: 'Akıllı Tahmin En Yakın', value: nearestPrice, highlight: reason != null && String(reason).indexOf('NEAREST') >= 0 },
-    ];
-    const visibleRows = priceRows.filter(r => r.value != null);
-
-    return (
-      <View ref={kmSectionRef} style={s.card}>
-        <View style={s.cardTitleRow}>
-          <Ionicons name="analytics" size={16} color={COLORS.accentBlue} />
-          <Text style={s.cardTitle}>Tahmin Modülü</Text>
-        </View>
-
-        {kmSnapshotStale && kmStaleNotice ? (
-          <View style={sec.kmStaleBox}>
-            <Text style={sec.kmStaleText}>{kmStaleNotice}</Text>
-          </View>
-        ) : null}
-
-        {(modelLabel || detailText) && (
-          <View style={sec.modelBox}>
-            {modelLabel ? <Text style={sec.modelLabel}>{isVillage ? 'Köy İçi Kuralı' : modelLabel}</Text> : null}
-            {detailText ? <Text style={sec.modelDetail}>{detailText}</Text> : null}
-            {(dbVerified === true || dbVerified === 1) && (
-              <View style={sec.verifiedBadge}><Text style={sec.verifiedText}>Doğrulanmış</Text></View>
-            )}
-          </View>
-        )}
-
-        {kmSummaryTr ? (
-          <View style={sec.summaryBox}>
-            <Text style={sec.summaryTitle}>KM Tahmin Yorumu</Text>
-            <Text style={sec.summaryText}>{kmSummaryTr}</Text>
-            {(kmScore != null || kmLabel) ? (
-              <Text style={sec.summaryMeta}>
-                {kmScore != null ? `Kalite Skoru: ${kmScore}/100` : ''}
-                {kmLabel ? (kmScore != null ? ` (${kmLabel})` : kmLabel) : ''}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-
-        {(kmMeta.total_examined_count != null || kmMeta.primary_neighbors_count != null || kmScore != null) && !kmSummaryTr && (
-          <View style={sec.statsRow}>
-            {kmMeta.total_examined_count != null && (
-              <View style={sec.statItem}>
-                <Text style={sec.statValue}>{kmMeta.total_examined_count}</Text>
-                <Text style={sec.statLabel}>İncelenen Mahalle</Text>
-              </View>
-            )}
-            {kmMeta.primary_neighbors_count != null && (
-              <View style={sec.statItem}>
-                <Text style={sec.statValue}>{kmMeta.primary_neighbors_count}</Text>
-                <Text style={sec.statLabel}>Birincil Komşu</Text>
-              </View>
-            )}
-            {kmScore != null && (
-              <View style={sec.statItem}>
-                <Text style={sec.statValue}>{kmScore}{kmLabel ? ` (${kmLabel})` : ''}</Text>
-                <Text style={sec.statLabel}>Kalite Skoru</Text>
-              </View>
-            )}
-          </View>
-        )}
-
-        {visibleRows.length > 0 && (
-          <>
-            <Text style={sec.comparisonTitle}>Karşılaştırma</Text>
-            <View style={sec.comparisonGrid}>
-              {visibleRows.map((r, i) => (
-                <View key={i} style={[sec.comparisonItem, r.highlight && sec.comparisonItemHighlight]}>
-                  <Text style={sec.comparisonLabel}>{r.label}</Text>
-                  <Text style={[sec.comparisonValue, r.highlight && sec.comparisonValueHighlight]}>
-                    {formatPrice(r.value)}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </>
-        )}
-
-        {(pred.arsa || pred.tarla) && (
-          <View style={sec.predFooter}>
-            {pred.arsa && (
-              <Text style={sec.predFooterText}>
-                Arsa: Sınıf {pred.arsa.class ?? '—'}, Skor {pred.arsa.score != null ? parseFloat(pred.arsa.score).toFixed(2) : '—'}
-              </Text>
-            )}
-            {pred.tarla && (
-              <Text style={sec.predFooterText}>
-                Tarla: Sınıf {pred.tarla.class ?? '—'}, Skor {pred.tarla.score != null ? parseFloat(pred.tarla.score).toFixed(2) : '—'}
-              </Text>
-            )}
-          </View>
-        )}
-      </View>
-    );
-  };
-
   const formatSurveyValue = (val: any, qType?: string, code?: string): string | null => {
     if (val === undefined || val === null || val === '') return null;
     if (qType === 'boolean' || typeof val === 'boolean') return val === true || val === 'true' ? 'Evet' : 'Hayır';
@@ -3009,10 +2833,7 @@ export default function Son30GunDetayScreen() {
     totalRoadFrontageLength: totalRoadFrontageLength as number | null,
   });
   const structureRows = buildStructureInfoRows(data);
-  const canSeeExpertDetail = Boolean(
-    data.viewer_is_staff || data.viewer_is_expert_for_this_query || data.viewer_is_expert_user,
-  );
-  const priceRows = buildPriceInfoRows(data, { canSeeExpertDetail });
+  const priceRows = buildPriceInfoRows(data);
 
   const parcelRows = dedupeDetailRowsFinal(
     mergeParcelAndListingDetailRows(
@@ -3021,7 +2842,6 @@ export default function Son30GunDetayScreen() {
     ),
   );
   const mergedPriceRows = dedupeDetailRowsFinal(priceRows);
-  const fxPortalLine = buildFxPortalTotalsLine(data.fx_portal);
   const mergedFullRows = dedupeDetailRowsFinal([...parcelRows, ...mergedPriceRows]);
   const primaryListingRows = data.listing_id ? buildListingInfoPrimaryRows(data) : [];
   const listingOzellikRows = data.listing_id ? buildListingOzellikRows(data, mergedFullRows) : [];
@@ -3723,8 +3543,17 @@ export default function Son30GunDetayScreen() {
       ) : null}
 
       <View style={[s.modeNoticeBar, isListingDetailView ? s.modeNoticeBarListing : s.modeNoticeBarQuery]}>
-        <View style={[s.modeNoticeDot, isListingDetailView ? s.modeNoticeDotListing : s.modeNoticeDotQuery]} />
-        <Text style={s.modeNoticeText}>{detailModeNoticeText}</Text>
+        <View style={[s.modeNoticePill, isListingDetailView ? s.modeNoticePillListing : s.modeNoticePillQuery]}>
+          <Text style={s.modeNoticePillText}>{isListingDetailView ? 'İlan' : 'ProSorgu'}</Text>
+        </View>
+        {detailModeNoticeTitle ? (
+          <Text
+            style={[s.modeNoticeText, isListingDetailView ? s.modeNoticeTextListing : s.modeNoticeTextQuery]}
+            numberOfLines={1}
+          >
+            {detailModeNoticeTitle}
+          </Text>
+        ) : null}
       </View>
 
       <KeyboardAwareScrollScreen
@@ -4163,14 +3992,7 @@ export default function Son30GunDetayScreen() {
               <>
                 <View ref={bilgiSectionRef}>
                   {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info')}
-                  {renderDetailKvCard(
-                    'ProParcel fiyatı',
-                    'cash-outline',
-                    mergedPriceRows,
-                    'price-info',
-                    12,
-                    fxPortalLine,
-                  )}
+                  <PortalProParcelPriceCard detail={data} topMargin={12} />
                   {renderDetailKvCard(
                     'Yapı bilgileri',
                     'business-outline',
@@ -4178,7 +4000,10 @@ export default function Son30GunDetayScreen() {
                     'structure-info',
                     12,
                   )}
-                  <PortalInsightSummaryCard detail={data} data={scores.insightData} />
+                  <View style={s.insightMetricsRow}>
+                    <PortalInsightSummaryCard detail={data} data={scores.insightData} />
+                    <PortalInsightPriceCard summary={data} onOpenKmTab={openKmTab} />
+                  </View>
                 </View>
                 <View ref={dfaSectionRef}>
                   <PortalDfaTableCard
@@ -4194,9 +4019,16 @@ export default function Son30GunDetayScreen() {
               </>
             )}
 
-            {activeDetailTabId === 'km' && (
-              <>{renderTahminModule()}</>
-            )}
+            {activeDetailTabId === 'km' && data ? (
+              <PortalKmTab
+                detail={data}
+                kmSectionData={kmSectionData}
+                loading={kmSectionLoading}
+                error={kmSectionErr}
+                onExpertRequest={() => handleOpenExpertRequest()}
+                sectionRef={kmSectionRef}
+              />
+            ) : null}
 
             {activeDetailTabId === 'slope' && (() => {
               const slopeSectionPayload = scores.slopeSection as Record<string, unknown> | null;
@@ -5234,23 +5066,36 @@ const s = StyleSheet.create({
     backgroundColor: '#fffbeb',
     borderBottomColor: '#fde68a',
   },
-  modeNoticeDot: {
-    width: 9,
-    height: 9,
+  modeNoticePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderRadius: 999,
+    flexShrink: 0,
   },
-  modeNoticeDotQuery: {
+  modeNoticePillQuery: {
     backgroundColor: '#2563eb',
   },
-  modeNoticeDotListing: {
+  modeNoticePillListing: {
     backgroundColor: '#f59e0b',
+  },
+  modeNoticePillText: {
+    color: '#fff',
+    fontSize: 12,
+    lineHeight: 14,
+    fontWeight: '800' as const,
   },
   modeNoticeText: {
     flex: 1,
+    minWidth: 0,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '700' as const,
-    color: '#1f2937',
+  },
+  modeNoticeTextQuery: {
+    color: '#1e3a8a',
+  },
+  modeNoticeTextListing: {
+    color: '#92400e',
   },
   centerContainer: { flex: 1, backgroundColor: COLORS.pageBg, alignItems: 'center', justifyContent: 'center', padding: 32 },
   loadingText: { marginTop: 12, fontSize: 14, color: COLORS.textSecondary },
@@ -5325,6 +5170,13 @@ const s = StyleSheet.create({
   detailTabSquareAux: { borderColor: '#94a3b8', borderWidth: 2, backgroundColor: '#f8fafc' },
   detailTabSquareAuxText: { color: '#475569', fontSize: 10 },
   detailEmptyTabText: { fontSize: 13, color: COLORS.textSecondary, padding: 12, lineHeight: 20 },
+  insightMetricsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 4,
+    marginBottom: 4,
+  },
   /** Açıklama sekmesi — kart yok, tam genişlik metin */
   listingDescFullPage: {
     paddingHorizontal: 16,

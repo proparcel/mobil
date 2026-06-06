@@ -74,7 +74,7 @@
     "eas:ios-dev-kur": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/ios-dev-telefona-kur.ps1",
     "eas:inspect": "npm run eas:inspect:ios",
     "lint": "eslint .",
-    "test": "tsx --test src/utils/portalDetailCardContract.test.ts",
+    "test": "tsx --test src/utils/portalDetailCardContract.test.ts src/utils/portalPriceStatus.test.ts",
     "copy:icon-fonts": "node ./scripts/copy-icon-fonts-to-android.js",
     "postinstall": "patch-package && npm run copy:icon-fonts",
     "preandroid": "npm run copy:icon-fonts && node ./scripts/sync-android-mapbox-token.js && powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/android-dev-prepare.ps1",
