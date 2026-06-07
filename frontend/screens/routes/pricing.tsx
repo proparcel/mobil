@@ -212,6 +212,7 @@ export default function PricingScreen() {
 
     if (customerType === "bireysel") {
       if (Platform.OS === "ios" && !packageHasIapProduct(pkg)) return false;
+      if (pkgType !== "bireysel") return false;
       return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
     }
     if (pkgType !== "kurumsal") return false;
