@@ -300,7 +300,8 @@ export default function RegisterScreen() {
       newErrors.email = "Geçerli bir e-posta adresi girin";
     }
 
-    if (!phoneNumber || phoneNumber.length !== 10 || !phoneNumber.startsWith("5")) {
+    const trimmedPhone = phoneNumber.trim();
+    if (trimmedPhone && (trimmedPhone.length !== 10 || !trimmedPhone.startsWith("5"))) {
       newErrors.phone = "Geçerli bir telefon numarası girin (5XXXXXXXXX)";
     }
 
@@ -384,7 +385,7 @@ export default function RegisterScreen() {
       first_name: firstName,
       last_name: lastName,
       email,
-      phone_number: phoneNumber,
+      phone_number: phoneNumber.trim() || undefined,
       password,
       password_confirm: passwordConfirm,
       referral_code: referralCode?.trim() || undefined,
@@ -449,7 +450,8 @@ export default function RegisterScreen() {
   const mapRegisterApiErrors = (errs: Record<string, string[]> | undefined): Record<string, string> => {
     if (!errs) return {};
     const mapped: Record<string, string> = {};
-    if (errs.address?.[0]) mapped.address = errs.address[0];
+    if (errs.email?.[0]) mapped.email = errs.email[0];
+    if (errs.phone_number?.[0]) mapped.phone = errs.phone_number[0];
     if (errs.street_and_number?.[0]) mapped.streetAndNumber = errs.street_and_number[0];
     if (errs.education_level?.[0]) mapped.educationLevel = errs.education_level[0];
     if (errs.university_id?.[0]) mapped.universityId = errs.university_id[0];
@@ -471,11 +473,45 @@ export default function RegisterScreen() {
     };
   };
 
+  const completeRegistrationWithoutOtp = async (registerData: ReturnType<typeof buildRegisterDataWithExpertise>) => {
+    setIsVerifying(true);
+    setOtpModalError("");
+    try {
+      const response = await authService.registerVerifyOTP(registerData, "", {
+        avatarUri: registrationMedia.avatarUri,
+        companyLogoUri: registrationMedia.companyLogoUri,
+      });
+
+      if (response.success && response.data) {
+        syncSessionFromLoginResponse(response.data);
+        setShowOtpModal(false);
+        await storageService.clearDeferredReferralCode();
+        router.replace("index");
+      } else {
+        setErrors({
+          general: response.message || "Kayıt tamamlanamadı.",
+          ...mapRegisterApiErrors(response.errors),
+        });
+        setRegistrationStep("info");
+      }
+    } catch {
+      setErrors({ general: "Bir hata oluştu. Lütfen tekrar deneyin." });
+      setRegistrationStep("info");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   const proceedToOtp = async () => {
     const registerData = buildRegisterDataWithExpertise();
     setIsSending(true);
     setErrors({});
     try {
+      if (!phoneNumber.trim()) {
+        await completeRegistrationWithoutOtp(registerData);
+        return;
+      }
+
       const sendRes = await authService.registerSendOTP(registerData);
       if (!sendRes.success) {
         setErrors({
@@ -787,7 +823,7 @@ export default function RegisterScreen() {
             <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
               {({ onFocus, onBlur }) => (
                 <>
-                  <Text style={styles.label}>Telefon *</Text>
+                  <Text style={styles.label}>Telefon</Text>
                   <View style={styles.phoneInputContainer}>
                     <Text style={styles.phonePrefix}>+90</Text>
                     <TextInput
@@ -805,6 +841,7 @@ export default function RegisterScreen() {
                       onBlur={onBlur}
                     />
                   </View>
+                  <Text style={styles.optionalHint}>Zorunlu değildir</Text>
                   {errors.phone ? <Text style={styles.fieldError}>{errors.phone}</Text> : null}
                 </>
               )}
@@ -1739,6 +1776,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: "#666",
     fontSize: 12,
+  },
+  optionalHint: {
+    marginTop: 4,
+    color: "#888",
+    fontSize: 11,
   },
   companyPickerStatus: {
     flexDirection: "row",
