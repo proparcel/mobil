@@ -1,0 +1,25 @@
+# EAS archive root = mobil_github (EAS_NO_VCS shallow clone). Trailing slash kullanmayin.
+
+unity
+unity/**
+
+backend
+backend/**
+docs
+docs/**
+tests
+tests/**
+.emergent
+.emergent/**
+.idea
+.idea/**
+
+frontend/node_modules
+frontend/.metro-cache
+frontend/android
+frontend/android/**
+frontend/ios
+frontend/ios/**
+frontend/apk_releases
+frontend/release_builds
+frontend/ios_release_builds

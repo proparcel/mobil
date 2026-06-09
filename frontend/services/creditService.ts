@@ -261,6 +261,8 @@ export interface CreditPackage {
   price_per_credit: number;
   package_type?: PackageType;
   is_ek_package?: boolean;
+  /** Tek Kullanım paketlerinde yıllık abonelik zorunluluğu (API) */
+  requires_yearly_subscription?: boolean;
   max_users?: number;
   /** iOS App Store Product ID (backend eşlemesi) */
   ios_product_id?: string | null;

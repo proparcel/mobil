@@ -80,6 +80,9 @@ import AranacaklarScreen from './screens/routes/aranacaklar';
 import AranacaklarPickerScreen from './screens/routes/aranacaklar-picker';
 import AranacaklarDetailScreen from './screens/routes/aranacaklar-detail';
 import AranacaklarStatsScreen from './screens/routes/aranacaklar-stats';
+import { registerVrParcelRoute } from './modules/vrParcel';
+import { registerParcelTerrain3dRoute } from './modules/parcelTerrain3d';
+import { registerUnitySmokeTestRoute, UNITY_SMOKE_TEST_ENABLED } from './modules/unitySmokeTest';
 
 const Stack = createNativeStackNavigator();
 
@@ -89,7 +92,7 @@ function TepeCoinPurchaseScreen(props: Record<string, unknown>) {
   return <Screen {...props} />;
 }
 
-function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'index' }) {
+function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'index' | 'unity-smoke-test' }) {
   const { overlayVisible } = useScreenShield();
   const navigationRef = useNavigationContainerRef();
   const [navReady, setNavReady] = useState(false);
@@ -242,6 +245,9 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="aranacaklar-picker" component={AranacaklarPickerScreen} />
           <Stack.Screen name="aranacaklar-detail" component={AranacaklarDetailScreen} />
           <Stack.Screen name="aranacaklar-stats" component={AranacaklarStatsScreen} />
+          {registerVrParcelRoute(Stack)}
+          {registerParcelTerrain3dRoute(Stack)}
+          {registerUnitySmokeTestRoute(Stack)}
         </Stack.Navigator>
       </NavigationContainer>
       <ScreenShieldOverlay visible={overlayVisible} />
@@ -251,7 +257,7 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
 
 export default function App() {
   const [navReady, setNavReady] = useState(false);
-  const [initialRoute, setInitialRoute] = useState<'landing' | 'index'>('index');
+  const [initialRoute, setInitialRoute] = useState<'landing' | 'index' | 'unity-smoke-test'>('index');
 
   useEffect(() => {
     let cancelled = false;
@@ -259,7 +265,7 @@ export default function App() {
       try {
         if (__DEV__) {
           if (!cancelled) {
-            setInitialRoute('index');
+            setInitialRoute(UNITY_SMOKE_TEST_ENABLED ? 'unity-smoke-test' : 'index');
             setNavReady(true);
           }
           return;

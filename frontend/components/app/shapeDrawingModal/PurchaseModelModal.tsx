@@ -65,7 +65,7 @@ export const PurchaseModelModal: React.FC<PurchaseModelModalProps> = ({
       Alert.alert(
         credits > 0 ? "Yetersiz Kredi" : "Bakiye yüklenemedi",
         credits > 0
-          ? `Bu modeli satın almak için ${credits} Coin gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Coin.`
+          ? `Bu modeli satın almak için ${credits} Kredi gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Kredi.`
           : "Kredi bakiyeniz alınamadı. İnternet bağlantınızı kontrol edip tekrar deneyin."
       );
       return;
@@ -131,7 +131,7 @@ export const PurchaseModelModal: React.FC<PurchaseModelModalProps> = ({
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsLabel}>Gerekli Kredi:</Text>
                 <Text style={styles.creditsValue}>
-                  {credits > 0 ? `${credits} Coin` : "Ücretsiz"}
+                  {credits > 0 ? `${credits} Kredi` : "Ücretsiz"}
                 </Text>
               </View>
               
@@ -141,7 +141,7 @@ export const PurchaseModelModal: React.FC<PurchaseModelModalProps> = ({
                   <ActivityIndicator size="small" color="#3b82f6" />
                 ) : (
                   <Text style={styles.creditsValue}>
-                    {balance !== null ? `${balance} Coin` : "-"}
+                    {balance !== null ? `${balance} Kredi` : "-"}
                   </Text>
                 )}
               </View>
@@ -149,7 +149,7 @@ export const PurchaseModelModal: React.FC<PurchaseModelModalProps> = ({
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsLabel}>Satın Alımdan Sonra:</Text>
                 <Text style={[styles.creditsValue, afterBalance !== null && afterBalance < 0 && styles.creditsValueNegative]}>
-                  {afterBalance !== null ? `${afterBalance} Coin` : "-"}
+                  {afterBalance !== null ? `${afterBalance} Kredi` : "-"}
                 </Text>
               </View>
             </View>

@@ -16,6 +16,13 @@ import {
   verifyCaptureFile,
 } from '../../src/utils/screenshotManager';
 import { parseTurkishPrice, formatTurkishPrice } from '../../src/utils/priceParser';
+import {
+  mergeParcelDisplayProperties,
+  pickParcelDisplayValue,
+  LOCATION_IL_KEYS,
+  LOCATION_ILCE_KEYS,
+  LOCATION_MAHALLE_KEYS,
+} from '../../src/utils/mergeParcelDisplayProperties';
 import { MapCaptureOverlayOnMap } from './MapCaptureOverlayOnMap';
 import type { MapOverlayCapturePayload } from '../../src/utils/mapOverlayCaptureProjection';
 
@@ -201,17 +208,10 @@ export const CombinedScreenshotContainer = React.forwardRef<
     );
   }
 
-  const parametersData: any = parcelData?.analysisData?.parameters_data || {};
-  const parcelValues = parametersData?.parcel_values || {};
-  const mergedProperties = { ...(parcelData?.properties || {}), ...parametersData, ...parcelValues };
+  const mergedProperties = mergeParcelDisplayProperties(parcelData);
 
-  const pickValue = (source: Record<string, any>, keys: string[]): string => {
-    for (const key of keys) {
-      const val = source[key];
-      if (val !== null && val !== undefined && String(val).trim() !== '') return String(val).trim();
-    }
-    return '-';
-  };
+  const pickValue = (source: Record<string, any>, keys: readonly string[]): string =>
+    pickParcelDisplayValue(source, keys);
 
   const formatArea = (value: any): string => {
     if (value === null || value === undefined || value === '') return '-';
@@ -232,9 +232,9 @@ export const CombinedScreenshotContainer = React.forwardRef<
     return `${Math.round(n).toLocaleString('tr-TR')} m²`;
   };
 
-  const il = pickValue(mergedProperties, ['ilAd', 'il', 'city', 'city_name', 'cityName', 'CityName']);
-  const ilce = pickValue(mergedProperties, ['ilceAd', 'ilce', 'town', 'town_name', 'townName', 'TownName']);
-  const mahalle = pickValue(mergedProperties, ['mahalleAd', 'mahalle', 'quarter', 'quarter_name', 'QuarterName']);
+  const il = pickValue(mergedProperties, LOCATION_IL_KEYS);
+  const ilce = pickValue(mergedProperties, LOCATION_ILCE_KEYS);
+  const mahalle = pickValue(mergedProperties, LOCATION_MAHALLE_KEYS);
   const ada = pickValue(mergedProperties, ['adaNo', 'ada', 'Ada']);
   const parsel = pickValue(mergedProperties, ['parselNo', 'parsel', 'Parsel']);
   const alanRaw = mergedProperties.alan ?? mergedProperties.area ?? mergedProperties.Area ?? mergedProperties.area_m2 ?? null;

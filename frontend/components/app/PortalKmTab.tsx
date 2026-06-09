@@ -310,7 +310,6 @@ export default function PortalKmTab({
   }, [loadPriceMap]);
 
   const kmPayload = kmSectionData;
-  const kmInvoked = kmPayload?.km_analysis_invoked;
   const kmNotPerformedMsg = String(kmPayload?.km_not_performed_message || '').trim();
   const kmStaleNotice = String(kmPayload?.km_stale_notice || '').trim();
   const kmSnapshotStale = kmPayload?.km_snapshot_stale === true;
@@ -425,25 +424,6 @@ export default function PortalKmTab({
       <View style={styles.card}>
         <ActivityIndicator size="small" color={COLORS.accentBlue} />
         <Text style={styles.emptyText}>KM analizi yükleniyor…</Text>
-      </View>
-    );
-  }
-
-  if (kmInvoked === false && kmNotPerformedMsg) {
-    return (
-      <View ref={sectionRef} style={styles.card}>
-        <View style={styles.titleRow}>
-          <Ionicons name="analytics" size={16} color={COLORS.accentBlue} />
-          <Text style={styles.title}>KM Analizi</Text>
-        </View>
-        <View style={styles.noticeBox}>
-          <Text style={styles.noticeText}>{kmNotPerformedMsg}</Text>
-        </View>
-        {kmSnapshotStale && kmStaleNotice ? (
-          <View style={styles.staleBox}>
-            <Text style={styles.staleText}>{kmStaleNotice}</Text>
-          </View>
-        ) : null}
       </View>
     );
   }

@@ -6,6 +6,7 @@ import { authJsonFetch } from "../../services/apiClient";
 import type { AdaParselSubmitPayload } from "../../components/AdaParselForm";
 import { parseAreaM2 } from "./dfaRows";
 import { fetchTkgmByCoords, fetchTkgmByIds, type TkgmError } from "./tkgmApi";
+import type { PassiveConfirmFn } from "./tkgmPassiveParcel";
 
 export type TkgmParcelResponse = {
   geometry?: unknown;
@@ -26,6 +27,16 @@ function mapTkgmCatch(error: unknown): string {
   }
   if (err?.type === "CORS_OR_NETWORK_ERROR") {
     return err.message || "TKGM sunucusuna bağlanılamadı.";
+  }
+  if (err?.type === "TKGM_UNAVAILABLE") {
+    return err.message || "TKGM servisi geçici olarak kullanılamıyor. Lütfen birkaç dakika sonra tekrar deneyin.";
+  }
+  if (err?.type === "TKGM_INVALID_DATA") {
+    return err.message || "TKGM beklenmeyen bir yanıt döndürdü.";
+  }
+  if (err?.type === "TKGM_ERROR") {
+    // 500 vb. sunucu hataları → ham hata yerine uyarı metni
+    return err.message || "TKGM servisinde geçici bir hata oluştu. Lütfen tekrar deneyin.";
   }
   return err?.message || "TKGM sorgusu başarısız";
 }
@@ -64,12 +75,16 @@ export async function resolveMahalleTkgmForDirectQuery(
 
 export async function fetchTkgmParcelByAdaParsel(
   payload: Pick<AdaParselSubmitPayload, "mahalleTkgmValue" | "ada" | "parsel">,
+  confirm?: PassiveConfirmFn,
 ): Promise<{ ok: true; data: TkgmParcelResponse } | { ok: false; error: string }> {
   try {
+    // Pasif parsel ise onay sonrası normalize edilmiş (aktif) feature döner.
     const data = await fetchTkgmByIds(
       payload.mahalleTkgmValue,
       payload.ada,
       payload.parsel,
+      undefined,
+      confirm,
     );
     if (!data?.geometry) {
       return { ok: false, error: "Parsel bulunamadı veya geometri alınamadı." };
@@ -83,9 +98,11 @@ export async function fetchTkgmParcelByAdaParsel(
 export async function fetchTkgmParcelByCoords(
   lat: number,
   lon: number,
+  confirm?: PassiveConfirmFn,
 ): Promise<{ ok: true; data: TkgmParcelResponse } | { ok: false; error: string }> {
   try {
-    const data = await fetchTkgmByCoords(lat, lon);
+    // Pasif parsel ise onay sonrası normalize edilmiş (aktif) feature döner.
+    const data = await fetchTkgmByCoords(lat, lon, undefined, confirm);
     if (!data?.geometry) {
       return { ok: false, error: "Parsel bulunamadı veya geometri alınamadı." };
     }

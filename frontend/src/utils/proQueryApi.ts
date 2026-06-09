@@ -30,6 +30,78 @@ export class ProQueryFailedError extends Error {
   }
 }
 
+export class ProQueryAuthRequiredError extends Error {
+  constructor(message = 'Bu işlem için giriş yapmanız gerekmektedir.') {
+    super(message);
+    this.name = 'ProQueryAuthRequiredError';
+  }
+}
+
+/** HTTP durum kodunu koruyan pro sorgu hatası (ör. 402 yetersiz kredi tespiti için). */
+export class ProQueryHttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ProQueryHttpError';
+    this.status = status;
+  }
+}
+
+const DEFAULT_AUTH_REQUIRED_MESSAGE = 'Bu işlem için giriş yapmanız gerekmektedir.';
+
+function tryParseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    const jsonStart = trimmed.indexOf('{');
+    if (jsonStart < 0) return null;
+    try {
+      const parsed = JSON.parse(trimmed.slice(jsonStart));
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function extractApiErrorMessage(
+  status: number,
+  text: string,
+): { message: string; authRequired: boolean } {
+  const parsed = tryParseJsonObject(text);
+  if (parsed) {
+    const authRequired = parsed.auth_required === true || status === 401;
+    const message = String(parsed.error || parsed.detail || parsed.message || '').trim();
+    if (message) {
+      return { message, authRequired };
+    }
+  }
+
+  const trimmed = String(text || '').trim();
+  if (trimmed) {
+    return {
+      message: trimmed.length > 280 ? `${trimmed.slice(0, 280)}…` : trimmed,
+      authRequired: status === 401,
+    };
+  }
+
+  return {
+    message: status === 401 ? DEFAULT_AUTH_REQUIRED_MESSAGE : `HTTP ${status}`,
+    authRequired: status === 401,
+  };
+}
+
+function throwHttpError(status: number, text: string): never {
+  const { message, authRequired } = extractApiErrorMessage(status, text);
+  if (authRequired) {
+    throw new ProQueryAuthRequiredError(message || DEFAULT_AUTH_REQUIRED_MESSAGE);
+  }
+  throw new ProQueryHttpError(status, message || `HTTP ${status}`);
+}
+
 const TASK_LABEL_TR: Record<string, string> = {
   io_roads: 'yol ve cephe analizi',
   io_distances: 'mesafe analizi',
@@ -47,6 +119,13 @@ const TASK_LABEL_TR: Record<string, string> = {
 export function formatProQueryError(raw: string): string {
   const text = String(raw || '').trim();
   if (!text) return 'Pro sorgu tamamlanamadı. Lütfen tekrar deneyin.';
+
+  const httpJsonMatch = text.match(/^HTTP (\d+):\s*(\{[\s\S]+\})\s*$/);
+  if (httpJsonMatch) {
+    const parsed = tryParseJsonObject(httpJsonMatch[2]);
+    const parsedMessage = String(parsed?.error || parsed?.detail || parsed?.message || '').trim();
+    if (parsedMessage) return parsedMessage;
+  }
 
   const upstream = text.match(/upstream task failure detected\s*\(([^:]+):FAILURE\)/i);
   if (upstream) {
@@ -71,17 +150,33 @@ export function formatProQueryError(raw: string): string {
   return text.length > 280 ? `${text.slice(0, 280)}…` : text;
 }
 
-export function getProQueryErrorAlert(error: unknown): { title: string; message: string } {
+export function getProQueryErrorAlert(
+  error: unknown,
+): { title: string; message: string; authRequired?: boolean } {
   if (error instanceof ProQueryLimitError) {
     return {
       title: 'Günlük Sorgu Limiti',
       message: `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
     };
   }
+  if (error instanceof ProQueryAuthRequiredError) {
+    return {
+      title: 'Giriş Gerekli',
+      message: error.message || DEFAULT_AUTH_REQUIRED_MESSAGE,
+      authRequired: true,
+    };
+  }
   if (error instanceof ProQueryFailedError) {
     return { title: 'Sorgu Hatası', message: error.message };
   }
   const msg = error instanceof Error ? error.message : String(error || '');
+  if (/auth_required|giri[sş]\s*yapman/i.test(msg)) {
+    return {
+      title: 'Giriş Gerekli',
+      message: formatProQueryError(msg),
+      authRequired: true,
+    };
+  }
   if (/network request failed|failed to fetch|timed out|timeout|ECONNREFUSED|ENOTFOUND/i.test(msg)) {
     return {
       title: 'Bağlantı Hatası',
@@ -89,6 +184,19 @@ export function getProQueryErrorAlert(error: unknown): { title: string; message:
     };
   }
   return { title: 'Sorgu Hatası', message: formatProQueryError(msg) };
+}
+
+export function getProQueryAlertButtons(
+  alert: { authRequired?: boolean },
+  options: { isAuthenticated: boolean; onLogin: () => void },
+) {
+  if (alert.authRequired && !options.isAuthenticated) {
+    return [
+      { text: 'Kapat', style: 'cancel' as const },
+      { text: 'Giriş Yap', onPress: options.onLogin },
+    ];
+  }
+  return [{ text: 'Tamam' }];
 }
 
 function proQueryFailedFromBody(body: any, fallback: string): ProQueryFailedError {
@@ -258,14 +366,12 @@ async function pollDistributedProQuery(
 
     if (!resp.ok) {
       const t = await resp.text().catch(() => '');
-      let failBody: any = null;
-      try {
-        failBody = t ? JSON.parse(t) : null;
-      } catch {
-        // ignore
-      }
+      const failBody = tryParseJsonObject(t);
       if (failBody?.error || failBody?.status === 'failed') {
         throw proQueryFailedFromBody(failBody, t.slice(0, 200));
+      }
+      if (resp.status === 401 || failBody?.auth_required === true) {
+        throwHttpError(resp.status, t);
       }
       throw new ProQueryFailedError(
         formatProQueryError(`Pro sorgu sonuç HTTP ${resp.status}`),
@@ -310,7 +416,7 @@ export async function runProParcelQuery(requestBody: Record<string, unknown>): P
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
+    throwHttpError(response.status, errorBody);
   }
 
   const data = await response.json();

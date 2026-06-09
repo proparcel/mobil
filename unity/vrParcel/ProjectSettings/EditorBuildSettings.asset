@@ -1,0 +1,15 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/ParcelTerrain3dScene.unity
+    guid: d8fcf25ab71a996418e433250e2d786e
+  m_configObjects:
+    UnityEditor.XR.ARCore.ARCoreSettings: {fileID: 11400000, guid: b0cdc74ee8449f846945790894b2c619, type: 2}
+    UnityEditor.XR.ARKit.ARKitSettings: {fileID: 11400000, guid: a767afda3df4bce42a02cbeecc28efdf, type: 2}
+    com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: 2d3ac27906e9213409fbf4e0046a0713, type: 2}
+    com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 9ca697858304c984aaf743b35d80cf8c, type: 2}

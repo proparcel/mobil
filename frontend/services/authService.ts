@@ -86,7 +86,7 @@ export type RegisterVerifyMediaFiles = {
   companyLogoUri?: string | null;
 };
 
-function appendRegisterFormFields(formData: FormData, data: RegisterRequest & { otp: string }) {
+function appendRegisterFormFields(formData: FormData, data: RegisterRequest) {
   Object.entries(data).forEach(([key, value]) => {
     if (value === undefined || value === null || value === "") return;
     formData.append(key, String(value));
@@ -95,12 +95,11 @@ function appendRegisterFormFields(formData: FormData, data: RegisterRequest & { 
 
 async function registerVerifyMultipart(
   data: RegisterRequest,
-  otp: string,
   files: RegisterVerifyMediaFiles
 ): Promise<LoginResponse> {
   const url = `${AUTH_API_URL}${AUTH_ENDPOINTS.REGISTER}`;
   const formData = new FormData();
-  appendRegisterFormFields(formData, { ...data, step: "verify_otp", otp });
+  appendRegisterFormFields(formData, { ...data, step: "verify_otp" });
 
   if (files.avatarUri) {
     formData.append("avatar", {
@@ -481,13 +480,18 @@ class AuthService {
    */
   async registerVerifyOTP(
     data: RegisterRequest,
-    otp: string,
+    otp?: string,
     files?: RegisterVerifyMediaFiles
   ): Promise<LoginResponse> {
+    const verifyPayload: RegisterRequest = {
+      ...data,
+      step: "verify_otp",
+      ...(otp ? { otp } : {}),
+    };
     if (files?.avatarUri || files?.companyLogoUri) {
-      return registerVerifyMultipart(data, otp, files);
+      return registerVerifyMultipart(verifyPayload, files);
     }
-    return this.register({ ...data, step: "verify_otp", otp });
+    return this.register(verifyPayload);
   }
 
   /**

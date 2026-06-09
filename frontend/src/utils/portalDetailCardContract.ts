@@ -319,22 +319,68 @@ function resolveRoadFrontageM(data: PortalQueryDetail, override?: number | null)
   return null;
 }
 
-export function getAraziLandUnitSubline(data: PortalQueryDetail): { label: string; value: string } | null {
-  let v = data.arazi_birim_fiyati;
-  if (v == null || v === '') {
-    const ar = data.arsa_fiyati;
-    const am = data.arazi_m2;
-    if (ar != null && ar !== '' && am != null && am !== '' && Number(am) > 0) {
-      v = Number(ar) / Number(am);
-    }
+/** Web getPortalValuationDisplay — canonical birim/toplam/alan */
+export function getPortalValuationDisplay(data: PortalQueryDetail): {
+  unit: number | null;
+  total: number | null;
+  area: number | null;
+} {
+  const vc = data.valuation_canonical;
+  const sp = data.portal_summary_prices;
+
+  const areaRaw =
+    data.arazi_m2 ?? sp?.arazi_m2 ?? sp?.area_m2 ?? vc?.area_m2_used ?? data.area_m2;
+  const area =
+    areaRaw != null && areaRaw !== '' && !Number.isNaN(Number(areaRaw)) && Number(areaRaw) > 0
+      ? Number(areaRaw)
+      : null;
+
+  let unit: number | null = null;
+  if (vc?.final_unit_price_m2 != null && !Number.isNaN(Number(vc.final_unit_price_m2))) {
+    unit = Number(vc.final_unit_price_m2);
+  } else if (sp?.unit_price != null && !Number.isNaN(Number(sp.unit_price))) {
+    unit = Number(sp.unit_price);
+  } else if (data.unit_price != null && !Number.isNaN(Number(data.unit_price))) {
+    unit = Number(data.unit_price);
   }
-  if (v == null || v === '' || Number.isNaN(Number(v))) return null;
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
+
+  let total: number | null = null;
+  if (vc?.final_total_tl != null && !Number.isNaN(Number(vc.final_total_tl))) {
+    total = Number(vc.final_total_tl);
+  } else if (sp?.total_price != null && !Number.isNaN(Number(sp.total_price))) {
+    total = Number(sp.total_price);
+  } else if (data.total_price != null && !Number.isNaN(Number(data.total_price))) {
+    total = Number(data.total_price);
+  }
+
+  return { unit, total, area };
+}
+
+export function getAraziLandUnitSubline(data: PortalQueryDetail): { label: string; value: string } | null {
+  const { unit } = getPortalValuationDisplay(data);
+  if (unit == null || !Number.isFinite(unit)) return null;
   return {
     label: 'Arazi birim fiyatı (TL/m²)',
-    value: formatPrice(n),
+    value: formatPrice(unit),
   };
+}
+
+function resolveStructureCostTl(data: PortalQueryDetail): number | null {
+  const direct = numOrNull(data.bina_maliyeti);
+  if (direct != null && direct > 0) return direct;
+  const fromSummary = numOrNull(data.structure_price_summary?.structure_cost_tl);
+  if (fromSummary != null && fromSummary > 0) return fromSummary;
+  return null;
+}
+
+function resolveLandCostTl(data: PortalQueryDetail): number | null {
+  const direct = numOrNull(data.arsa_fiyati);
+  if (direct != null && direct > 0) return direct;
+  const fromLand = numOrNull(data.land_price_summary?.total_tl);
+  if (fromLand != null && fromLand > 0) return fromLand;
+  const fromLayers = numOrNull(data.valuation_layers_summary?.land?.total_tl);
+  if (fromLayers != null && fromLayers > 0) return fromLayers;
+  return null;
 }
 
 export function buildFxPortalTotalsLine(fx: PortalQueryDetail['fx_portal']): string | null {
@@ -386,7 +432,7 @@ export function buildParcelInfoRows(
     }
   }
 
-  rows.push(['Tarih', formatDate(data.created_at)]);
+  rows.push(['Oluşturma Tarihi', formatDate(data.created_at)]);
   return rows;
 }
 
@@ -441,9 +487,6 @@ export function buildStructureInfoRows(data: PortalQueryDetail): PortalDetailRow
   if (canSeeCost && sps?.structure_cost_tl != null) {
     rows.push([structureCostLabel(data.query_type), formatPrice(sps.structure_cost_tl)]);
   }
-  if (sps?.structure_final_total_tl != null) {
-    rows.push(['Nihai yapı değeri (TL)', formatPrice(sps.structure_final_total_tl)]);
-  }
 
   rows.push(...costFactorRowsFromSps(sps));
   const covered = activeCostFactorLabelKeys(sps);
@@ -455,7 +498,7 @@ export function buildStructureInfoRows(data: PortalQueryDetail): PortalDetailRow
 
 export function buildPriceInfoRows(
   data: PortalQueryDetail,
-  options: { canSeeExpertDetail: boolean },
+  _options?: { canSeeExpertDetail?: boolean },
 ): PortalDetailPriceRow[] {
   const rows: PortalDetailPriceRow[] = [];
   const queryType = String(data.query_type || '').trim().toLowerCase();
@@ -465,58 +508,21 @@ export function buildPriceInfoRows(
 
   rows.push(['Uygulanan Toplam % Oran', formatTotalAppliedPercent(data)]);
 
-  if (isStructure && canSeeStructureCost && data.bina_maliyeti != null && data.bina_maliyeti > 0) {
-    rows.push([structureCostLabelTitleCase(queryType), formatPrice(data.bina_maliyeti)]);
-  }
-  const arsaFiyatNum =
-    data.arsa_fiyati != null && data.arsa_fiyati !== '' ? Number(data.arsa_fiyati) : null;
-  if (
-    isStructure &&
-    canSeeStructureCost &&
-    arsaFiyatNum != null &&
-    Number.isFinite(arsaFiyatNum) &&
-    arsaFiyatNum > 0
-  ) {
-    rows.push(['Arazi maliyeti', formatPrice(arsaFiyatNum)]);
+  const structureCostTl = resolveStructureCostTl(data);
+  if (isStructure && canSeeStructureCost && structureCostTl != null) {
+    rows.push([structureCostLabelTitleCase(queryType), formatPrice(structureCostTl)]);
   }
 
-  if (options.canSeeExpertDetail && data.expert_price_detail && typeof data.expert_price_detail === 'object') {
-    const expertPriceDetail = data.expert_price_detail as Record<string, unknown>;
-    const details = ((expertPriceDetail.price_selection as Record<string, unknown> | undefined)?.details ||
-      {}) as Record<string, unknown>;
-    const parcelValues = (expertPriceDetail.parcel_values || {}) as Record<string, unknown>;
-    const formatExpertPrice = (v: unknown) => {
-      if (v == null || v === '') return '—';
-      const n = Number(v);
-      return Number.isFinite(n) ? formatPrice(n) : String(v);
-    };
-    if (details.db_price != null || details.db_unit_price != null) {
-      rows.push(['DB Birim Fiyat', formatExpertPrice(details.db_price ?? details.db_unit_price)]);
-    }
-    if (details.km_price != null || details.km_recommended_price != null) {
-      rows.push(['KM Birim Fiyat', formatExpertPrice(details.km_price ?? details.km_recommended_price)]);
-    }
-    if (details.prediction_price != null || details.prediction_first_price != null) {
-      rows.push([
-        'Tahmin Birim Fiyat',
-        formatExpertPrice(details.prediction_price ?? details.prediction_first_price),
-      ]);
-    }
-    const parcelUnit =
-      parcelValues.parcel_unit_from_dfa ?? parcelValues.unite_price ?? parcelValues.parcel_uniteprice;
-    if (parcelUnit != null) {
-      rows.push(['Parsel Birim Fiyat', formatExpertPrice(parcelUnit)]);
-    }
+  const landCostTl = resolveLandCostTl(data);
+  if (isStructure && canSeeStructureCost && landCostTl != null && Number.isFinite(landCostTl)) {
+    rows.push(['Arazi maliyeti', formatPrice(landCostTl)]);
   }
 
-  if (options.canSeeExpertDetail || !isStructure) {
-    rows.push(['Birim Fiyat', formatPrice(data.unit_price)]);
-  }
-
+  const { total: displayTotal } = getPortalValuationDisplay(data);
   const landUnit = getAraziLandUnitSubline(data);
   rows.push([
     'Toplam fiyat (TL)',
-    formatPrice(data.total_price),
+    formatPrice(displayTotal ?? data.total_price),
     true,
     landUnit?.label,
     landUnit?.value,

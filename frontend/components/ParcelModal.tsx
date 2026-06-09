@@ -11,6 +11,13 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 import { ProParcelResponse } from '../src/types/parcelResponse';
 import { formatTurkishPrice, parseTurkishPrice } from '../src/utils/priceParser';
 import { normalizeParcelShapeLabel } from '../src/utils/normalizeParcelShapeLabel';
+import {
+  mergeParcelDisplayProperties,
+  pickParcelDisplayValue,
+  LOCATION_IL_KEYS,
+  LOCATION_ILCE_KEYS,
+  LOCATION_MAHALLE_KEYS,
+} from '../src/utils/mergeParcelDisplayProperties';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
 import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
@@ -134,16 +141,15 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
 
-  const mergedProperties = useMemo(() => {
-    const parametersData: any = analysisData?.parameters_data || {};
-    const parcelValues = parametersData?.parcel_values || {};
-    return { ...properties, ...parametersData, ...parcelValues };
-  }, [properties, analysisData]);
+  const mergedProperties = useMemo(
+    () => mergeParcelDisplayProperties({ properties, analysisData }),
+    [properties, analysisData],
+  );
 
   const summary = useMemo(() => {
-    const il = pickValue(mergedProperties, ['ilAd', 'il', 'city', 'city_name', 'cityName', 'CityName']);
-    const ilce = pickValue(mergedProperties, ['ilceAd', 'ilce', 'town', 'town_name', 'townName', 'TownName']);
-    const mahalle = pickValue(mergedProperties, ['mahalleAd', 'mahalle', 'quarter', 'quarter_name', 'QuarterName']);
+    const il = pickParcelDisplayValue(mergedProperties, LOCATION_IL_KEYS);
+    const ilce = pickParcelDisplayValue(mergedProperties, LOCATION_ILCE_KEYS);
+    const mahalle = pickParcelDisplayValue(mergedProperties, LOCATION_MAHALLE_KEYS);
     const ada = pickValue(mergedProperties, ['adaNo', 'ada', 'Ada']);
     const parsel = pickValue(mergedProperties, ['parselNo', 'parsel', 'Parsel']);
     const alanRaw = mergedProperties.alan ?? mergedProperties.area ?? mergedProperties.Area ?? mergedProperties.area_m2;

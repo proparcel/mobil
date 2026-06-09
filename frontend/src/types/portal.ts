@@ -5,6 +5,7 @@
  *   GET /api/portal/locations/
  *   GET /api/portal/recent-queries/
  *   GET /api/portal/recent-queries/<id>/
+ *   GET /api/portal/recent-queries/<id>/terrain-3d/
  *   GET /api/portal/recent-queries/<id>/report/
  */
 
@@ -116,6 +117,87 @@ export interface PortalQueryListParams {
   nocache?: boolean | string;
   /** `source_listing_id` dolu snapshot'ları hariç tut (Son 30 gün saf Pro listesi) */
   exclude_listing_source?: string;
+}
+
+// ── Parcel 3D terrain (lazy /terrain-3d/) ──
+
+export interface ParcelTerrain3dSlopeColorStop {
+  maxSlopeDeg: number;
+  label: string;
+  /** #RRGGBB — Unity renk kaynağı */
+  color: string;
+}
+
+/** `/terrain-3d/` stats — 2D slopeSummary ile ayni birimler (egim: %). */
+export interface ParcelTerrain3dStats {
+  schemaVersion?: number;
+  displaySlopeUnit?: 'percent' | 'degree';
+  slope_avg_pct?: number | null;
+  slope_max_pct?: number | null;
+  parcel_slope_pct_0_20?: number | null;
+  parcel_slope_pct_20_30?: number | null;
+  parcel_slope_pct_over_30?: number | null;
+  elevation_min_m?: number | null;
+  elevation_max_m?: number | null;
+  elevation_range_m?: number | null;
+  area_m2?: number | null;
+  /** @deprecated slope_avg_pct kullanin — yuzde */
+  slope_avg_poly?: number | null;
+  slope_max_poly?: number | null;
+  elevation_min?: number | null;
+  elevation_max?: number | null;
+  parcel_slope_percent_0_20?: number | null;
+  parcel_slope_percent_20_30?: number | null;
+  parcel_slope_percent_over_30?: number | null;
+}
+
+export interface ParcelTerrain3d {
+  version: number;
+  type: 'parcel_terrain_3d';
+  parcel: {
+    ada?: string | null;
+    parsel?: string | null;
+    areaM2?: number | null;
+    center: { lat: number; lon: number };
+    localPolygon: Array<{ x: number; z: number }>;
+  };
+  terrain: {
+    gridType: 'regular';
+    width: number;
+    height: number;
+    cellSizeM: number;
+    origin: { x: number; z: number };
+    heightScaleSuggestion?: number;
+    elevations: number[];
+    /** Derece, row-major: index = row * width + col */
+    slopes: number[];
+    /** 1 = parsel içi, 0 = dışı */
+    mask: number[];
+  };
+  stats: ParcelTerrain3dStats;
+  render: {
+    slopeColorStops: ParcelTerrain3dSlopeColorStop[];
+    showParcelBorder?: boolean;
+    showElevationLegend?: boolean;
+    showSlopeLegend?: boolean;
+  };
+  meta?: Record<string, unknown>;
+}
+
+export interface PortalSlopeSummary {
+  parcel_slope_percent_0_20?: number | null;
+  parcel_slope_percent_20_30?: number | null;
+  parcel_slope_percent_over_30?: number | null;
+  slope_avg_poly?: number | null;
+  morphology_type?: string | null;
+  morphology_label?: string | null;
+  terrain_stats?: Record<string, number | null> | null;
+}
+
+export interface PortalTerrain3dResponse {
+  success: boolean;
+  terrain3d?: ParcelTerrain3d;
+  message?: string;
 }
 
 // ── Query Detail ──
@@ -385,6 +467,20 @@ export interface PortalQueryDetail {
   /** Parsel bölünebilirlik özeti (geometry bundle) */
   parcel_split_note?: string | null;
   parcel_split_verdict?: string | null;
+  /** Portal detay — genel puan (PG denorm) */
+  combined_meta_stars_pct?: number | string | null;
+  /** Mahalle merkezine mesafe (m) — snapshot / analysis */
+  quarter_center_distance_m?: number | string | null;
+  /** parameters_data.center_values.centroid_dist yedek kaynağı */
+  parameters_data?: Record<string, unknown> | null;
+  /** İlan-only detay modu */
+  listing_only?: boolean | null;
+  /** Pro sorgu kilitli (ilan sahibi değil, pro açılmamış) */
+  listing_pro_sorgu_locked?: boolean | null;
+  /** 3D eğim paketi mevcut mu (mesh detay GET'te yok) */
+  terrain3dAvailable?: boolean;
+  /** 2D eğim özeti — Parsel Eğimi sekmesi */
+  slopeSummary?: PortalSlopeSummary | null;
 }
 
 // ── Ratings ──

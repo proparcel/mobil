@@ -18,7 +18,13 @@ import {
 import { normalizeGeometryCoordinates, calculateBoundsAndCamera, isPointInParcel } from '../parcelUtils';
 import { extractNitelikText, generatePropertyTypeTitle } from '../propertyTypeUtils';
 import { fetchTkgmByIds } from '../tkgmApi';
-import { runProParcelQuery, ProQueryLimitError } from '../proQueryApi';
+import {
+  isPassiveParcelPayload,
+  normalizeAndConfirm,
+  shouldShowNotFoundBanner,
+  type PassiveConfirmFn,
+} from '../tkgmPassiveParcel';
+import { runProParcelQuery, getProQueryErrorAlert } from '../proQueryApi';
 
 /**
  * Camera ref interface
@@ -78,7 +84,8 @@ export const createHandleAdaParselSubmit = (
   cameraRef: CameraRef,
   camRef: CamRef,
   isProgrammaticMoveRef: ProgrammaticMoveRef,
-  programmaticTimerRef: ProgrammaticTimerRef
+  programmaticTimerRef: ProgrammaticTimerRef,
+  confirmPassiveParcel?: PassiveConfirmFn
 ) => {
   return async (payload: {
     mahalleTkgmValue: number;
@@ -109,6 +116,8 @@ export const createHandleAdaParselSubmit = (
             requestBody.mahalleTkgmValue,
             requestBody.ada,
             requestBody.parsel,
+            undefined,
+            confirmPassiveParcel,
           )) as TkgmViewResponse);
 
       // Geometry çıkar
@@ -243,12 +252,59 @@ export const createHandleAdaParselSubmit = (
       setActiveScreen(null);
       setParcelModalVisible(true);
     } catch (e: any) {
-      console.error('[parcelHandlers.ts] Ada/Parsel sorgu hatası:', e);
-      if (e instanceof ProQueryLimitError) {
-        Alert.alert('Günlük Sorgu Limiti', e.message);
-      } else {
-        Alert.alert('Hata', e?.message || 'Sorgu hatası');
+      // Pasif/toplulaştırılmış parsel (404 payload veya pasif data) ise kurtar — hata gösterme.
+      if (
+        !isProMode &&
+        e?.type === 'TKGM_PARCEL_NOT_FOUND' &&
+        isPassiveParcelPayload(e?.detail)
+      ) {
+        try {
+          const normalized = (await normalizeAndConfirm(
+            e.detail,
+            confirmPassiveParcel,
+          )) as TkgmViewResponse;
+          const geom = normalized?.geometry as GeoJSONGeometry | undefined;
+          if (geom) {
+            // Haritada aktif parsel geometrisi; properties'te pp_tkgm_passive_* meta korunur.
+            setParcelData({
+              geometry: geom,
+              properties: (normalized.properties as Record<string, any>) || {},
+              analysisData: null,
+            });
+            const cameraSettings = calculateBoundsAndCamera(geom as any);
+            if (cameraSettings && cameraRef.current?.setCamera) {
+              cameraRef.current.setCamera({
+                centerCoordinate: cameraSettings.center,
+                zoomLevel: cameraSettings.zoom,
+                pitch: camRef.current.pitch ?? 0,
+                animationDuration: 900,
+                animationMode: 'easeTo',
+              });
+            }
+            setActiveScreen(null);
+            setParcelModalVisible(true);
+            return;
+          }
+        } catch (recoverErr) {
+          console.warn('[parcelHandlers.ts] Pasif parsel kurtarma başarısız:', recoverErr);
+        }
       }
+
+      console.error('[parcelHandlers.ts] Ada/Parsel sorgu hatası:', e);
+
+      // Pasif redirect kaynaklı "bulunamadı" ise gerçek hata değil → sessiz geç.
+      if (e?.type === 'TKGM_PARCEL_NOT_FOUND' && !shouldShowNotFoundBanner(e)) {
+        return;
+      }
+
+      // TKGM tipli hatalar (500/timeout/network/invalid vb.) → çökme yerine uyarı modalı.
+      if (typeof e?.type === 'string' && e?.message) {
+        Alert.alert('Uyarı', e.message);
+        return;
+      }
+
+      const { title, message } = getProQueryErrorAlert(e);
+      Alert.alert(title, message);
     } finally {
       setIsLoadingParcel(false);
     }

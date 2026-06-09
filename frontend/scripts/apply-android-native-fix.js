@@ -574,6 +574,68 @@ if (!fs.existsSync(androidRoot)) {
   process.exit(0);
 }
 
+function ensureAndroidLocalProperties() {
+  const localPropsPath = path.join(androidRoot, "local.properties");
+  if (fs.existsSync(localPropsPath)) return true;
+
+  const sdkCandidates = [
+    process.env.ANDROID_SDK_ROOT,
+    process.env.ANDROID_HOME,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Android", "Sdk") : null,
+  ].filter(Boolean);
+
+  const sdkDir = sdkCandidates.find((candidate) => fs.existsSync(candidate));
+  if (!sdkDir) {
+    console.warn(
+      "[android-native-fix] Android SDK bulunamadi; android/local.properties olusturulamadi (ANDROID_HOME ayarlayin)",
+    );
+    return true;
+  }
+
+  const escaped = sdkDir.replace(/\\/g, "\\\\");
+  fs.writeFileSync(localPropsPath, `sdk.dir=${escaped}\n`);
+  console.warn(`[android-native-fix] android/local.properties olusturuldu (${sdkDir})`);
+  return true;
+}
+
+function ensureUnityLibraryLinked() {
+  try {
+    const { ensureUnityLibraryEmbed } = require("../plugins/withUnityLibraryEmbed.js");
+    return ensureUnityLibraryEmbed(root) !== false;
+  } catch (err) {
+    console.warn("[android-native-fix] unityLibrary embed atlandi:", err.message);
+    return true;
+  }
+}
+
+// TerrainUnityActivity drawable kaynaklari (R.drawable.terrain_*). expo prebuild --clean
+// android/ klasorunu sildigi icin bu kaynaklar her prebuild sonrasi tekrar konur.
+function ensureTerrainDrawables() {
+  try {
+    const src = path.join(root, "modules", "parcelTerrain3d", "native", "androidRes");
+    const dest = path.join(androidRoot, "app", "src", "main", "res");
+    if (!fs.existsSync(src)) {
+      console.warn("[android-native-fix] terrain androidRes yok, drawable atlandi:", src);
+      return true;
+    }
+    const copyDir = (from, to) => {
+      fs.mkdirSync(to, { recursive: true });
+      for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+        const f = path.join(from, entry.name);
+        const t = path.join(to, entry.name);
+        if (entry.isDirectory()) copyDir(f, t);
+        else fs.copyFileSync(f, t);
+      }
+    };
+    copyDir(src, dest);
+    console.log("[android-native-fix] terrain drawable kaynaklari kopyalandi (R.drawable.terrain_*)");
+    return true;
+  } catch (err) {
+    console.warn("[android-native-fix] terrain drawable kopyalama hatasi:", err.message);
+    return true;
+  }
+}
+
 const ok =
   ensurePackageJsonAutolinkingExclude() &&
   ensureGradleProperties() &&
@@ -590,5 +652,8 @@ const ok =
   ensureAndroidAppLinkIntentFilters() &&
   ensureSettingsIncludesAssetPacks() &&
   ensureAppBuildGradlePlayRelease() &&
+  ensureAndroidLocalProperties() &&
+  ensureUnityLibraryLinked() &&
+  ensureTerrainDrawables() &&
   ensurePackageJsonAndroidScript();
 process.exit(ok ? 0 : 1);

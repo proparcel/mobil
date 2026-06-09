@@ -79,3 +79,7 @@ app_releases/*.apk
 app_releases/*.ipa
 .metro-bundle-test.js
 .metro-assets-test/
+
+# Terrain 3D deneme loglari (Metro sync) — latest.json + ta_*.json
+logs/terrain3d/*.json
+!logs/terrain3d/.gitkeep

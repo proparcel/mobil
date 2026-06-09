@@ -1,0 +1,10 @@
+Library/
+Temp/
+Logs/
+UserSettings/
+builds/ios/UnityFramework.framework/
+builds/ios/Data/
+builds/android/unityLibrary/
+*.apk
+*.aab
+*.ipa

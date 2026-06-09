@@ -29,7 +29,6 @@ import ListingFavoriteMenuMobile from '../../components/app/ListingFavoriteMenuM
 import QueryFavoriteMenuMobile from '../../components/app/QueryFavoriteMenuMobile';
 import { usePortalDetailScoresData } from '../../components/app/PortalDetailScoresBlock';
 import PortalInsightSummaryCard from '../../components/app/PortalInsightSummaryCard';
-import PortalInsightPriceCard from '../../components/app/PortalInsightPriceCard';
 import PortalKmTab from '../../components/app/PortalKmTab';
 import PortalMulkScoreDetailCard, { PortalAraziScoreDetailCard } from '../../components/app/PortalMulkScoreDetailCard';
 import PortalFruitInvestmentCard from '../../components/app/PortalFruitInvestmentCard';
@@ -49,6 +48,7 @@ import {
   buildStructureInfoRows,
   isStructurePortalQueryType,
 } from '../../src/utils/portalDetailCardContract';
+import { getQueryAgeVisualTier } from '../../src/utils/portalQueryAgeTheme';
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
 import {
   isProfileReturn,
@@ -118,7 +118,26 @@ import {
   enrichMorphologyForDisplay,
   resolvePortalAvgSlopeFromSectionPayload,
 } from '../../src/utils/slopeTerrainHelpers';
+import {
+  logTerrain3dDev,
+  PARCEL_TERRAIN_3D_ENABLED,
+  useOpenParcelTerrain3d,
+  isTerrain3dMockMode,
+} from '../../modules/parcelTerrain3d';
 import { createEdgeMeasurementFeatures, type EdgeMeasureData, type EdgeMeasurementFeature } from '../../src/utils/edgeMeasurementsManager';
+import {
+  buildQuarterCenterLineGeoJSON,
+  buildQuarterCenterPointGeoJSON,
+  fetchQuarterCenterLonLat,
+} from '../../src/utils/quarterCenterMap';
+import { resolveQuarterCenterDistanceM } from '../../src/utils/portalInsightHelpers';
+import { navigateAfterProQuery } from '../../src/utils/proQueryNavigation';
+import {
+  buildPortalDetailProQueryContext,
+  buildTkgmFeatureFromPortalDetail,
+} from '../../src/utils/portalDetailProQueryLauncher';
+import { useProQueryAfterTypeSelect } from '../../src/hooks/useProQueryAfterTypeSelect';
+import ProQueryTypeModalHost from '../../components/app/ProQueryTypeModalHost';
 import {
   ELECTRIC_LEGAL_INFO,
   ELECTRIC_LINE_COLOR,
@@ -1213,6 +1232,14 @@ export default function Son30GunDetayScreen() {
     }, 450);
   }, []);
 
+  const openMulkScoreTab = useCallback(() => {
+    setActiveDetailTabId('investment_score');
+    setDetailMenuVisible(false);
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: 420, animated: true });
+    }, 300);
+  }, []);
+
   const [data, setData] = useState<PortalQueryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const detailLoadedRef = useRef(false);
@@ -1248,6 +1275,11 @@ export default function Son30GunDetayScreen() {
   const heroGalleryListRef = useRef<FlatList<HeroListingMediaItem>>(null);
   /** Galeri önizlemesinde ses kapalı başlar; kullanıcı hoparlör ile açar */
   const [heroVideoMuted, setHeroVideoMuted] = useState(true);
+  const quarterCenterCacheRef = useRef<{ lonLat: [number, number]; label: string } | null>(null);
+  const [quarterCenterLonLat, setQuarterCenterLonLat] = useState<[number, number] | null>(null);
+  const [quarterCenterMapVisible, setQuarterCenterMapVisible] = useState(false);
+  const [quarterCenterMapLoading, setQuarterCenterMapLoading] = useState(false);
+  const [quarterCenterMapError, setQuarterCenterMapError] = useState<string | null>(null);
 
   // Map page with 2D/3D toggle
   const [mapPageVisible, setMapPageVisible] = useState(false);
@@ -1373,6 +1405,57 @@ export default function Son30GunDetayScreen() {
     }
     loginRedirectPendingRef.current = false;
   }, [isAuthenticated, isAuthLoading, snapshotId, redirectToLoginForDetail]);
+
+  // ── ProSorgu pill → tip seçimi ile yeni Pro Sorgu (web parity; onay modalı YOK) ──
+  const proQueryFlow = useProQueryAfterTypeSelect({
+    isAuthenticated,
+    source: 'portal-detail',
+    onLogin: () => redirectToLoginForDetail(),
+    onInsufficientCredit: () => router.push('pricing'),
+    onSuccess: async (resultData) => {
+      // Yeni snapshot → mevcut detay ekranını DEĞİŞTİRMEDEN yeni bir detay ekranı it.
+      const pushRouter = {
+        push: (pathname: string, params?: Record<string, string>) => {
+          if (pathname === 'son-30-gun-detay') {
+            router.pushNew(pathname, params);
+          } else {
+            router.push(pathname, params);
+          }
+        },
+      };
+      const navResult = await navigateAfterProQuery(pushRouter, resultData);
+      DeviceEventEmitter.emit(PORTAL_RECENT_QUERIES_CHANGED, {
+        snapshotId: navResult.snapshotId ?? undefined,
+        cityId: navResult.cityId ?? undefined,
+      } as PortalRecentQueriesChangedPayload);
+    },
+  });
+
+  /** Yalnızca kendi sorgu detayı + ilan görünümü değilken ProSorgu pill tıklanabilir. */
+  const canLaunchProQueryFromPill = useMemo(
+    () => !isListingDetailView && Boolean(data?.is_own_query),
+    [isListingDetailView, data?.is_own_query],
+  );
+
+  const handleProSorguPillPress = useCallback(() => {
+    if (!data || !canLaunchProQueryFromPill || proQueryFlow.submitting) return;
+    if (!isAuthenticated) {
+      redirectToLoginForDetail();
+      return;
+    }
+    try {
+      const feature = buildTkgmFeatureFromPortalDetail(data);
+      const ctx = buildPortalDetailProQueryContext(data);
+      proQueryFlow.launch({
+        feature,
+        title: ctx.title,
+        suggestedType: ctx.suggestedType,
+        areaM2: ctx.areaM2,
+      });
+    } catch (err: any) {
+      Alert.alert('Hata', err?.message || 'Yeni Pro Sorgu başlatılamadı.');
+    }
+  }, [data, canLaunchProQueryFromPill, proQueryFlow, isAuthenticated, redirectToLoginForDetail]);
 
   // Portal detay — tam ekran loading yok; ilk açılışta kabuk, veri arka planda gelir
   const loadDetail = useCallback(async (opts?: { silent?: boolean }) => {
@@ -1685,11 +1768,62 @@ export default function Son30GunDetayScreen() {
       }) as PortalQueryDetail,
     [snapshotId],
   );
+  const listingOnly = Boolean(data?.listing_only);
+  const listingProLocked = !listingOnly && Boolean(data?.listing_pro_sorgu_locked);
+
   const scores = usePortalDetailScoresData(
     Number.isFinite(snapshotId) ? snapshotId : 0,
     data ?? detailStub,
-    Boolean(data),
+    Boolean(data) && !listingProLocked && !listingOnly,
   );
+
+  const { openTerrain3d, terrain3dLoading } = useOpenParcelTerrain3d(data, router);
+  const terrain3dMockMode = isTerrain3dMockMode();
+
+  useEffect(() => {
+    if (!data || !__DEV__) return;
+    logTerrain3dDev('detail', {
+      snapshotId: data.snapshot_id,
+      available: data.terrain3dAvailable === true,
+    });
+  }, [data?.snapshot_id, data?.terrain3dAvailable]);
+
+  const handleQuarterCenterChipClick = useCallback(async () => {
+    if (!data || listingOnly || listingProLocked) return;
+    setQuarterCenterMapError(null);
+    if (quarterCenterCacheRef.current?.lonLat) {
+      setQuarterCenterMapVisible((visible) => {
+        const next = !visible;
+        if (next) setHeroTopTab('map');
+        return next;
+      });
+      return;
+    }
+    setQuarterCenterMapLoading(true);
+    try {
+      const result = await fetchQuarterCenterLonLat(data as unknown as Record<string, unknown>);
+      if (!result?.lonLat) {
+        setQuarterCenterMapError('Mahalle merkezi koordinatı bulunamadı.');
+        return;
+      }
+      quarterCenterCacheRef.current = result;
+      setQuarterCenterLonLat(result.lonLat);
+      setQuarterCenterMapVisible(true);
+      setHeroTopTab('map');
+    } catch (err: unknown) {
+      setQuarterCenterMapError(err instanceof Error ? err.message : 'Mahalle merkezi alınamadı.');
+    } finally {
+      setQuarterCenterMapLoading(false);
+    }
+  }, [data, listingOnly, listingProLocked]);
+
+  useEffect(() => {
+    quarterCenterCacheRef.current = null;
+    setQuarterCenterLonLat(null);
+    setQuarterCenterMapVisible(false);
+    setQuarterCenterMapLoading(false);
+    setQuarterCenterMapError(null);
+  }, [data?.snapshot_id]);
 
   // Load profile info for PDF
   useEffect(() => {
@@ -2557,6 +2691,24 @@ export default function Son30GunDetayScreen() {
     return buildElectricLineFeatureCollection(electricLineFeatureResolved, electricValuesResolved);
   }, [activeDetailTabId, electricLineFeatureResolved, electricValuesResolved]);
 
+  const quarterCenterLineGeoJSON = useMemo(() => {
+    if (!quarterCenterMapVisible || !quarterCenterLonLat || !parcelCenter) return null;
+    const analysis = scores.invPayload?.analysis ?? null;
+    const distanceM = resolveQuarterCenterDistanceM(data, analysis);
+    return buildQuarterCenterLineGeoJSON(parcelCenter, quarterCenterLonLat, distanceM);
+  }, [
+    quarterCenterMapVisible,
+    quarterCenterLonLat,
+    parcelCenter,
+    data,
+    scores.invPayload?.analysis,
+  ]);
+
+  const quarterCenterPointGeoJSON = useMemo(() => {
+    if (!quarterCenterMapVisible || !quarterCenterLonLat) return null;
+    return buildQuarterCenterPointGeoJSON(quarterCenterLonLat);
+  }, [quarterCenterMapVisible, quarterCenterLonLat]);
+
   const electricHasLineCoords = useMemo(
     () => hasElectricLineCoords(electricLineFeatureResolved, electricValuesResolved),
     [electricLineFeatureResolved, electricValuesResolved],
@@ -2862,18 +3014,40 @@ export default function Son30GunDetayScreen() {
           <Text style={s.cardTitle}>{title}</Text>
         </View>
         <View style={s.detailInfoKvBox}>
-          {rows.map(([lab, val, prominent, sublineLabel, sublineValue], ri) => (
+          {rows.map(([lab, val, prominent, sublineLabel, sublineValue], ri) => {
+            const ageTier =
+              lab === 'Oluşturma Tarihi' ? getQueryAgeVisualTier(data.created_at) : 'default';
+            return (
             <View
               key={`${cardKey}-${ri}-${normalizeDetailLabelKey(lab)}`}
               style={[
                 s.detailInfoKvRow,
                 prominent ? s.detailInfoKvRowProminent : null,
+                ageTier === 'yellow' ? s.detailInfoKvRowAgeYellow : null,
+                ageTier === 'red' ? s.detailInfoKvRowAgeRed : null,
                 ri === rows.length - 1 && !footerText ? s.detailInfoKvRowLast : null,
               ]}
             >
-              <Text style={[s.detailInfoKvLabel, prominent ? s.detailInfoKvLabelProminent : null]}>{lab}</Text>
+              <Text
+                style={[
+                  s.detailInfoKvLabel,
+                  prominent ? s.detailInfoKvLabelProminent : null,
+                  ageTier === 'yellow' ? s.detailInfoKvLabelAgeYellow : null,
+                  ageTier === 'red' ? s.detailInfoKvLabelAgeRed : null,
+                ]}
+              >
+                {lab}
+              </Text>
               <View style={s.detailInfoKvValueCol}>
-                <Text style={[s.detailInfoKvVal, prominent ? s.detailInfoKvValProminent : null]} numberOfLines={6}>
+                <Text
+                  style={[
+                    s.detailInfoKvVal,
+                    prominent ? s.detailInfoKvValProminent : null,
+                    ageTier === 'yellow' ? s.detailInfoKvValAgeYellow : null,
+                    ageTier === 'red' ? s.detailInfoKvValAgeRed : null,
+                  ]}
+                  numberOfLines={6}
+                >
                   {val}
                 </Text>
                 {sublineLabel && sublineValue ? (
@@ -2883,7 +3057,8 @@ export default function Son30GunDetayScreen() {
                 ) : null}
               </View>
             </View>
-          ))}
+            );
+          })}
         </View>
         {footerText ? (
           <Text style={s.detailInfoKvFooter}>{footerText}</Text>
@@ -3543,9 +3718,31 @@ export default function Son30GunDetayScreen() {
       ) : null}
 
       <View style={[s.modeNoticeBar, isListingDetailView ? s.modeNoticeBarListing : s.modeNoticeBarQuery]}>
-        <View style={[s.modeNoticePill, isListingDetailView ? s.modeNoticePillListing : s.modeNoticePillQuery]}>
-          <Text style={s.modeNoticePillText}>{isListingDetailView ? 'İlan' : 'ProSorgu'}</Text>
-        </View>
+        {canLaunchProQueryFromPill ? (
+          <TouchableOpacity
+            style={[
+              s.modeNoticePill,
+              s.modeNoticePillQuery,
+              s.modeNoticePillButton,
+              proQueryFlow.submitting && s.modeNoticePillDisabled,
+            ]}
+            onPress={handleProSorguPillPress}
+            disabled={proQueryFlow.submitting}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="ProSorgu: tip seçip yeni Pro Sorgu başlat"
+          >
+            {proQueryFlow.submitting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={s.modeNoticePillText}>ProSorgu</Text>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <View style={[s.modeNoticePill, isListingDetailView ? s.modeNoticePillListing : s.modeNoticePillQuery]}>
+            <Text style={s.modeNoticePillText}>{isListingDetailView ? 'İlan' : 'ProSorgu'}</Text>
+          </View>
+        )}
         {detailModeNoticeTitle ? (
           <Text
             style={[s.modeNoticeText, isListingDetailView ? s.modeNoticeTextListing : s.modeNoticeTextQuery]}
@@ -3742,6 +3939,61 @@ export default function Son30GunDetayScreen() {
                         lineWidth: 4,
                         lineOpacity: 0.9,
                         lineDasharray: [2, 1],
+                      }}
+                    />
+                  </Mapbox.ShapeSource>
+                ) : null}
+
+                {quarterCenterLineGeoJSON ? (
+                  <Mapbox.ShapeSource id="hero-quarter-center-line-src" shape={quarterCenterLineGeoJSON}>
+                    <Mapbox.LineLayer
+                      id="hero-quarter-center-line-layer"
+                      style={{
+                        lineColor: '#ea580c',
+                        lineWidth: 3,
+                        lineOpacity: 0.95,
+                        lineDasharray: [2, 1.5],
+                      }}
+                    />
+                    <Mapbox.SymbolLayer
+                      id="hero-quarter-center-line-label"
+                      style={{
+                        symbolPlacement: 'line-center',
+                        textField: ['get', 'label'],
+                        textSize: 11,
+                        textColor: '#fff7ed',
+                        textHaloColor: 'rgba(124,45,18,0.92)',
+                        textHaloWidth: 2,
+                        textAllowOverlap: true,
+                        textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                      }}
+                    />
+                  </Mapbox.ShapeSource>
+                ) : null}
+
+                {quarterCenterPointGeoJSON ? (
+                  <Mapbox.ShapeSource id="hero-quarter-center-point-src" shape={quarterCenterPointGeoJSON}>
+                    <Mapbox.CircleLayer
+                      id="hero-quarter-center-point-circle"
+                      style={{
+                        circleRadius: 9,
+                        circleColor: '#f97316',
+                        circleStrokeColor: '#ffffff',
+                        circleStrokeWidth: 2,
+                      }}
+                    />
+                    <Mapbox.SymbolLayer
+                      id="hero-quarter-center-point-label"
+                      style={{
+                        textField: ['get', 'label'],
+                        textSize: 11,
+                        textColor: '#ffffff',
+                        textHaloColor: 'rgba(124,45,18,0.9)',
+                        textHaloWidth: 2,
+                        textAllowOverlap: true,
+                        textAnchor: 'top',
+                        textOffset: [0, 1.2],
+                        textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
                       }}
                     />
                   </Mapbox.ShapeSource>
@@ -3991,6 +4243,18 @@ export default function Son30GunDetayScreen() {
             {activeDetailTabId === 'overview' && (
               <>
                 <View ref={bilgiSectionRef}>
+                  <PortalInsightSummaryCard
+                    detail={data}
+                    data={scores.insightData}
+                    listingProLocked={listingProLocked}
+                    listingOnly={listingOnly}
+                    onOpenMulkScoreTab={openMulkScoreTab}
+                    onOpenKmTab={openKmTab}
+                    onQuarterCenterChipPress={() => void handleQuarterCenterChipClick()}
+                    quarterCenterMapActive={quarterCenterMapVisible}
+                    quarterCenterMapLoading={quarterCenterMapLoading}
+                    quarterCenterMapError={quarterCenterMapError}
+                  />
                   {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info')}
                   <PortalProParcelPriceCard detail={data} topMargin={12} />
                   {renderDetailKvCard(
@@ -4000,10 +4264,6 @@ export default function Son30GunDetayScreen() {
                     'structure-info',
                     12,
                   )}
-                  <View style={s.insightMetricsRow}>
-                    <PortalInsightSummaryCard detail={data} data={scores.insightData} />
-                    <PortalInsightPriceCard summary={data} onOpenKmTab={openKmTab} />
-                  </View>
                 </View>
                 <View ref={dfaSectionRef}>
                   <PortalDfaTableCard
@@ -4042,10 +4302,32 @@ export default function Son30GunDetayScreen() {
                 (slopeElev.parcel_slope_values || slopeElev.slope_values || {}) as Record<string, unknown>,
               ) as Record<string, any>;
               const sv = (slopeElev.parcel_slope_values || slopeElev.slope_values || {}) as Record<string, any>;
-              const avgSlope = resolvePortalAvgSlopeFromSectionPayload(
-                slopeSectionPayload,
-                (data.slope_elevation_json || null) as Record<string, unknown> | null,
-              );
+              const slopeSummary = data.slopeSummary;
+              if (slopeSummary && typeof slopeSummary === 'object') {
+                if (slopeSummary.parcel_slope_percent_0_20 != null) {
+                  sv.parcel_slope_percent_0_20 = slopeSummary.parcel_slope_percent_0_20;
+                }
+                if (slopeSummary.parcel_slope_percent_20_30 != null) {
+                  sv.parcel_slope_percent_20_30 = slopeSummary.parcel_slope_percent_20_30;
+                }
+                if (slopeSummary.parcel_slope_percent_over_30 != null) {
+                  sv.parcel_slope_percent_over_30 = slopeSummary.parcel_slope_percent_over_30;
+                }
+                if (slopeSummary.slope_avg_poly != null) {
+                  sv.slope_avg_poly = slopeSummary.slope_avg_poly;
+                }
+              }
+              const avgSlopeFromSummary =
+                slopeSummary?.slope_avg_poly != null &&
+                Number.isFinite(Number(slopeSummary.slope_avg_poly))
+                  ? Number(slopeSummary.slope_avg_poly)
+                  : null;
+              const avgSlope =
+                avgSlopeFromSummary ??
+                resolvePortalAvgSlopeFromSectionPayload(
+                  slopeSectionPayload,
+                  (data.slope_elevation_json || null) as Record<string, unknown> | null,
+                );
               const fmtPctBand = (v: any): string => {
                 if (v == null || v === '') return '—';
                 const n = Number(v);
@@ -4124,6 +4406,32 @@ export default function Son30GunDetayScreen() {
                     ) : (
                       <PortalSlopeTerrainCard slope={avgSlope} />
                     )}
+                    {PARCEL_TERRAIN_3D_ENABLED ? (
+                      <TouchableOpacity
+                        style={[sec.linkBtn, { marginTop: 12 }]}
+                        onPress={openTerrain3d}
+                        disabled={terrain3dLoading}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="3D Eğim Görüntüle"
+                      >
+                        {terrain3dLoading ? (
+                          <ActivityIndicator size="small" color={COLORS.accentBlue} />
+                        ) : (
+                          <Ionicons name="cube-outline" size={18} color={COLORS.accentBlue} />
+                        )}
+                        <Text style={[sec.linkBtnText, { flex: 1 }]}>
+                          {terrain3dLoading
+                            ? '3D eğim yükleniyor…'
+                            : terrain3dMockMode
+                              ? '3D Eğim Görüntüle (Demo)'
+                              : '3D Eğim Görüntüle'}
+                        </Text>
+                        {!terrain3dLoading ? (
+                          <Ionicons name="chevron-forward" size={16} color={COLORS.textSecondary} />
+                        ) : null}
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                   {renderSlopeBlock('Morfoloji Özeti', morphRows)}
                   <View style={s.card}>
@@ -4948,6 +5256,8 @@ export default function Son30GunDetayScreen() {
         containerRef={shareCombinedRef}
       />
 
+      <ProQueryTypeModalHost controller={proQueryFlow} />
+
     </SafeAreaView>
   );
 }
@@ -5074,6 +5384,16 @@ const s = StyleSheet.create({
   },
   modeNoticePillQuery: {
     backgroundColor: '#2563eb',
+  },
+  modeNoticePillButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 84,
+    minHeight: 24,
+  },
+  modeNoticePillDisabled: {
+    opacity: 0.6,
   },
   modeNoticePillListing: {
     backgroundColor: '#f59e0b',
@@ -5216,6 +5536,14 @@ const s = StyleSheet.create({
   detailInfoKvRowLast: {
     borderBottomWidth: 0,
   },
+  detailInfoKvRowAgeYellow: {
+    backgroundColor: '#fef3c7',
+    borderBottomColor: '#fde68a',
+  },
+  detailInfoKvRowAgeRed: {
+    backgroundColor: '#fef2f2',
+    borderBottomColor: '#fecaca',
+  },
   detailInfoKvLabel: {
     fontSize: 12,
     color: COLORS.textSecondary,
@@ -5225,6 +5553,14 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: COLORS.textPrimary,
+  },
+  detailInfoKvLabelAgeYellow: {
+    color: '#92400e',
+    fontWeight: '600',
+  },
+  detailInfoKvLabelAgeRed: {
+    color: '#991b1b',
+    fontWeight: '600',
   },
   detailInfoKvVal: {
     fontSize: 12,
@@ -5238,6 +5574,12 @@ const s = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: COLORS.accentBlue,
+  },
+  detailInfoKvValAgeYellow: {
+    color: '#92400e',
+  },
+  detailInfoKvValAgeRed: {
+    color: '#991b1b',
   },
   detailInfoKvValueCol: {
     flex: 1,

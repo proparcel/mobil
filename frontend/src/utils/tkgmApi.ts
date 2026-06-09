@@ -3,6 +3,15 @@
  * Basit sorgu TKGM istekleri yalnızca cbsapi.tkgm.gov.tr üzerinden yapılır; backend proxy yok.
  */
 
+import {
+  isPassiveParcelPayload,
+  normalizeAndConfirm,
+  type PassiveConfirmFn,
+} from './tkgmPassiveParcel';
+
+export { isPassiveParcelPayload } from './tkgmPassiveParcel';
+export type { PassiveConfirmFn } from './tkgmPassiveParcel';
+
 const TKGM_API_BASE = 'https://cbsapi.tkgm.gov.tr/megsiswebapi.v3.1/api/parsel';
 const TKGM_TIMEOUT = 20000;
 
@@ -55,13 +64,35 @@ function normalizeTkgmFetchError(error: unknown): TkgmError {
   };
 }
 
-async function parseTkgmResponse(response: Response): Promise<TkgmData> {
+/**
+ * Pasif/toplulaştırılmış parsel ise onay (modal) sonrası normalize feature döndürür.
+ * Pasif değilse data'yı olduğu gibi döner.
+ */
+export async function applyPassiveParcelIfNeeded(
+  data: unknown,
+  confirm?: PassiveConfirmFn,
+): Promise<unknown> {
+  if (isPassiveParcelPayload(data)) {
+    return normalizeAndConfirm(data, confirm);
+  }
+  return data;
+}
+
+async function parseTkgmResponse(
+  response: Response,
+  confirm?: PassiveConfirmFn,
+): Promise<TkgmData> {
   if (response.status === 404) {
     let errorData: Record<string, unknown> | null = null;
     try {
       errorData = await response.json();
     } catch {
       errorData = { Message: 'Parsel Bulunamadı' };
+    }
+    // 404 yanıtı aslında pasif parsel payload'ı olabilir → kurtar (hata fırlatma).
+    if (isPassiveParcelPayload(errorData)) {
+      const normalized = await applyPassiveParcelIfNeeded(errorData, confirm);
+      return normalized as TkgmData;
     }
     const msg =
       (errorData?.Message as string) ||
@@ -103,7 +134,9 @@ async function parseTkgmResponse(response: Response): Promise<TkgmData> {
     } as TkgmError;
   }
 
-  const data = await response.json();
+  let data = await response.json();
+  // 200 yanıtında geometry yok ama gittigiParselListe/pp_tkgm_passive_redirect varsa pasif parsel.
+  data = await applyPassiveParcelIfNeeded(data, confirm);
   if (!data?.geometry || !data?.properties) {
     throw {
       type: 'TKGM_INVALID_DATA',
@@ -114,7 +147,11 @@ async function parseTkgmResponse(response: Response): Promise<TkgmData> {
   return data as TkgmData;
 }
 
-async function fetchTkgmDirect(url: string, signal?: AbortSignal): Promise<TkgmData> {
+async function fetchTkgmDirect(
+  url: string,
+  signal?: AbortSignal,
+  confirm?: PassiveConfirmFn,
+): Promise<TkgmData> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), TKGM_TIMEOUT);
 
@@ -129,7 +166,7 @@ async function fetchTkgmDirect(url: string, signal?: AbortSignal): Promise<TkgmD
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
-    return await parseTkgmResponse(response);
+    return await parseTkgmResponse(response, confirm);
   } catch (error) {
     clearTimeout(timeoutId);
     throw normalizeTkgmFetchError(error);
@@ -140,9 +177,10 @@ async function fetchTkgmDirect(url: string, signal?: AbortSignal): Promise<TkgmD
 export async function fetchTkgmByCoords(
   lat: number,
   lon: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  confirm?: PassiveConfirmFn,
 ): Promise<TkgmData> {
-  return fetchTkgmDirect(`${TKGM_API_BASE}/${lat}/${lon}/`, signal);
+  return fetchTkgmDirect(`${TKGM_API_BASE}/${lat}/${lon}/`, signal, confirm);
 }
 
 /** Ada/parsel ile doğrudan TKGM sorgusu */
@@ -150,13 +188,15 @@ export async function fetchTkgmByIds(
   mahalleTkgmValue: string | number,
   ada: string | number,
   parsel: string | number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  confirm?: PassiveConfirmFn,
 ): Promise<TkgmData> {
   const mahalle = String(mahalleTkgmValue).trim();
   const adaStr = String(ada).trim();
   const parselStr = String(parsel).trim();
   return fetchTkgmDirect(
     `${TKGM_API_BASE}/${mahalle}/${encodeURIComponent(adaStr)}/${encodeURIComponent(parselStr)}`,
-    signal
+    signal,
+    confirm,
   );
 }

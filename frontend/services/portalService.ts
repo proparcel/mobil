@@ -26,6 +26,7 @@ import type {
   MahalleOrtSignalResponse,
   PortalKmSectionData,
   PortalKmPriceMapResponse,
+  PortalTerrain3dResponse,
 } from '../src/types/portal';
 
 async function authDjangoJsonFetch<T>(
@@ -288,6 +289,19 @@ export async function getPortalRecentQueryDetail(
   snapshotId: number,
 ): Promise<ApiResult<PortalQueryDetail>> {
   return authDjangoJsonFetch<PortalQueryDetail>(`/api/portal/recent-queries/${snapshotId}/`);
+}
+
+/**
+ * GET /api/portal/recent-queries/<snapshot_id>/terrain-3d/
+ * Yalnızca kullanıcı 3D istediğinde; detay yüklenirken çağrılmaz.
+ * Kimlik: QueryDfaSnapshot.id (= detail.snapshot_id).
+ */
+export async function getPortalTerrain3d(
+  snapshotId: number,
+): Promise<ApiResult<PortalTerrain3dResponse>> {
+  return authDjangoJsonFetch<PortalTerrain3dResponse>(
+    `/api/portal/recent-queries/${snapshotId}/terrain-3d/`,
+  );
 }
 
 /** GET /api/portal/recent-queries/<id>/enrichment/ — yapı DFA, katman özeti, zenginleştirilmiş dfa_json */

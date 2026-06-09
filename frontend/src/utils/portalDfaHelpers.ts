@@ -15,7 +15,107 @@ export type PortalDfaRow = {
   percent: string;
   tone: 'neutral' | 'positive' | 'negative';
   factor: number | null;
+  portalReportRoad?: boolean;
+  portalReportElectric?: boolean;
 };
+
+const ROAD_REPORT_STEP_KEYS = new Set(['road_access', 'road_land', 'hotspot_road']);
+const ELECTRIC_REPORT_STEP_KEY = 'electric';
+const FACTOR_NEUTRAL_EPS = 1e-6;
+
+function stepFactorFromRow(row: PortalDfaRow, step: PortalDfaStep | Record<string, unknown> | null): number {
+  const raw = row?.factor ?? (step as PortalDfaStep)?.applied_factor;
+  const f = Number(raw);
+  return Number.isFinite(f) ? f : 1;
+}
+
+function stepTextBlob(row: PortalDfaRow, step: PortalDfaStep | Record<string, unknown> | null): string {
+  const s = (step || {}) as PortalDfaStep;
+  const parts = [row?.note, row?.description, row?.stepTitle, row?.stepKey, s?.note, s?.title, s?.key];
+  return parts
+    .map((p) => (p != null ? String(p).trim() : ''))
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function factorIsNeutral(factor: number): boolean {
+  return Math.abs(factor - 1) < FACTOR_NEUTRAL_EPS;
+}
+
+function textSuggestsNoRoadAccess(text: string): boolean {
+  if (!text) return false;
+  return (
+    text.includes('yola bağlantısı yok') ||
+    text.includes('yol: erişim yok') ||
+    /yola\s+bağlantısı\s+yok/.test(text)
+  );
+}
+
+function textSuggestsNoElectricLine(text: string): boolean {
+  if (!text) return false;
+  return (
+    text.includes('elektrik hattı tespit edilmedi') ||
+    text.includes('yüksek gerilim hattı tespit edilmedi') ||
+    (text.includes('tespit edilmediği') && text.includes('yüksek gerilim'))
+  );
+}
+
+/** Web canReportRoadOnDfaRow — portal_dfa_report.py ile aynı kurallar */
+export function canReportRoadOnDfaRow(
+  row: PortalDfaRow,
+  step: PortalDfaStep | Record<string, unknown> | null = null,
+): boolean {
+  const s = (step || {}) as PortalDfaStep;
+  if (s.portal_report_road === true || row.portalReportRoad === true) {
+    return true;
+  }
+  if (s.portal_report_road === false || row.portalReportRoad === false) {
+    return false;
+  }
+
+  const key = String(row?.stepKey || s?.key || '')
+    .trim()
+    .toLowerCase();
+  const factor = stepFactorFromRow(row, step);
+  const text = stepTextBlob(row, step);
+
+  if (ROAD_REPORT_STEP_KEYS.has(key)) {
+    return factor <= 1 + FACTOR_NEUTRAL_EPS;
+  }
+  if (textSuggestsNoRoadAccess(text)) {
+    return factor <= 1 + FACTOR_NEUTRAL_EPS;
+  }
+  return false;
+}
+
+/** Web canReportElectricOnDfaRow */
+export function canReportElectricOnDfaRow(
+  row: PortalDfaRow,
+  step: PortalDfaStep | Record<string, unknown> | null = null,
+): boolean {
+  const s = (step || {}) as PortalDfaStep;
+  if (s.portal_report_electric === true || row.portalReportElectric === true) {
+    return true;
+  }
+  if (s.portal_report_electric === false || row.portalReportElectric === false) {
+    return false;
+  }
+
+  const key = String(row?.stepKey || s?.key || '')
+    .trim()
+    .toLowerCase();
+  const factor = stepFactorFromRow(row, step);
+  const text = stepTextBlob(row, step);
+
+  if (key === ELECTRIC_REPORT_STEP_KEY) {
+    return factorIsNeutral(factor);
+  }
+  if (textSuggestsNoElectricLine(text)) {
+    return factorIsNeutral(factor);
+  }
+  return false;
+}
 
 export function formatDfaPercent(factor: unknown, isInitialRow: boolean): string {
   const numericFactor = Number(factor);
@@ -54,7 +154,7 @@ export function buildDfaRowsFromSteps(steps: PortalDfaStep[] | unknown[] | null 
     const description = note || String(stepTitle);
     const details = normalizeDfaDetails(s);
 
-    return {
+    const row: PortalDfaRow = {
       key: `${s.key || stepTitle}-${index}`,
       stepKey: s.key || null,
       stepTitle: String(stepTitle),
@@ -72,7 +172,22 @@ export function buildDfaRowsFromSteps(steps: PortalDfaStep[] | unknown[] | null 
               ? 'negative'
               : 'neutral',
       factor: Number.isNaN(factor) ? null : factor,
+      portalReportRoad:
+        s.portal_report_road === true ? true : s.portal_report_road === false ? false : undefined,
+      portalReportElectric:
+        s.portal_report_electric === true
+          ? true
+          : s.portal_report_electric === false
+            ? false
+            : undefined,
     };
+    if (row.portalReportRoad === undefined) {
+      row.portalReportRoad = canReportRoadOnDfaRow(row, s);
+    }
+    if (row.portalReportElectric === undefined) {
+      row.portalReportElectric = canReportElectricOnDfaRow(row, s);
+    }
+    return row;
   });
 }
 

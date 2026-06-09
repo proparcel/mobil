@@ -54,14 +54,60 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   return context.resolveRequest(context, moduleName, platform);
 };
 
-// // Exclude unnecessary directories from file watching
-// config.watchFolders = [__dirname];
-// config.resolver.blacklistRE = /(.*)\/(__tests__|android|ios|build|dist|.git|node_modules\/.*\/android|node_modules\/.*\/ios|node_modules\/.*\/windows|node_modules\/.*\/macos)(\/.*)?$/;
-
-// // Alternative: use a more aggressive exclusion pattern
-// config.resolver.blacklistRE = /node_modules\/.*\/(android|ios|windows|macos|__tests__|\.git|.*\.android\.js|.*\.ios\.js)$/;
+// Windows: node_modules icindeki android/ios build ciktilari Metro watcher'i dusurur (ENOENT).
+const nodeNativeBuildBlock = /node_modules[\\/].*[\\/](android|ios)[\\/].*/;
+const nodeBuildIntermediatesBlock = /node_modules[\\/].*[\\/]build[\\/]intermediates[\\/].*/;
+const projectAndroidBuildBlock = /[\\/]android[\\/](build|\.gradle)[\\/].*/;
+const existingBlockList = config.resolver.blockList;
+const blockPatterns = [nodeNativeBuildBlock, nodeBuildIntermediatesBlock, projectAndroidBuildBlock];
+if (existingBlockList) {
+  config.resolver.blockList = Array.isArray(existingBlockList)
+    ? [...existingBlockList, ...blockPatterns]
+    : [existingBlockList, ...blockPatterns];
+} else {
+  config.resolver.blockList = blockPatterns;
+}
 
 // Reduce the number of workers to decrease resource usage
 config.maxWorkers = 2;
+
+const fs = require('fs');
+const TERRAIN_LOG_DIR = path.join(__dirname, 'logs', 'terrain3d');
+
+config.server = config.server || {};
+config.server.enhanceMiddleware = (middleware) => {
+  return (req, res, next) => {
+    if (req.url?.startsWith('/terrain-log') && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        try {
+          fs.mkdirSync(TERRAIN_LOG_DIR, { recursive: true });
+          const parsed = JSON.parse(body || '{}');
+          const attemptId = parsed.attemptId || `unknown_${Date.now()}`;
+          const filePath = path.join(TERRAIN_LOG_DIR, `${attemptId}.json`);
+          fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2));
+          fs.writeFileSync(
+            path.join(TERRAIN_LOG_DIR, 'latest.json'),
+            JSON.stringify(
+              { attemptId, file: filePath, savedAt: new Date().toISOString() },
+              null,
+              2,
+            ),
+          );
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, attemptId, file: filePath }));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(error) }));
+        }
+      });
+      return;
+    }
+    return middleware(req, res, next);
+  };
+};
 
 module.exports = config;

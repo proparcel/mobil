@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { getPortalDetailSection, getPortalFruitInvestment, getPortalInvestmentScore } from "../../services/portalService";
 import type { PortalFruitAnalysis, PortalInvestmentScorePayload, PortalQueryDetail } from "../../src/types/portal";
-import { isStructurePortalQueryType } from "../../src/utils/portalInsightCardLogic";
+import { isStructurePortalQueryType } from "../../src/utils/portalDetailCardContract";
 import PortalFruitInvestmentCard from "./PortalFruitInvestmentCard";
 import PortalInsightSummaryCard, { type PortalInsightScoresBundle } from "./PortalInsightSummaryCard";
 import PortalMulkScoreDetailCard, { PortalAraziScoreDetailCard } from "./PortalMulkScoreDetailCard";
@@ -123,12 +123,19 @@ export function usePortalDetailScoresData(
 }
 
 export default function PortalDetailScoresBlock({ snapshotId, detail, betweenMulkAndArazi }: Props) {
+  const listingOnly = Boolean(detail.listing_only);
+  const listingProLocked = !listingOnly && Boolean(detail.listing_pro_sorgu_locked);
   const { insightData, loading, err, invPayload, fruitAnalysis, fruitEmptyReason, fruitErr, structureQuery } =
-    usePortalDetailScoresData(snapshotId, detail);
+    usePortalDetailScoresData(snapshotId, detail, !listingProLocked && !listingOnly);
 
   return (
     <View>
-      <PortalInsightSummaryCard detail={detail} data={insightData} />
+      <PortalInsightSummaryCard
+        detail={detail}
+        data={insightData}
+        listingProLocked={listingProLocked}
+        listingOnly={listingOnly}
+      />
       <PortalMulkScoreDetailCard detail={detail} loading={loading} fetchError={err} invPayload={invPayload} />
       {betweenMulkAndArazi}
       <PortalAraziScoreDetailCard detail={detail} loading={loading} fetchError={err} invPayload={invPayload} />

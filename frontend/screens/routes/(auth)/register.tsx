@@ -1,7 +1,7 @@
 /**
  * ProParcel Register Screen
  * 
- * Yeni kullanıcı kaydı - Bireysel/Kurumsal + OTP akışı.
+ * Yeni kullanıcı kaydı - Bireysel/Kurumsal + opsiyonel OTP akışı.
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -135,6 +135,15 @@ function buildEducationPayload(
 function getCompanyDisplayName(company: RegistrationCompanyItem | null): string {
   if (!company) return "";
   return (company.company_name || "").trim();
+}
+
+function isValidPhoneNumber(phone: string): boolean {
+  const digits = phone.replace(/\D/g, "");
+  return digits.length === 10 && digits.startsWith("5");
+}
+
+function hasRegistrationPhone(phone: string): boolean {
+  return isValidPhoneNumber(phone);
 }
 
 function ScrollInputWrap({
@@ -300,8 +309,7 @@ export default function RegisterScreen() {
       newErrors.email = "Geçerli bir e-posta adresi girin";
     }
 
-    const trimmedPhone = phoneNumber.trim();
-    if (trimmedPhone && (trimmedPhone.length !== 10 || !trimmedPhone.startsWith("5"))) {
+    if (phoneNumber.trim() && !isValidPhoneNumber(phoneNumber)) {
       newErrors.phone = "Geçerli bir telefon numarası girin (5XXXXXXXXX)";
     }
 
@@ -385,7 +393,7 @@ export default function RegisterScreen() {
       first_name: firstName,
       last_name: lastName,
       email,
-      phone_number: phoneNumber.trim() || undefined,
+      ...(phoneNumber.trim() ? { phone_number: phoneNumber.trim() } : {}),
       password,
       password_confirm: passwordConfirm,
       referral_code: referralCode?.trim() || undefined,
@@ -473,11 +481,11 @@ export default function RegisterScreen() {
     };
   };
 
-  const completeRegistrationWithoutOtp = async (registerData: ReturnType<typeof buildRegisterDataWithExpertise>) => {
-    setIsVerifying(true);
-    setOtpModalError("");
+  const finalizeRegistration = async (otpCode = "") => {
+    const registerData = buildRegisterDataWithExpertise();
+
     try {
-      const response = await authService.registerVerifyOTP(registerData, "", {
+      const response = await authService.registerVerifyOTP(registerData, otpCode, {
         avatarUri: registrationMedia.avatarUri,
         companyLogoUri: registrationMedia.companyLogoUri,
       });
@@ -487,18 +495,26 @@ export default function RegisterScreen() {
         setShowOtpModal(false);
         await storageService.clearDeferredReferralCode();
         router.replace("index");
+        return true;
+      }
+
+      const message = response.message || "Kayıt tamamlanamadı. Lütfen tekrar deneyin.";
+      if (showOtpModal) {
+        setOtpModalError(message);
       } else {
-        setErrors({
-          general: response.message || "Kayıt tamamlanamadı.",
-          ...mapRegisterApiErrors(response.errors),
-        });
+        setErrors({ general: message, ...mapRegisterApiErrors(response.errors) });
         setRegistrationStep("info");
       }
+      return false;
     } catch {
-      setErrors({ general: "Bir hata oluştu. Lütfen tekrar deneyin." });
-      setRegistrationStep("info");
-    } finally {
-      setIsVerifying(false);
+      const message = "Bir hata oluştu. Lütfen tekrar deneyin.";
+      if (showOtpModal) {
+        setOtpModalError(message);
+      } else {
+        setErrors({ general: message });
+        setRegistrationStep("info");
+      }
+      return false;
     }
   };
 
@@ -508,7 +524,12 @@ export default function RegisterScreen() {
     setErrors({});
     try {
       if (!phoneNumber.trim()) {
-        await completeRegistrationWithoutOtp(registerData);
+        setIsVerifying(true);
+        try {
+          await finalizeRegistration("");
+        } finally {
+          setIsVerifying(false);
+        }
         return;
       }
 
@@ -521,6 +542,7 @@ export default function RegisterScreen() {
         setRegistrationStep("info");
         return;
       }
+
       setOtpModalError("");
       setOtp("");
       setShowOtpModal(true);
@@ -602,27 +624,11 @@ export default function RegisterScreen() {
       return;
     }
 
-    const registerData = buildRegisterDataWithExpertise();
-
     setOtpModalError("");
     setIsVerifying(true);
 
     try {
-      const response = await authService.registerVerifyOTP(registerData, otp, {
-        avatarUri: registrationMedia.avatarUri,
-        companyLogoUri: registrationMedia.companyLogoUri,
-      });
-
-      if (response.success && response.data) {
-        syncSessionFromLoginResponse(response.data);
-        setShowOtpModal(false);
-        await storageService.clearDeferredReferralCode();
-        router.replace("index");
-      } else {
-        setOtpModalError(response.message || "Geçersiz doğrulama kodu");
-      }
-    } catch (error) {
-      setOtpModalError("Bir hata oluştu. Lütfen tekrar deneyin.");
+      await finalizeRegistration(otp);
     } finally {
       setIsVerifying(false);
     }
@@ -824,6 +830,9 @@ export default function RegisterScreen() {
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>Telefon</Text>
+                  <Text style={styles.helperText}>
+                    Opsiyonel. Girilirse kayıt SMS doğrulaması ile tamamlanır.
+                  </Text>
                   <View style={styles.phoneInputContainer}>
                     <Text style={styles.phonePrefix}>+90</Text>
                     <TextInput

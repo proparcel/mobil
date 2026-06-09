@@ -179,6 +179,18 @@ export function useRouter() {
         navigation.navigate(path.pathname.replace(/^\//, '').replace(/^routes\//, '').replace(/^\(auth\)\//, '') as any, path.params);
       }
     },
+    /**
+     * Aynı ekranı yığına YENİ bir kopya olarak ekler (navigate gibi mevcut örneği güncellemez).
+     * Portal detay → yeni Pro Sorgu sonucu detayını açarken kullanılır; geri tuşu eski detaya döner.
+     */
+    pushNew: (path: string, params?: any) => {
+      const routeName = path.replace(/^\//, '').replace(/^routes\//, '').replace(/^\(auth\)\//, '');
+      if (params) {
+        navigation.push(routeName as any, params);
+      } else {
+        navigation.push(routeName as any);
+      }
+    },
     replace: (path: string | { pathname: string; params?: any }, params?: any) => {
       if (typeof path === 'string') {
         const routeName = path.replace(/^\//, '').replace(/^routes\//, '').replace(/^\(auth\)\//, '');

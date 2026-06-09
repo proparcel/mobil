@@ -6,6 +6,7 @@ param(
 )
 $ErrorActionPreference = "SilentlyContinue"
 $root = Split-Path -Parent $PSScriptRoot
+$mobilGithub = Split-Path -Parent $root
 $targets = @(
   Join-Path $root "apk_releases"
   Join-Path $root "release_builds"
@@ -34,6 +35,15 @@ foreach ($t in $targets) {
   if (Test-Path $t) {
     Remove-Item -LiteralPath $t -Recurse -Force
     Write-Host "Silindi: $t"
+  }
+}
+foreach ($unityTemp in @(
+  Join-Path $mobilGithub "unity\vrParcel\proparcel\Temp"
+  Join-Path $mobilGithub "unity\vrParcel\Temp"
+)) {
+  if (Test-Path $unityTemp) {
+    Remove-Item -LiteralPath $unityTemp -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "Silindi: $unityTemp"
   }
 }
 if ($IncludeNativeFolders) {

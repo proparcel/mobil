@@ -191,3 +191,12 @@ export function isEkPackage(pkg: CreditPackage): boolean {
   const slug = (pkg.slug || "").toLowerCase();
   return Boolean(pkg.is_ek_package || slug.startsWith("ek_"));
 }
+
+/** Tek Kullanım paketinde yıllık abonelik zorunlu mu (ek_baslangic hariç). */
+export function ekPackageRequiresYearlySubscription(pkg: CreditPackage): boolean {
+  if (!isEkPackage(pkg)) return false;
+  if (pkg.requires_yearly_subscription === false) return false;
+  const slug = (pkg.slug || "").toLowerCase();
+  if (slug === "ek_baslangic") return false;
+  return pkg.requires_yearly_subscription ?? true;
+}

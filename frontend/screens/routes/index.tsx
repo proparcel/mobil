@@ -33,6 +33,7 @@ import { useRouter, useLocalSearchParams } from '../../src/hooks/useNavigation';
 import { useFocusEffect, useRoute, useNavigation, useIsFocused } from '@react-navigation/native';
 import Svg, { Polyline, Rect } from 'react-native-svg';
 import { cleanupTempFiles, getCombinedImageDimensions } from '../../src/utils/screenshotManager';
+import { mergeParcelDisplayProperties } from '../../src/utils/mergeParcelDisplayProperties';
 import { startPreviewSnapPrewarm } from '../../src/utils/shareCaptureFlow';
 import { buildCameraFingerprint, type PreviewSnapCacheEntry } from '../../src/utils/captureSnapCache';
 import { parseTurkishPrice, formatTurkishPrice } from '../../src/utils/priceParser';
@@ -47,6 +48,7 @@ import {
 } from '../../components/app/UserMenuSheet';
 import UserMenuSheetList from '../../components/app/UserMenuSheetList';
 import { getMenuItems } from '../../components/app/userMenuItems';
+import { syncLastParcelForVr, syncSelectedParcelForVr, VrPillBarButton } from '../../modules/vrParcel';
 import { isAppAdminUser } from '../../src/utils/adminAccess';
 import { canAccessProSorgu, isVipCustomer } from '../../src/utils/membership';
 import { SavedQuery, upsertSavedQuery } from '../../src/utils/savedQueries';
@@ -88,6 +90,7 @@ import {
   ProQueryLimitError,
   ProQueryFailedError,
   getProQueryErrorAlert,
+  getProQueryAlertButtons,
   extractProQueryCityId,
   extractProQueryIdentifiers,
   resolveDfaSnapshotId,
@@ -100,6 +103,11 @@ import { fetchTkgmByCoords, fetchTkgmByIds } from '../../src/utils/tkgmApi';
 import {
   resolveMahalleTkgmForDirectQuery,
 } from '../../src/utils/tkgmParcelQuery';
+import TkgmPassiveParcelModal from '../../components/app/TkgmPassiveParcelModal';
+import {
+  shouldShowNotFoundBanner,
+  type PassiveParcelInfo,
+} from '../../src/utils/tkgmPassiveParcel';
 // Conditional Video import (kutlama.mp4 background)
 let Video: any = null;
 try {
@@ -480,11 +488,35 @@ export default function Index() {
     };
   }, []);
   const [parcelModalVisible, setParcelModalVisible] = useState(false);
+  // TKGM pasif / toplulaştırılmış parsel onay modalı
+  const [passiveParcelInfo, setPassiveParcelInfo] = useState<PassiveParcelInfo | null>(null);
+  const [passiveParcelVisible, setPassiveParcelVisible] = useState(false);
+  const passiveParcelResolverRef = useRef<(() => void) | null>(null);
   const [myQueriesVisible, setMyQueriesVisible] = useState(false);
   const [parcelSplitProjectsVisible, setParcelSplitProjectsVisible] = useState(false);
   const [threeDDesignsVisible, setThreeDDesignsVisible] = useState(false);
   const [submenuOpenId, setSubmenuOpenId] = useState<string | null>(null);
   const [uzmanGorusuOpen, setUzmanGorusuOpen] = useState(false);
+
+  /**
+   * TKGM pasif/toplulaştırılmış parsel onayı: modal açar, "Tamam"'a basılınca
+   * resolve olan Promise döndürür. TKGM çağrılarına callback olarak geçilir.
+   */
+  const confirmPassiveParcel = useCallback((info: PassiveParcelInfo): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      passiveParcelResolverRef.current = resolve;
+      setPassiveParcelInfo(info);
+      setPassiveParcelVisible(true);
+    });
+  }, []);
+
+  const handlePassiveParcelClose = useCallback(() => {
+    setPassiveParcelVisible(false);
+    const resolve = passiveParcelResolverRef.current;
+    passiveParcelResolverRef.current = null;
+    setPassiveParcelInfo(null);
+    if (resolve) resolve();
+  }, []);
 
   // Dosyalarım hub ekranından dönüş: kayıtlı sorgu / parsel / 3D modalları
   useEffect(() => {
@@ -500,6 +532,10 @@ export default function Index() {
   // Basit mod için çoklu parsel yönetimi
   const [simpleModeParcels, setSimpleModeParcels] = useState<SimpleModeParcel[]>([]);
   const [selectedParcelForModal, setSelectedParcelForModal] = useState<SimpleModeParcel | null>(null);
+
+  useEffect(() => {
+    syncSelectedParcelForVr(selectedParcelForModal);
+  }, [selectedParcelForModal]);
   
   // Basit mod için helper fonksiyonlar
   const MAX_SIMPLE_MODE_PARCELS = 30;
@@ -508,23 +544,25 @@ export default function Index() {
     return `parcel-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   };
 
-  const addParcelToSimpleMode = useCallback((parcel: ParcelData): void => {
-    if (!parcel.geometry) return;
+  const addParcelToSimpleMode = useCallback((parcel: ParcelData): SimpleModeParcel | null => {
+    if (!parcel.geometry) return null;
 
     const newParcel: SimpleModeParcel = {
       ...parcel,
       geometry: normalizeParcelGeometry(parcel.geometry),
       id: generateParcelId(),
     };
-    
+
     setSimpleModeParcels(prev => {
       const updated = [...prev, newParcel];
-      // 30 limit kontrolü - FIFO (First In First Out)
       if (updated.length > MAX_SIMPLE_MODE_PARCELS) {
-        return updated.slice(1); // En eski parseli kaldır
+        return updated.slice(1);
       }
       return updated;
     });
+    setSelectedParcelForModal(newParcel);
+    syncLastParcelForVr(newParcel);
+    return newParcel;
   }, []);
   
   const [propertyTypeModalVisible, setPropertyTypeModalVisible] = useState(false);
@@ -710,8 +748,8 @@ export default function Index() {
   const isProgrammaticMoveRef = useRef(false);
   const programmaticTimerRef = useRef<any>(null);
   const combinedContainerRef = useRef<any>(null);
-  /** Pro sorgu capture anında güncel parsel (state commit gecikmesine karşı) */
-  const proQueryCaptureParcelRef = useRef<ParcelData | null>(null);
+  /** Ekran görüntüsü / pro sorgu capture anında sabitlenen parsel (state commit gecikmesine karşı) */
+  const [screenshotTargetParcelData, setScreenshotTargetParcelData] = useState<ParcelData | null>(null);
   const modalContentRef = useRef<any>(null);
   const camRef = useRef({
     center: TURKEY_MAP_CENTER,
@@ -815,7 +853,7 @@ export default function Index() {
       totalNum: number | null,
       captureParcel: ParcelData | null = null,
     ) => {
-      proQueryCaptureParcelRef.current = captureParcel;
+      setScreenshotTargetParcelData(captureParcel);
 
       if (normalizedGeometry) {
         setShowEdgeMeasurements(false);
@@ -872,7 +910,7 @@ export default function Index() {
         setScreenshotPriceOverride(null);
       }
 
-      proQueryCaptureParcelRef.current = null;
+      setScreenshotTargetParcelData(null);
 
       const navResult = await navigateAfterProQuery(router, data);
       const finalSnapshotId = navResult.snapshotId ?? snapshotId;
@@ -1554,11 +1592,11 @@ export default function Index() {
     return Number.isFinite(n) ? n : 0;
   };
 
+  const screenshotParcelForCapture = screenshotTargetParcelData ?? activeParcelData;
+
   const getMergedParcelPropsForScreenshot = useCallback((): Record<string, any> => {
-    const pd: any = activeParcelData?.analysisData?.parameters_data || {};
-    const pv: any = pd?.parcel_values || {};
-    return { ...(activeParcelData?.properties || {}), ...pd, ...pv };
-  }, [activeParcelData]);
+    return mergeParcelDisplayProperties(screenshotParcelForCapture);
+  }, [screenshotParcelForCapture]);
 
   const screenshotMergedProps = useMemo(() => getMergedParcelPropsForScreenshot(), [getMergedParcelPropsForScreenshot]);
   const screenshotAreaNum = useMemo(() => {
@@ -1603,7 +1641,7 @@ export default function Index() {
 
   const handleShare = useCallback(
     createShareHandler({
-      parcelData: activeParcelData,
+      parcelData: screenshotParcelForCapture,
       mapRef,
       combinedContainerRef,
       mapReadyRef,
@@ -1623,6 +1661,7 @@ export default function Index() {
       hasActiveParcel,
     }),
     [
+      screenshotParcelForCapture,
       activeParcelData,
       homeParcelPolygonDesign,
       drawing.mapOverlayViewport,
@@ -1642,6 +1681,7 @@ export default function Index() {
       void cleanupTempFiles([previewSnapCacheRef.current.mapUri]);
       previewSnapCacheRef.current = null;
     }
+    setScreenshotTargetParcelData(activeParcelData);
     if (activeParcelData) {
       prefetchedShareLinkRef.current = resolveParcelShareMessageUrlForShare(activeParcelData);
     } else {
@@ -1686,6 +1726,7 @@ export default function Index() {
         setScreenshotPriceOverride(null);
         setScreenshotTotalPriceInput('');
         setScreenshotPricePanelVisible(false);
+        setScreenshotTargetParcelData(null);
       }
       return;
     }
@@ -1729,10 +1770,8 @@ export default function Index() {
     }
 
     // Fiyat şablonu değiştiyse ViewShot'un güncel metni alması için kısa frame bekle
-    if (hasTotal) {
-      await new Promise(res => requestAnimationFrame(() => res(null)));
-      await new Promise(res => requestAnimationFrame(() => res(null)));
-    }
+    await new Promise(res => requestAnimationFrame(() => res(null)));
+    await new Promise(res => requestAnimationFrame(() => res(null)));
 
     setIsProcessingShare(true);
     try {
@@ -1753,6 +1792,7 @@ export default function Index() {
       setScreenshotPriceOverride(null);
       setScreenshotTotalPriceInput('');
       setScreenshotPricePanelVisible(false);
+      setScreenshotTargetParcelData(null);
     }
   }, [handleShare, hasActiveParcel, screenshotTotalPriceInput, screenshotAreaNum, screenshotMergedProps, saveUserPrintScreenPrice]);
 
@@ -1761,6 +1801,7 @@ export default function Index() {
     setScreenshotPriceOverride(null);
     setScreenshotTotalPriceInput('');
     setScreenshotPricePanelVisible(false);
+    setScreenshotTargetParcelData(null);
     if (previewSnapCacheRef.current) {
       void cleanupTempFiles([previewSnapCacheRef.current.mapUri]);
       previewSnapCacheRef.current = null;
@@ -1886,6 +1927,8 @@ export default function Index() {
           mahalleResolved.mahalleTkgmValue,
           String(entry.ada).trim(),
           String(entry.parsel).trim(),
+          undefined,
+          confirmPassiveParcel,
         );
         if (!data.geometry) {
           Alert.alert("Bilgi", "Parsel bulunamadı.");
@@ -2039,6 +2082,8 @@ export default function Index() {
           payload.mahalleTkgmValue,
           payload.ada,
           payload.parsel,
+          undefined,
+          confirmPassiveParcel,
         );
         console.log('[handleAdaParselSubmit] PRO MOD: TKGM sorgusu tamamlandı, geometry var mı:', !!tkgmData.geometry);
         
@@ -2095,7 +2140,9 @@ export default function Index() {
         const data = await fetchTkgmByIds(
           payload.mahalleTkgmValue,
           payload.ada,
-          payload.parsel
+          payload.parsel,
+          undefined,
+          confirmPassiveParcel,
         );
         if (!data.geometry) return;
         if (isParcelQueryLoadStale(loadSeq)) return;
@@ -2168,6 +2215,7 @@ export default function Index() {
     beginParcelQueryLoad,
     endParcelQueryLoad,
     isParcelQueryLoadStale,
+    confirmPassiveParcel,
   ]);
 
   /** Web sidebar "Sorgularım" — kayıtlı sorguyu basit modda haritada yeniden çalıştır */
@@ -2913,10 +2961,16 @@ export default function Index() {
 
         let data;
         try {
-          data = await fetchTkgmByCoords(c[1], c[0]);
+          // Pasif/toplulaştırılmış parsel ise onay modalı sonrası aktif geometri döner.
+          data = await fetchTkgmByCoords(c[1], c[0], undefined, confirmPassiveParcel);
         } catch (error: any) {
-          if (error.type === 'TKGM_PARCEL_NOT_FOUND') {
+          // Gerçek "parsel bulunamadı" (pasif değil) → harita tıklamasında sessiz geç.
+          if (error?.type === 'TKGM_PARCEL_NOT_FOUND' && shouldShowNotFoundBanner(error)) {
             console.log('[executeParcelQueryAtLngLat] Parsel bulunamadı');
+            return;
+          }
+          if (error?.type === 'TKGM_PARCEL_NOT_FOUND') {
+            // pasif kaynaklı ama kurtarılamadı → sessiz
             return;
           }
 
@@ -2981,10 +3035,25 @@ export default function Index() {
                   { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) },
                 ],
           );
+        } else if (error?.type === 'TKGM_RATE_LIMIT') {
+          Alert.alert(
+            'Günlük Sorgu Limiti',
+            error.message || 'TKGM günlük sorgu limiti aşıldı. Lütfen daha sonra tekrar deneyin.',
+            [{ text: 'Tamam' }],
+          );
+        } else if (error?.type === 'TIMEOUT' || error?.type === 'CORS_OR_NETWORK_ERROR') {
+          Alert.alert(
+            'Bağlantı Hatası',
+            error.message || 'TKGM sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.',
+            [{ text: 'Tamam' }],
+          );
+        } else if (typeof error?.type === 'string' && error?.message) {
+          // TKGM 500 / beklenmeyen sunucu hataları → çökme yerine uyarı modalı.
+          Alert.alert('Uyarı', error.message, [{ text: 'Tamam' }]);
         } else {
           Alert.alert(
             'Bağlantı Hatası',
-            'Backend sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.',
+            'Parsel sorgusu tamamlanamadı. Lütfen internet bağlantınızı kontrol edin.',
             [{ text: 'Tamam' }],
           );
         }
@@ -3000,6 +3069,7 @@ export default function Index() {
       beginParcelQueryLoad,
       endParcelQueryLoad,
       isParcelQueryLoadStale,
+      confirmPassiveParcel,
     ],
   );
 
@@ -3568,8 +3638,15 @@ export default function Index() {
               ]
         );
       } else {
-        const { title, message } = getProQueryErrorAlert(error);
-        Alert.alert(title, message, [{ text: 'Tamam' }]);
+        const alert = getProQueryErrorAlert(error);
+        Alert.alert(
+          alert.title,
+          alert.message,
+          getProQueryAlertButtons(alert, {
+            isAuthenticated,
+            onLogin: () => router.push('/auth/login' as any),
+          }),
+        );
       }
     } finally {
       console.log('[handlePropertyTypeSelect] finally: finishProAnalysisLoad çağrılıyor');
@@ -4864,8 +4941,7 @@ export default function Index() {
             <TouchableOpacity testID="camera-share-button" onPress={handleCameraPress} style={[styles.pillButton, styles.pillButtonEven]}>
               <Ionicons name="camera" size={18} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity 
-              testID="3d-mode-button" 
+            <TouchableOpacity testID="3d-mode-button" 
               onPress={() => { 
                 menuItemClickedRef.current = true;
                 setHomeMapToolsSheetOpen(false);
@@ -4879,6 +4955,15 @@ export default function Index() {
             >
               <Text style={styles.pillButton3dLabel}>3D</Text>
             </TouchableOpacity>
+            <VrPillBarButton
+              styles={styles}
+              onInteraction={() => {
+                menuItemClickedRef.current = true;
+                setHomeMapToolsSheetOpen(false);
+                setLocationMenuVisible(false);
+                setShow3DSlider(false);
+              }}
+            />
             <TouchableOpacity testID="search-button" onPress={() => openParcelSearchModal('parcel')} style={[styles.pillButton, styles.pillButtonEven]}>
               <Ionicons name="search" size={18} color="#fff" />
             </TouchableOpacity>
@@ -5262,8 +5347,15 @@ export default function Index() {
                   : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]
               );
             } else {
-              const { title, message } = getProQueryErrorAlert(error);
-              Alert.alert(title, message, [{ text: 'Tamam' }]);
+              const alert = getProQueryErrorAlert(error);
+              Alert.alert(
+                alert.title,
+                alert.message,
+                getProQueryAlertButtons(alert, {
+                  isAuthenticated,
+                  onLogin: () => router.push('/auth/login' as any),
+                }),
+              );
             }
           } finally {
             endParcelQueryLoad(loadSeq);
@@ -5422,8 +5514,15 @@ export default function Index() {
                   : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]
               );
             } else {
-              const { title, message } = getProQueryErrorAlert(error);
-              Alert.alert(title, message, [{ text: 'Tamam' }]);
+              const alert = getProQueryErrorAlert(error);
+              Alert.alert(
+                alert.title,
+                alert.message,
+                getProQueryAlertButtons(alert, {
+                  isAuthenticated,
+                  onLogin: () => router.push('/auth/login' as any),
+                }),
+              );
             }
           } finally {
             endParcelQueryLoad(loadSeq);
@@ -5531,8 +5630,15 @@ export default function Index() {
               Alert.alert('Günlük Sorgu Limiti', `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
                 isAuthenticated ? [{ text: 'Tamam' }] : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]);
             } else {
-              const { title, message } = getProQueryErrorAlert(error);
-              Alert.alert(title, message, [{ text: 'Tamam' }]);
+              const alert = getProQueryErrorAlert(error);
+              Alert.alert(
+                alert.title,
+                alert.message,
+                getProQueryAlertButtons(alert, {
+                  isAuthenticated,
+                  onLogin: () => router.push('/auth/login' as any),
+                }),
+              );
             }
           } finally {
             endParcelQueryLoad(loadSeq);
@@ -5640,8 +5746,15 @@ export default function Index() {
               Alert.alert('Günlük Sorgu Limiti', `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
                 isAuthenticated ? [{ text: 'Tamam' }] : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]);
             } else {
-              const { title, message } = getProQueryErrorAlert(error);
-              Alert.alert(title, message, [{ text: 'Tamam' }]);
+              const alert = getProQueryErrorAlert(error);
+              Alert.alert(
+                alert.title,
+                alert.message,
+                getProQueryAlertButtons(alert, {
+                  isAuthenticated,
+                  onLogin: () => router.push('/auth/login' as any),
+                }),
+              );
             }
           } finally {
             endParcelQueryLoad(loadSeq);
@@ -5749,8 +5862,15 @@ export default function Index() {
               Alert.alert('Günlük Sorgu Limiti', `${error.message}\n\nGünlük ücretsiz sorgu hakkınız: ${error.dailyLimit}`,
                 isAuthenticated ? [{ text: 'Tamam' }] : [{ text: 'Kapat', style: 'cancel' }, { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) }]);
             } else {
-              const { title, message } = getProQueryErrorAlert(error);
-              Alert.alert(title, message, [{ text: 'Tamam' }]);
+              const alert = getProQueryErrorAlert(error);
+              Alert.alert(
+                alert.title,
+                alert.message,
+                getProQueryAlertButtons(alert, {
+                  isAuthenticated,
+                  onLogin: () => router.push('/auth/login' as any),
+                }),
+              );
             }
           } finally {
             endParcelQueryLoad(loadSeq);
@@ -5910,12 +6030,19 @@ export default function Index() {
         <CombinedScreenshotContainer
           ref={combinedContainerRef}
           capturedMapUri={capturedMapUri}
-          parcelData={proQueryCaptureParcelRef.current ?? activeParcelData}
+          parcelData={screenshotParcelForCapture}
           isProMode={isProMode}
           priceOverride={screenshotPriceOverride}
           mapOnly={!hasActiveParcel}
         />
       </View>
+
+      {/* TKGM pasif / toplulaştırılmış parsel onay modalı */}
+      <TkgmPassiveParcelModal
+        visible={passiveParcelVisible}
+        info={passiveParcelInfo}
+        onClose={handlePassiveParcelClose}
+      />
     </SafeAreaView>
   );
 }

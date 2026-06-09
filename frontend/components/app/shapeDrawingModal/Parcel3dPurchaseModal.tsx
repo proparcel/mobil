@@ -94,7 +94,7 @@ export const Parcel3dPurchaseModal: React.FC<Props> = ({
     if (balance === null || balance < requiredCredits) {
       Alert.alert(
         "Yetersiz Kredi",
-        `Bu parsel için 3D tasarım kaydetmek/paylaşmak için ${requiredCredits} Coin gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Coin.`
+        `Bu parsel için 3D tasarım kaydetmek/paylaşmak için ${requiredCredits} Kredi gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Kredi.`
       );
       return;
     }
@@ -166,14 +166,14 @@ export const Parcel3dPurchaseModal: React.FC<Props> = ({
             <View style={styles.creditsInfo}>
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsLabel}>Gerekli Kredi:</Text>
-                <Text style={styles.creditsValue}>{requiredCredits} Coin</Text>
+                <Text style={styles.creditsValue}>{requiredCredits} Kredi</Text>
               </View>
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsLabel}>Mevcut Bakiyeniz:</Text>
                 {loading ? (
                   <ActivityIndicator size="small" color="#3b82f6" />
                 ) : (
-                  <Text style={styles.creditsValue}>{balance !== null ? `${balance} Coin` : "-"}</Text>
+                  <Text style={styles.creditsValue}>{balance !== null ? `${balance} Kredi` : "-"}</Text>
                 )}
               </View>
               <View style={styles.creditsRow}>
@@ -184,7 +184,7 @@ export const Parcel3dPurchaseModal: React.FC<Props> = ({
                     afterBalance !== null && afterBalance < 0 && styles.creditsValueNegative,
                   ]}
                 >
-                  {afterBalance !== null ? `${afterBalance} Coin` : "-"}
+                  {afterBalance !== null ? `${afterBalance} Kredi` : "-"}
                 </Text>
               </View>
             </View>

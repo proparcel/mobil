@@ -23,11 +23,11 @@ const DEV_CLIENT_PACKAGES = [
 module.exports = {
   name: "ProParcel",
   displayName: "ProParcel",
-  version: "1.0.23",
+  version: "2.0.6",
   expo: {
     name: "ProParcel",
     slug: "frontend",
-    version: "1.0.23",
+    version: "2.0.6",
     scheme: "proparcel",
     icon: "./assets/images/icon.png",
     splash: {
@@ -49,7 +49,7 @@ module.exports = {
     jsEngine: "hermes",
     ios: {
       bundleIdentifier: "com.proparcel.app",
-      buildNumber: "19",
+      buildNumber: "26",
       icon: "./assets/images/icon.png",
       supportsTablet: true,
       ...(process.env.IOS_ASSOCIATED_DOMAINS === "1"
@@ -65,7 +65,8 @@ module.exports = {
         },
         NSLocationWhenInUseUsageDescription:
           "ProParcel, haritada konumunuzu göstermek, Konumum ve size yakın harita görünümü için konumunuza erişir.",
-        NSCameraUsageDescription: "Fotoğraf çekme için kamera kullanılır.",
+        NSCameraUsageDescription:
+          "VR parsel görüntüleme ve fotoğraf çekme için kamera kullanılır. Kamera, parsel sınırlarını gerçek arazi üzerinde göstermek içindir.",
         NSPhotoLibraryUsageDescription: "Resim seçme için fotoğraf kütüphanesi kullanılır.",
         NSPhotoLibraryAddUsageDescription:
           "Çekilen 3D harita görüntülerini fotoğraf galerinize kaydetmek için izin gerekir.",
@@ -119,6 +120,11 @@ module.exports = {
           ]),
       "./plugins/withIosNoPushEntitlement.js",
       "./plugins/withIosLocationPermissions.js",
+      "./plugins/withVrParcelNativeModules.js",
+      "./plugins/withParcelTerrain3dNativeModules.js",
+      "./plugins/withUnitySmokeTestNativeModules.js",
+      "./plugins/withUnityLibraryEmbed.js",
+      "./plugins/withUnityFrameworkEmbed.js",
       "./plugins/withAppLinks.js",
       [
         "expo-build-properties",
@@ -136,8 +142,16 @@ module.exports = {
       [
         "expo-image-picker",
         {
-          cameraPermission: "Fotoğraf çekme için kamera kullanılır.",
+          cameraPermission:
+            "VR parsel görüntüleme ve fotoğraf çekme için kamera kullanılır.",
           photosPermission: "Resim seçme için fotoğraf kütüphanesi kullanılır.",
+        },
+      ],
+      [
+        "expo-camera",
+        {
+          cameraPermission:
+            "VR parsel görüntüleme için kamera kullanılır. Parsel sınırlarını gerçek arazi üzerinde göstermek içindir.",
         },
       ],
       [

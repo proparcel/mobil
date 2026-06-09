@@ -2,6 +2,19 @@
 
 TestFlight mağaza/test dağıtımı içindir. Günlük geliştirme: **EAS development client + Metro**.
 
+## Standart komutlar (iOS-only, Mac yok)
+
+Tüm komutlar: `cd c:\ProParcel\mobile\mobil_github\frontend`
+
+| Ne zaman | Komut |
+|----------|--------|
+| Native / yeni IPA (kamera, plugin, `app.config.js`) | `npm run eas:build:ios` |
+| Her gün canlı JS (Metro) | `npm run start:ios-dev` |
+
+**Not:** Android build kullanılmaz. Sadece bu iki komut + telefonda dev client → Enter URL (`http://BILGISAYAR_IP:8081`).
+
+Wi‑Fi bağlanmazsa yedek: `npm run start:ios-dev:tunnel` (LAN yerine).
+
 ## ikon / favicon (iPhone)
 
 EAS `.easignore` icinde **tum `.png` ignore** ediliyordu → iOS IPA’da ne uygulama ikonu ne `favicon.png` vardi. Duzeltildi; **yeni dev build** sart:
@@ -30,8 +43,10 @@ npm run eas:build:ios
 
 ```powershell
 cd c:\ProParcel\mobile\mobil_github\frontend
-npm run dev:iphone
+npm run start:ios-dev
 ```
+
+(`dev:iphone` ile aynı amaç; standart: `start:ios-dev`.)
 
 **Iki farkli QR:**
 | QR nerede? | Ne ise yarar? |
@@ -60,6 +75,6 @@ Farklı ağ: `npm run start:ios-dev:tunnel` (ngrok gerekir).
 ## Çökme
 
 1. Doğru ikon: **development client** (TestFlight değil).
-2. Metro açık mı? `npm run stop:metro` → `npm run dev:iphone`.
+2. Metro açık mı? `npm run stop:metro` → `npm run start:ios-dev`.
 3. `"main" has not been registered` → `index.js` içinde `registerRootComponent(App)` kullanılmalı; Metro’yu `r` ile reload edin.
 4. Terminaldeki kırmızı `[ProParcel] JS` logunu kaydedin.

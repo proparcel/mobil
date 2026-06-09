@@ -82,7 +82,7 @@ export const ParcelSplitPurchaseModal: React.FC<ParcelSplitPurchaseModalProps> =
     if (balance === null || balance < requiredCredits) {
       Alert.alert(
         "Yetersiz Kredi",
-        `Bu arazi için görüntü satın almak için ${requiredCredits} Coin gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Coin.`
+        `Bu arazi için görüntü satın almak için ${requiredCredits} Kredi gereklidir. Mevcut bakiyeniz: ${balance ?? 0} Kredi.`
       );
       return;
     }
@@ -144,7 +144,7 @@ export const ParcelSplitPurchaseModal: React.FC<ParcelSplitPurchaseModalProps> =
             <View style={styles.creditsInfo}>
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsLabel}>Gerekli Kredi:</Text>
-                <Text style={styles.creditsValue}>{requiredCredits} Coin</Text>
+                <Text style={styles.creditsValue}>{requiredCredits} Kredi</Text>
               </View>
               <View style={styles.creditsRow}>
                 <Text style={styles.creditsLabel}>Mevcut Bakiyeniz:</Text>
@@ -152,7 +152,7 @@ export const ParcelSplitPurchaseModal: React.FC<ParcelSplitPurchaseModalProps> =
                   <ActivityIndicator size="small" color="#3b82f6" />
                 ) : (
                   <Text style={styles.creditsValue}>
-                    {balance !== null ? `${balance} Coin` : "-"}
+                    {balance !== null ? `${balance} Kredi` : "-"}
                   </Text>
                 )}
               </View>
@@ -164,7 +164,7 @@ export const ParcelSplitPurchaseModal: React.FC<ParcelSplitPurchaseModalProps> =
                     afterBalance !== null && afterBalance < 0 && styles.creditsValueNegative,
                   ]}
                 >
-                  {afterBalance !== null ? `${afterBalance} Coin` : "-"}
+                  {afterBalance !== null ? `${afterBalance} Kredi` : "-"}
                 </Text>
               </View>
             </View>

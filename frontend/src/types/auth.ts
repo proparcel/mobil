@@ -245,7 +245,7 @@ export interface RegisterRequest {
   first_name: string;
   last_name: string;
   email: string;
-  phone_number: string; // artık zorunlu
+  phone_number?: string; // opsiyonel; girilirse SMS OTP akışı uygulanır
   password: string;
   password_confirm: string;
   referral_code?: string; // opsiyonel (deferred deep link / manuel)

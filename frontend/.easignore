@@ -70,3 +70,11 @@ assets/models/**/*.jpg
 assets/models/**/*.jpeg
 assets/temp/**/*
 assets/packs/**/*
+
+../unity
+../backend
+../docs
+../tests
+../scripts
+../.emergent
+../.idea

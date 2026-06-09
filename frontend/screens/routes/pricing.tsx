@@ -33,7 +33,11 @@ import type { CreditPackage, CreditBalance, CreditCostItem } from "../../service
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
 import { tepeCreditColors } from "../../components/landing/tepeCreditTheme";
-import { packageHasIapProduct, isEkPackage } from "../../config/iapProducts";
+import {
+  ekPackageRequiresYearlySubscription,
+  isEkPackage,
+  packageHasIapProduct,
+} from "../../config/iapProducts";
 
 const TEPE_SAVE_COLORS = {
   accent: tepeCreditColors.teal,
@@ -44,7 +48,7 @@ const TEPE_SAVE_COLORS = {
 } as const;
 
 type PeriodType = "monthly" | "yearly";
-type CustomerType = "kurumsal" | "bireysel" | "ek_paket";
+type CustomerType = "kurumsal" | "bireysel" | "tek_kullanim";
 
 export default function PricingScreen() {
   const router = useRouter();
@@ -56,7 +60,7 @@ export default function PricingScreen() {
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [balance, setBalance] = useState<CreditBalance | null>(null);
   const [customerType, setCustomerType] = useState<CustomerType>("kurumsal");
-  const [period, setPeriod] = useState<PeriodType>("monthly");
+  const [period, setPeriod] = useState<PeriodType>("yearly");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [coinModalVisible, setCoinModalVisible] = useState(false);
@@ -175,10 +179,10 @@ export default function PricingScreen() {
         ]);
         return;
       }
-      if (isEkPackage(pkg) && !hasActiveYearlySubscription) {
+      if (ekPackageRequiresYearlySubscription(pkg) && !hasActiveYearlySubscription) {
         Alert.alert(
           "Yıllık Abonelik Gerekli",
-          "Ek paketler yalnızca aktif yıllık aboneliği olan kullanıcılar için geçerlidir."
+          "Bu paket yalnızca aktif yıllık aboneliği olan kullanıcılar için geçerlidir."
         );
         return;
       }
@@ -195,22 +199,26 @@ export default function PricingScreen() {
   const targetAudienceText =
     customerType === "bireysel"
       ? "Bireysel kullanıcı paketleri"
-      : customerType === "ek_paket"
-        ? "Danışman ve Kurumsal abonelere özel ekstra kullanım paketleri"
+      : customerType === "tek_kullanim"
+        ? "Tek seferlik Tepe Kredi paketleri"
         : "Emlak firmaları, danışmanlar ve değerleme uzmanlarına özel paketler";
 
+  const tekKullanimRequiresYearlyInCatalog = packages.some(ekPackageRequiresYearlySubscription);
+
   const filteredPackages = packages.filter((pkg) => {
-    const slug = (pkg.slug || "").toLowerCase();
-    const isEk = pkg.is_ek_package || slug.startsWith("ek_");
+    const isEk = isEkPackage(pkg);
     const pkgType = (pkg.package_type ?? "kurumsal").toLowerCase();
 
-    if (customerType === "ek_paket") {
+    if (customerType === "tek_kullanim") {
+      if (!isEk) return false;
       if (Platform.OS === "ios" && !packageHasIapProduct(pkg)) return false;
-      return isEk;
+      return true;
     }
+
     if (isEk) return false;
 
     if (customerType === "bireysel") {
+      if (pkgType !== "bireysel") return false;
       if (Platform.OS === "ios" && !packageHasIapProduct(pkg)) return false;
       if (pkgType !== "bireysel") return false;
       return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
@@ -238,7 +246,7 @@ export default function PricingScreen() {
           >
             <Ionicons name="arrow-back" size={18} color="#f8fafc" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Tepe Coin Paketleri</Text>
+          <Text style={styles.headerTitle}>Tepe Kredi Paketleri</Text>
           <View style={styles.headerRight} />
         </View>
         <View style={styles.loadingContainer}>
@@ -260,7 +268,7 @@ export default function PricingScreen() {
         >
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Tepe Coin Paketleri</Text>
+        <Text style={styles.headerTitle}>Tepe Kredi Paketleri</Text>
         <View style={styles.headerRight} />
       </View>
 
@@ -288,17 +296,17 @@ export default function PricingScreen() {
               <View style={styles.balanceCardInfoCol}>
                 <Text style={styles.balanceTitle}>Mevcut Bakiyeniz</Text>
                 <Text style={styles.balanceValue}>
-                  {balance.balance.toLocaleString("tr-TR")} Tepe Coin
+                  {balance.balance.toLocaleString("tr-TR")} Tepe Kredi
                 </Text>
               </View>
             </View>
             <Text style={styles.balanceNote}>
-              "Tepe Coin" ismi, "Göbekli Tepe"ye atfen seçilmiştir. Tescilli Markamızdır.
+              "Tepe Kredi" ismi, "Göbekli Tepe"ye atfen seçilmiştir. Tescilli Markamızdır.
             </Text>
           </View>
         )}
 
-        {/* Tepe Coin Kazan! */}
+        {/* Tepe Kredi Kazan! */}
         <TouchableOpacity
           style={styles.earnCard}
           activeOpacity={0.85}
@@ -311,8 +319,8 @@ export default function PricingScreen() {
               <Ionicons name="gift-outline" size={24} color="#3b82f6" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.earnCardTitle}>Tepe Coin Kazan!</Text>
-              <Text style={styles.earnCardSubtitle}>Öner, paylaş, değerlendir — coin kazan.</Text>
+              <Text style={styles.earnCardTitle}>Tepe Kredi Kazan!</Text>
+              <Text style={styles.earnCardSubtitle}>Öner, paylaş, değerlendir — Kredi kazan.</Text>
             </View>
             <Ionicons name="chevron-forward" size={22} color="#64748b" />
           </View>
@@ -320,7 +328,7 @@ export default function PricingScreen() {
 
         <Text style={styles.targetAudience}>{targetAudienceText}</Text>
 
-        {/* Kurumsal | Bireysel | Ek Paket — web ile aynı */}
+        {/* Kurumsal | Bireysel | Tek Kullanım */}
         <View style={styles.customerTypeToggle}>
           <TouchableOpacity
             style={[styles.customerTypeButton, customerType === "kurumsal" && styles.customerTypeButtonActive]}
@@ -339,44 +347,37 @@ export default function PricingScreen() {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.customerTypeButton, customerType === "ek_paket" && styles.customerTypeButtonActive]}
-            onPress={() => setCustomerType("ek_paket")}
+            style={[styles.customerTypeButton, customerType === "tek_kullanim" && styles.customerTypeButtonActive]}
+            onPress={() => setCustomerType("tek_kullanim")}
           >
-            <Text style={[styles.customerTypeButtonText, customerType === "ek_paket" && styles.customerTypeButtonTextActive]}>
-              Ek Paket
+            <Text
+              style={[
+                styles.customerTypeButtonText,
+                styles.customerTypeButtonTextCompact,
+                customerType === "tek_kullanim" && styles.customerTypeButtonTextActive,
+              ]}
+            >
+              Tek Kullanım
             </Text>
           </TouchableOpacity>
         </View>
 
-        {customerType === "ek_paket" && isAuthenticated && !hasActiveYearlySubscription ? (
-          <View style={[styles.ekPaketBanner, styles.ekPaketBannerLocked]}>
+        {customerType === "tek_kullanim" &&
+        tekKullanimRequiresYearlyInCatalog &&
+        isAuthenticated &&
+        !hasActiveYearlySubscription ? (
+          <View style={[styles.tekKullanimBanner, styles.tekKullanimBannerLocked]}>
             <Ionicons name="lock-closed-outline" size={18} color="#b45309" />
-            <Text style={styles.ekPaketBannerText}>
-              Ek paket satın almak için aktif yıllık aboneliğiniz olmalıdır. Önce kurumsal veya bireysel yıllık paket alın.
-            </Text>
-          </View>
-        ) : customerType === "ek_paket" ? (
-          <View style={styles.ekPaketBanner}>
-            <Ionicons name="information-circle-outline" size={18} color="#b45309" />
-            <Text style={styles.ekPaketBannerText}>
-              Ek paketler yalnızca aktif yıllık aboneliği olan kullanıcılar içindir.
+            <Text style={styles.tekKullanimBannerText}>
+              Bazı Tek Kullanım paketleri için aktif yıllık aboneliğiniz olmalıdır.
             </Text>
           </View>
         ) : null}
 
         {/* Aylık / Yıllık — kurumsal ve bireysel */}
-        {customerType === "kurumsal" || customerType === "bireysel" ? (
+        {customerType !== "tek_kullanim" ? (
         <View style={styles.periodToggle}>
           <View style={styles.periodTabsRow}>
-            <TouchableOpacity
-              style={[styles.periodTab, period === "monthly" && styles.periodTabActive]}
-              onPress={() => setPeriod("monthly")}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.periodTabText, period === "monthly" && styles.periodTabTextActive]}>
-                Aylık
-              </Text>
-            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.periodTab, period === "yearly" && styles.periodTabActive]}
               onPress={() => setPeriod("yearly")}
@@ -385,6 +386,15 @@ export default function PricingScreen() {
               <Text style={[styles.periodTabText, period === "yearly" && styles.periodTabTextActive]}>
                 Yıllık
                 <Text style={styles.saveBadge}> Tasarruf!</Text>
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.periodTab, period === "monthly" && styles.periodTabActive]}
+              onPress={() => setPeriod("monthly")}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.periodTabText, period === "monthly" && styles.periodTabTextActive]}>
+                Aylık
               </Text>
             </TouchableOpacity>
           </View>
@@ -412,7 +422,7 @@ export default function PricingScreen() {
                   <View style={styles.coinModalIconWrap}>
                     <Ionicons name="information-circle-outline" size={48} color="#3b82f6" />
                   </View>
-                  <Text style={styles.coinModalTitle}>Tepe Coin Nedir?</Text>
+                  <Text style={styles.coinModalTitle}>Tepe Kredi Nedir?</Text>
                   <View style={styles.coinModalScrollWrap}>
                     <ScrollView
                       style={styles.coinModalScroll}
@@ -440,10 +450,13 @@ export default function PricingScreen() {
         {filteredPackages.length > 0 ? (
           <View style={styles.packagesGrid}>
             {filteredPackages.map((pkg) => {
-              const showYearlyStyle =
-                (customerType === "kurumsal" || customerType === "bireysel") && period === "yearly";
-              const isEkLocked =
-                isEkPackage(pkg) && isAuthenticated && !hasActiveYearlySubscription;
+              const isTekKullanim = customerType === "tek_kullanim";
+              const showYearlyStyle = !isTekKullanim && period === "yearly";
+              const isTekKullanimLocked =
+                isTekKullanim &&
+                ekPackageRequiresYearlySubscription(pkg) &&
+                isAuthenticated &&
+                !hasActiveYearlySubscription;
               const discountPct = pkg.discount_percent ?? 0;
               const showOriginal =
                 discountPct > 0 && (pkg.original_price ?? 0) > (pkg.price ?? 0);
@@ -464,17 +477,33 @@ export default function PricingScreen() {
                 <Text style={[styles.packageName, pkg.is_popular && styles.packageNameWithBadge]}>{pkg.name}</Text>
 
                 <View style={styles.packageCredits}>
-                  <Text style={styles.creditsValue}>
-                    {pkg.credits.toLocaleString("tr-TR")}
-                  </Text>
-                  <View style={styles.packageCreditsLabelRow}>
-                    <Ionicons name="layers-outline" size={18} color="#64748b" />
-                    <Text style={styles.creditsLabel}>Tepe Coin</Text>
-                  </View>
-                  {showYearlyStyle && pkg.monthly_credits && (
-                    <Text style={styles.monthlyCredits}>
-                      ({pkg.monthly_credits}/ay)
-                    </Text>
+                  {showYearlyStyle && pkg.monthly_credits ? (
+                    <>
+                      <Text style={styles.creditsValue}>
+                        {pkg.monthly_credits.toLocaleString("tr-TR")}
+                      </Text>
+                      <View style={styles.packageCreditsLabelRow}>
+                        <Ionicons name="layers-outline" size={18} color="#3b82f6" />
+                        <Text style={[styles.creditsLabel, styles.creditsLabelMonthly]}>
+                          Tepe Kredi / ay
+                        </Text>
+                      </View>
+                      <View style={styles.monthlyTotalBadge}>
+                        <Text style={styles.monthlyTotalBadgeText}>
+                          Toplam {pkg.credits.toLocaleString("tr-TR")} Tepe Kredi
+                        </Text>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.creditsValue}>
+                        {pkg.credits.toLocaleString("tr-TR")}
+                      </Text>
+                      <View style={styles.packageCreditsLabelRow}>
+                        <Ionicons name="layers-outline" size={18} color="#64748b" />
+                        <Text style={styles.creditsLabel}>Tepe Kredi</Text>
+                      </View>
+                    </>
                   )}
                 </View>
 
@@ -493,7 +522,7 @@ export default function PricingScreen() {
                   ) : null}
                   <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "center" }}>
                     <Text style={styles.priceValue}>
-                      {customerType === "ek_paket" && pkg.monthly_price != null
+                      {isTekKullanim && pkg.monthly_price != null
                         ? Number(pkg.monthly_price).toLocaleString("tr-TR")
                         : showYearlyStyle && pkg.monthly_price
                           ? pkg.monthly_price.toLocaleString("tr-TR")
@@ -501,7 +530,13 @@ export default function PricingScreen() {
                     </Text>
                     <Text style={styles.priceCurrency}>TL</Text>
                     <Text style={styles.pricePeriod}>
-                      {showYearlyStyle ? "/ay" : customerType === "bireysel" && pkg.duration_months === 12 ? `/${pkg.duration_months} ay` : customerType === "ek_paket" ? "/ay" : ""}
+                      {showYearlyStyle
+                        ? "/ay"
+                        : isTekKullanim
+                          ? "/ay"
+                          : customerType === "bireysel" && pkg.duration_months === 12
+                            ? `/${pkg.duration_months} ay`
+                            : ""}
                     </Text>
                   </View>
                 </View>
@@ -512,9 +547,9 @@ export default function PricingScreen() {
                   </Text>
                 )}
 
-                {customerType === "ek_paket" && pkg.monthly_price != null && (
+                {isTekKullanim && (
                   <Text style={styles.totalPrice}>
-                    Aylık ek kullanım: {Number(pkg.monthly_price).toLocaleString("tr-TR")} TL
+                    Tek seferlik: {pkg.price.toLocaleString("tr-TR")} TL
                   </Text>
                 )}
 
@@ -522,18 +557,26 @@ export default function PricingScreen() {
                   <View style={styles.feature}>
                     <Ionicons name="checkmark-circle" size={16} color="#10b981" />
                     <Text style={styles.featureText}>
-                      {pkg.credits} Tepe Coin
-                      {showYearlyStyle &&
-                        pkg.monthly_credits &&
-                        ` (${pkg.monthly_credits}/ay)`}
+                      {showYearlyStyle && pkg.monthly_credits ? (
+                        <>
+                          <Text style={styles.featureTextMonthly}>
+                            Aylık {pkg.monthly_credits.toLocaleString("tr-TR")} Tepe Kredi
+                          </Text>
+                          <Text> · Toplam {pkg.credits.toLocaleString("tr-TR")}</Text>
+                        </>
+                      ) : (
+                        `${pkg.credits.toLocaleString("tr-TR")} Tepe Kredi`
+                      )}
                     </Text>
                   </View>
                   <View style={styles.feature}>
                     <Ionicons name="checkmark-circle" size={16} color="#10b981" />
                     <Text style={styles.featureText}>
-                      {pkg.duration_months === 1
-                        ? "1 Aylık Geçerlilik"
-                        : "12 Aylık Geçerlilik"}
+                      {isTekKullanim
+                        ? "Tek seferlik kullanım"
+                        : pkg.duration_months === 1
+                          ? "1 Aylık Geçerlilik"
+                          : "12 Aylık Geçerlilik"}
                     </Text>
                   </View>
                   {showYearlyStyle && discountPct > 0 && (
@@ -553,14 +596,14 @@ export default function PricingScreen() {
                 <TouchableOpacity
                   style={[
                     styles.purchaseButton,
-                    isEkLocked && styles.purchaseButtonDisabled,
+                    isTekKullanimLocked && styles.purchaseButtonDisabled,
                   ]}
                   onPress={() => handlePurchase(pkg)}
-                  disabled={isEkLocked}
+                  disabled={isTekKullanimLocked}
                 >
                   <Ionicons
                     name={
-                      isEkLocked
+                      isTekKullanimLocked
                         ? "lock-closed"
                         : Platform.OS === "ios"
                           ? "logo-apple"
@@ -570,7 +613,7 @@ export default function PricingScreen() {
                     color="#fff"
                   />
                   <Text style={styles.purchaseButtonText}>
-                    {isEkLocked
+                    {isTekKullanimLocked
                       ? "Yıllık Abonelik Gerekli"
                       : Platform.OS === "ios"
                         ? "Apple ile Satın Al"
@@ -591,8 +634,8 @@ export default function PricingScreen() {
             <Text style={styles.emptyText}>
               {loadError
                 ? loadError
-                : customerType === "ek_paket"
-                  ? "Henüz ek paket tanımlanmamış"
+                : customerType === "tek_kullanim"
+                  ? "Henüz Tek Kullanım paketi tanımlanmamış"
                   : customerType === "bireysel"
                     ? period === "monthly"
                       ? "Henüz bireysel aylık paket tanımlanmamış"
@@ -621,7 +664,7 @@ export default function PricingScreen() {
             <View style={styles.usageInfoHeaderIcon}>
               <Ionicons name="help-circle-outline" size={22} color="#3b82f6" />
             </View>
-            <Text style={styles.usageInfoTitle}>Tepe Coin Nasıl Kullanılır?</Text>
+            <Text style={styles.usageInfoTitle}>Tepe Kredi Nasıl Kullanılır?</Text>
           </View>
 
           <View style={styles.usageCards}>
@@ -636,7 +679,7 @@ export default function PricingScreen() {
                     </View>
                     <View style={styles.usageContent}>
                       <Text style={styles.usageCardTitle}>{item.display_name}</Text>
-                      <Text style={styles.usageCost}>{item.credits} Tepe Coin</Text>
+                      <Text style={styles.usageCost}>{item.credits} Tepe Kredi</Text>
                       {item.description ? (
                         <Text style={styles.usageDesc}>{item.description}</Text>
                       ) : null}
@@ -918,27 +961,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
   },
-  ekPaketBanner: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    backgroundColor: "#fffbeb",
-    borderWidth: 1,
-    borderColor: "#fde68a",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-  },
-  ekPaketBannerLocked: {
-    backgroundColor: "#fef2f2",
-    borderColor: "#fecaca",
-  },
-  ekPaketBannerText: {
-    flex: 1,
-    fontSize: 12,
-    color: "#92400e",
-    lineHeight: 17,
-  },
   customerTypeButtonActive: {
     backgroundColor: "#3b82f6",
   },
@@ -949,6 +971,30 @@ const styles = StyleSheet.create({
   },
   customerTypeButtonTextActive: {
     color: "#fff",
+  },
+  customerTypeButtonTextCompact: {
+    fontSize: 12,
+  },
+  tekKullanimBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  tekKullanimBannerLocked: {
+    backgroundColor: "#fef2f2",
+    borderColor: "#fecaca",
+  },
+  tekKullanimBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#92400e",
+    lineHeight: 18,
   },
   periodToggle: {
     marginBottom: 24,
@@ -1043,10 +1089,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#64748b",
   },
-  monthlyCredits: {
-    fontSize: 12,
-    color: "#94a3b8",
-    marginTop: 2,
+  creditsLabelMonthly: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#2563eb",
+  },
+  monthlyTotalBadge: {
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: "rgba(59, 130, 246, 0.12)",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(59, 130, 246, 0.22)",
+  },
+  monthlyTotalBadgeText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1d4ed8",
+    textAlign: "center",
   },
   packagePrice: {
     alignItems: "center",
@@ -1112,6 +1173,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#64748b",
   },
+  featureTextMonthly: {
+    fontWeight: "700",
+    color: "#1d4ed8",
+  },
   featureTextHighlight: {
     color: TEPE_SAVE_COLORS.accentText,
     fontWeight: "600",
@@ -1126,7 +1191,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   purchaseButtonDisabled: {
-    opacity: 0.6,
+    backgroundColor: "#94a3b8",
   },
   purchaseButtonText: {
     color: "#fff",
