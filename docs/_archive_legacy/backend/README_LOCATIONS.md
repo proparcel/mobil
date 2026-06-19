@@ -26,7 +26,7 @@ Mobil uygulama içinde hazır bir JSON dosyası mevcuttur:
 Veritabanında değişiklik olduğunda JSON dosyasını güncellemek için:
 
 ```bash
-cd mobile/mobil_github/backend
+cd backend
 python generate_locations_json.py
 ```
 

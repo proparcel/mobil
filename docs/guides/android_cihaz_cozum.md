@@ -82,9 +82,9 @@ adb start-server
 adb devices
 ```
 
-## "Network request failed" – Android gerçek cihaz + Django 0.0.0.0:8000
+## "Network request failed" – Android gerçek cihaz + Django 0.0.0.0:7000
 
-Django `http://0.0.0.0:8000/` ile çalışıyorsa, **telefon 0.0.0.0 adresine bağlanamaz**. Telefon ve bilgisayar **aynı WiFi**’de olmalı; uygulama **bilgisayarın yerel IP’si**ni kullanmalı.
+Django `http://0.0.0.0:7000/` ile çalışıyorsa, **telefon 0.0.0.0 adresine bağlanamaz**. Telefon ve bilgisayar **aynı WiFi**’de olmalı; uygulama **bilgisayarın yerel IP’si**ni kullanmalı.
 
 ### Adımlar
 
@@ -94,11 +94,11 @@ Django `http://0.0.0.0:8000/` ile çalışıyorsa, **telefon 0.0.0.0 adresine ba
    ```
    **IPv4 Address** satırına bakın (örn: `192.168.1.101`). **Wireless LAN** veya **Ethernet** bölümündeki adres kullanılır.
 
-2. **Proje kökünde `.env` dosyası oluşturun veya düzenleyin** (`mobile/mobil_github/frontend/.env`):
+2. **Proje kökünde `.env` dosyası oluşturun veya düzenleyin** (`frontend/.env`):
    ```
-   API_URL=http://192.168.1.101:8000
+   API_URL=http://192.168.1.101:7001
    ```
-   `192.168.1.101` yerine kendi IP’nizi yazın (sonunda **:8000** kalsın).
+   `192.168.1.101` yerine kendi IP’nizi yazın (sonunda **:7001** kalsın).
 
 3. **Metro’yu yeniden başlatın** (env değişince gerekir):
    ```cmd
@@ -107,7 +107,7 @@ Django `http://0.0.0.0:8000/` ile çalışıyorsa, **telefon 0.0.0.0 adresine ba
    ```
    veya Metro’yu durdurup tekrar `npm start` / `npx expo start` çalıştırın.
 
-4. **Django’nun dışarıdan erişime açık olduğundan emin olun**: `runserver 0.0.0.0:8000` kullanıyorsanız bu adım tamam. Windows Firewall 8000 portunu engelliyorsa izin verin.
+4. **Django’nun dışarıdan erişime açık olduğundan emin olun**: `runserver 0.0.0.0:7000` kullanıyorsanız bu adım tamam. Windows Firewall 7000 portunu engelliyorsa izin verin.
 
 ---
 

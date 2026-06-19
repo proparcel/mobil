@@ -1,6 +1,6 @@
 # Expo Temizleme Planı - React Native CLI Projesi
 
-**Proje Yolu:** `mobile/mobil_github/frontend`  
+**Proje Yolu:** `frontend`  
 **Tarih:** 2026-01-23  
 **Durum:** React Native CLI projesi (Expo kullanılmıyor)
 
@@ -235,7 +235,7 @@ web-build/
 
 #### ✅ TypeScript Derleme Kontrolü
 ```bash
-cd mobile/mobil_github/frontend
+cd frontend
 npx tsc --noEmit
 ```
 **Beklenen:** Hata olmamalı
@@ -314,7 +314,7 @@ npm run lint
 
 ### Adım 1: Yedekleme
 ```bash
-cd mobile/mobil_github/frontend
+cd frontend
 git status
 git add .
 git commit -m "chore: Expo temizleme öncesi yedek"
@@ -369,7 +369,7 @@ git commit -m "chore: Expo referanslarını temizle
 Eğer bir sorun çıkarsa:
 
 ```bash
-cd mobile/mobil_github/frontend
+cd frontend
 git checkout HEAD -- tsconfig.json .gitignore
 # veya
 git reset --hard HEAD~1

@@ -155,7 +155,7 @@ cd c:\ProParcel\mobile\mobil_github\frontend
 eas build --platform ios --profile development
 ```
 
-Detaylar için: `mobile/doc/build/ios_build_rehberi.md`
+Detaylar için: `docs/build/ios_build_rehberi.md`
 
 ---
 
@@ -266,5 +266,5 @@ open ios/ProParcel.xcworkspace
 
 - `ANDROID_CIHAZ_COZUM.md` - Android cihaz sorunları
 - `METRO_CONNECTION_TROUBLESHOOTING.md` - Metro bağlantı sorunları
-- `mobile/doc/build/ios_build_rehberi.md` - iOS build detayları
-- `mobile/doc/build/apk_build_ve_sunucu.md` - APK build rehberi
+- `docs/build/ios_build_rehberi.md` - iOS build detayları
+- `docs/build/apk_build_ve_sunucu.md` - APK build rehberi

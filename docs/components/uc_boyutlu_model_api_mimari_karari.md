@@ -15,19 +15,19 @@ Bu dokümantasyon, 3D modeller listesi API'si için sunucu mimarisi kararını a
    - URL: `http://localhost:8000/api/3d-models-list/`
    - Port: 8000
    - Framework: Django
-   - Veritabanı: UserDb (MSSQL)
+  - Veritabanı: UserDb (Mongo)
    - Authentication: Opsiyonel (kullanıcı bilgisi varsa sahip olunan modelleri gösterir)
 
-2. **FastAPI Endpoint** (`mobile/mobil_github/backend/server.py`)
+2. **FastAPI Endpoint** (`backend/server.py`)
    - URL: `http://localhost:8001/api/3d-models-list/`
    - Port: 8001
    - Framework: FastAPI
-   - Veritabanı: UserDb (MSSQL) - Direkt bağlantı
+  - Veritabanı: UserDb (Mongo) - Direkt bağlantı
    - Authentication: Yok (herkese açık)
 
 ### Mobil Uygulama Konfigürasyonu
 
-**Dosya**: `mobile/mobil_github/frontend/config/api.ts`
+**Dosya**: `frontend/config/api.ts`
 
 ```typescript
 const DEFAULT_API_URL = 'http://10.0.2.2:8000'; // Django
@@ -217,13 +217,13 @@ FastAPI endpoint'i şu an için kullanılmıyor ancak:
 
 ### Test Scripti
 
-**Dosya**: `mobile/mobil_github/backend/test_3d_models_endpoints.py`
+**Dosya**: `backend/test_3d_models_endpoints.py`
 
 Bu script her iki endpoint'i test eder ve performans karşılaştırması yapar.
 
 **Kullanım**:
 ```bash
-cd mobile/mobil_github/backend
+cd backend
 python test_3d_models_endpoints.py
 ```
 
@@ -270,7 +270,7 @@ Django endpoint optimizasyonu sonrası:
 ## İlgili Dosyalar
 
 - Django Endpoint: `myapp/views/models_api.py`
-- FastAPI Endpoint: `mobile/mobil_github/backend/server.py`
-- Mobil Konfigürasyon: `mobile/mobil_github/frontend/config/api.ts`
-- Model Catalog: `mobile/mobil_github/frontend/src/maps/models/modelCatalog.ts`
-- Test Scripti: `mobile/mobil_github/backend/test_3d_models_endpoints.py`
+- FastAPI Endpoint: `backend/server.py`
+- Mobil Konfigürasyon: `frontend/config/api.ts`
+- Model Catalog: `frontend/src/maps/models/modelCatalog.ts`
+- Test Scripti: `backend/test_3d_models_endpoints.py`
