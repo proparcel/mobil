@@ -1,5 +1,7 @@
 import type { RefObject } from 'react';
 import { Dimensions } from 'react-native';
+import { normalizeGeometryCoordinates } from './geoCoordNormalize';
+export { normalizeGeometryCoordinates, shouldSwapLatLonForTurkey } from './geoCoordNormalize';
 import { projectLngLatsBatch } from '../maps/drawing/shapeScreenProjection';
 import {
   isFiniteScreenPoint,
@@ -11,10 +13,43 @@ import {
 } from '../maps/drawing/mapOverlayViewport';
 
 const PARCEL_VIEWPORT_PADDING_PX = 32;
+const WORLD_DIM_PX = 256;
+const ZOOM_ABSOLUTE_MAX = 22;
 
 /** Basit sorgu sonrası kamera: çok uzaklaşmayı önler, çok yakınlaşmayı sınırlar */
 export const SIMPLE_QUERY_MIN_ZOOM = 14;
 export const SIMPLE_QUERY_MAX_ZOOM = 16;
+
+/** Paylaşım ekran görüntüsü: arazi her zaman kadraj içinde, mümkün olduğunca yakın */
+export const SHARE_CAPTURE_MIN_ZOOM = 2;
+export const SHARE_CAPTURE_MAX_ZOOM = 20;
+export const SHARE_CAPTURE_PADDING_PX = 56;
+export const SHARE_CAPTURE_BBOX_MARGIN = 1.18;
+
+/** Pratik drone harita kareleri — 60° pitch + dikey kadraj (720×1280) */
+export const DRONE_CAPTURE_MIN_ZOOM = 2;
+export const DRONE_CAPTURE_MAX_ZOOM = 18;
+export const DRONE_CAPTURE_PADDING_PX = 88;
+export const DRONE_CAPTURE_BBOX_MARGIN = 1.5;
+
+export type CalculateBoundsOptions = {
+  viewport?: MapOverlayViewport;
+  paddingPx?: number;
+  minZoom?: number;
+  maxZoom?: number;
+  bboxMargin?: number;
+};
+
+function latRad(lat: number): number {
+  const sin = Math.sin((lat * Math.PI) / 180);
+  const radX2 = Math.log((1 + sin) / (1 - sin)) / 2;
+  return Math.max(Math.min(radX2, Math.PI), -Math.PI) / 2;
+}
+
+function zoomFromBboxFraction(mapPx: number, worldPx: number, fraction: number): number {
+  if (fraction <= 0 || mapPx <= 0) return ZOOM_ABSOLUTE_MAX;
+  return Math.floor(Math.log2(mapPx / worldPx / fraction));
+}
 
 function clampSimpleQueryZoom(zoom: number): number {
   return Math.max(SIMPLE_QUERY_MIN_ZOOM, Math.min(zoom, SIMPLE_QUERY_MAX_ZOOM));
@@ -70,52 +105,6 @@ export const isPointInParcel = (point: [number, number], geometry: any): boolean
     console.error('[parcelUtils.ts:48] Point in polygon kontrolü hatası:', e);
     return false;
   }
-};
-
-/**
- * GeoJSON koordinatlarını normalize et: [lat, lon] -> [lon, lat]
- * Mapbox GeoJSON [lon, lat] bekler. TKGM / bazı kaynaklar [lat, lon] dönebilir.
- *
- * ÖNEMLİ: `Math.abs(x) > 90` gibi kaba kurallar standart [lon, lat] çiftlerini (ör. TR'de lon≈27)
- * yanlışlıkla swap edip kamera merkezini ve bbox'ı bozuyordu. Ana ekran (index.tsx) ile aynı
- * Türkiye bbox tespiti kullanılır — sadece gerçekten [lat, lon] görünen çiftler çevrilir.
- */
-export const normalizeGeometryCoordinates = (geometry: any): any => {
-  if (!geometry || !geometry.coordinates) return geometry;
-
-  let first: [number, number] | null = null;
-  try {
-    if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates?.[0]?.[0])) {
-      first = geometry.coordinates[0][0];
-    } else if (geometry.type === 'MultiPolygon' && Array.isArray(geometry.coordinates?.[0]?.[0]?.[0])) {
-      first = geometry.coordinates[0][0][0];
-    } else if (geometry.type === 'Point' && Array.isArray(geometry.coordinates) && geometry.coordinates.length >= 2) {
-      first = [geometry.coordinates[0], geometry.coordinates[1]];
-    } else if (geometry.type === 'LineString' && Array.isArray(geometry.coordinates?.[0])) {
-      first = geometry.coordinates[0];
-    }
-  } catch {
-    /* ignore */
-  }
-
-  if (!first || typeof first[0] !== 'number' || typeof first[1] !== 'number') return geometry;
-
-  const x = first[0];
-  const y = first[1];
-  // TR lat (35-43) ve lon (25-46): x bu lat bandında ve y lon bandında ise → [lat,lon] kabul et, swap
-  const looksLikeLatLonTR =
-    Number.isFinite(x) && Number.isFinite(y) && x >= 35 && x <= 43 && y >= 25 && y <= 46;
-  if (!looksLikeLatLonTR) return geometry;
-
-  const swap = (coords: any): any => {
-    if (!Array.isArray(coords)) return coords;
-    if (coords.length >= 2 && typeof coords[0] === 'number' && typeof coords[1] === 'number') {
-      return [coords[1], coords[0], ...coords.slice(2)];
-    }
-    return coords.map(swap);
-  };
-
-  return { ...geometry, coordinates: swap(geometry.coordinates) };
 };
 
 /**
@@ -345,76 +334,253 @@ export function zoomMapToParcelGeometry({
 }
 
 /**
- * Parsel polygon için bounding box hesapla ve kamera ayarlarını döndür
+ * Parsel polygon için bounding box hesapla ve kamera ayarlarını döndür.
+ * Viewport verildiğinde en/boy oranına göre zoom hesaplanır (paylaşım kadrajı için).
  */
-export const calculateBoundsAndCamera = (geometry: any): { center: [number, number]; zoom: number } | null => {
+export const calculateBoundsAndCamera = (
+  geometry: any,
+  options?: CalculateBoundsOptions,
+): { center: [number, number]; zoom: number } | null => {
   try {
-    const allCoords = collectParcelRingCoords(geometry);
-    
-    if (allCoords.length === 0) {
-      return null;
-    }
-    
     const bbox = getGeometryBoundingBox(geometry);
     if (!bbox) return null;
+
     const { minLon, maxLon, minLat, maxLat } = bbox;
-    // Merkez hesapla
     const centerLon = (minLon + maxLon) / 2;
     const centerLat = (minLat + maxLat) / 2;
-    
-    // Zoom seviyesi hesapla (bounding box'a göre)
-    // En ve boy hesapla (derece cinsinden)
-    const lonDiff = maxLon - minLon;
-    const latDiff = maxLat - minLat;
-    
-    // Daha büyük olan farkı kullanarak zoom hesapla
-    // Yaklaşık formül: zoom = log2(360 / diff)
-    const maxDiff = Math.max(lonDiff, latDiff);
-    
-    // Padding eklemek için maxDiff'i biraz artır (%20 padding)
-    const adjustedDiff = maxDiff * 1.2;
-    
-    // Zoom hesaplama (deneme-yanılma ile ayarlanmış)
-    // 0.01 derece ≈ 1km için zoom ~13
-    // 0.001 derece ≈ 100m için zoom ~16
-    // 0.0001 derece ≈ 10m için zoom ~19
-    let zoom = 15; // Varsayılan
-    if (adjustedDiff > 0.1) {
-      zoom = 10; // Çok büyük alan
-    } else if (adjustedDiff > 0.05) {
-      zoom = 11;
-    } else if (adjustedDiff > 0.02) {
-      zoom = 12;
-    } else if (adjustedDiff > 0.01) {
-      zoom = 13;
-    } else if (adjustedDiff > 0.005) {
-      zoom = 14;
-    } else if (adjustedDiff > 0.002) {
-      zoom = 15;
-    } else if (adjustedDiff > 0.001) {
-      zoom = 16;
-    } else if (adjustedDiff > 0.0005) {
-      zoom = 17;
-    } else if (adjustedDiff > 0.0002) {
-      zoom = 18;
-    } else if (adjustedDiff > 0.0001) {
-      zoom = 19;
-    } else {
-      zoom = 20; // Çok küçük alan
-    }
-    
-    // Zoom'u sınırla (çok yakın veya çok uzak olmasın)
-    zoom = Math.max(10, Math.min(20, zoom));
-    
+
+    const viewport = resolveMapViewport(options?.viewport ?? { width: 0, height: 0 });
+    const paddingPx = options?.paddingPx ?? PARCEL_VIEWPORT_PADDING_PX;
+    const minZoom = options?.minZoom ?? 2;
+    const maxZoom = options?.maxZoom ?? 20;
+
+    const bboxMargin = options?.bboxMargin ?? 1;
+
+    const mapWidth = Math.max(1, viewport.width - paddingPx * 2);
+    const mapHeight = Math.max(1, viewport.height - paddingPx * 2);
+
+    const latFraction =
+      ((latRad(maxLat) - latRad(minLat)) / Math.PI) * bboxMargin;
+    const lngDiff = maxLon - minLon;
+    const lngSpan = lngDiff < 0 ? lngDiff + 360 : lngDiff;
+    const cosLat = Math.max(0.2, Math.cos((centerLat * Math.PI) / 180));
+    const lngFraction = (lngSpan / 360 / cosLat) * bboxMargin;
+
+    const latZoom = zoomFromBboxFraction(mapHeight, WORLD_DIM_PX, Math.max(latFraction, 1e-8));
+    const lngZoom = zoomFromBboxFraction(mapWidth, WORLD_DIM_PX, Math.max(lngFraction, 1e-8));
+
+    const zoom = Math.max(minZoom, Math.min(maxZoom, Math.min(latZoom, lngZoom)));
+
     return {
       center: [centerLon, centerLat],
-      zoom: zoom,
+      zoom,
     };
   } catch (error) {
-    console.error('[parcelUtils.ts:151] Bounds hesaplama hatası:', error);
+    console.error('[parcelUtils] Bounds hesaplama hatası:', error);
     return null;
   }
 };
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function finishProgrammaticMove(
+  isProgrammaticMoveRef?: RefObject<boolean>,
+  programmaticTimerRef?: RefObject<ReturnType<typeof setTimeout> | null>,
+): void {
+  if (programmaticTimerRef) {
+    programmaticTimerRef.current = setTimeout(() => {
+      if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = false;
+    }, 80);
+  } else if (isProgrammaticMoveRef) {
+    isProgrammaticMoveRef.current = false;
+  }
+}
+
+/**
+ * Paylaşım ekran görüntüsü öncesi kamerayı araziye sığdırır.
+ * Kadraj boyutları (mapWidth x mapHeight) snapshot ile aynı oranda kullanılır.
+ */
+export async function fitParcelForShareCapture({
+  mapRef,
+  cameraRef,
+  camRef,
+  geometry,
+  viewport,
+  animationDuration = 600,
+  isProgrammaticMoveRef,
+  programmaticTimerRef,
+}: {
+  mapRef: RefObject<any>;
+  cameraRef: RefObject<any>;
+  camRef?: RefObject<{ pitch?: number; zoom?: number; heading?: number }>;
+  geometry: any;
+  viewport: MapOverlayViewport;
+  animationDuration?: number;
+  isProgrammaticMoveRef?: RefObject<boolean>;
+  programmaticTimerRef?: RefObject<ReturnType<typeof setTimeout> | null>;
+}): Promise<boolean> {
+  if (!geometry || !cameraRef?.current) return false;
+
+  const normalizedGeometry = normalizeGeometryCoordinates(geometry);
+  const padding = SHARE_CAPTURE_PADDING_PX;
+  const liveViewport = resolveMapViewport({ width: 0, height: 0 });
+
+  if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = true;
+  if (programmaticTimerRef?.current) clearTimeout(programmaticTimerRef.current);
+
+  const settings = calculateBoundsAndCamera(normalizedGeometry, {
+    viewport,
+    paddingPx: padding,
+    minZoom: SHARE_CAPTURE_MIN_ZOOM,
+    maxZoom: SHARE_CAPTURE_MAX_ZOOM,
+    bboxMargin: SHARE_CAPTURE_BBOX_MARGIN,
+  });
+  if (!settings || !cameraRef.current?.setCamera) {
+    if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = false;
+    return false;
+  }
+
+  let targetZoom = settings.zoom;
+  const center = settings.center;
+  const heading = camRef?.current?.heading ?? 0;
+
+  const applyShareCamera = async (zoom: number, animMs: number) => {
+    cameraRef.current?.setCamera?.({
+      centerCoordinate: center,
+      zoomLevel: zoom,
+      pitch: 0,
+      heading,
+      animationDuration: animMs,
+    });
+    if (camRef?.current) {
+      camRef.current.zoom = zoom;
+      camRef.current.pitch = 0;
+    }
+    await delayMs(animMs + 80);
+  };
+
+  await applyShareCamera(targetZoom, animationDuration);
+
+  while (targetZoom > SHARE_CAPTURE_MIN_ZOOM) {
+    const fullyVisible = await isParcelGeometryFullyVisible(
+      mapRef,
+      normalizedGeometry,
+      liveViewport,
+      padding,
+    );
+    if (fullyVisible !== false) break;
+    targetZoom -= 1;
+    await applyShareCamera(targetZoom, 220);
+  }
+
+  finishProgrammaticMove(isProgrammaticMoveRef, programmaticTimerRef);
+  return true;
+}
+
+export type ApplyDroneCaptureCameraFitArgs = {
+  cameraRef: RefObject<any>;
+  mapRef: RefObject<any>;
+  geometry: any;
+  /** Snapshot hedef boyutu (ör. 720×1280) */
+  captureViewport: MapOverlayViewport;
+  /** MapView ekrandaki gerçek boyutu — projeksiyon doğrulaması için */
+  mapViewport: MapOverlayViewport;
+  pitch?: number;
+  heading?: number;
+  paddingPx?: number;
+  animationDuration?: number;
+};
+
+/**
+ * Pratik drone referans kareleri: parsel sınırları kadraj içinde (60° pitch, dikey oran).
+ */
+export async function applyDroneCaptureCameraFit({
+  cameraRef,
+  mapRef,
+  geometry,
+  captureViewport,
+  mapViewport,
+  pitch = 60,
+  heading = 0,
+  paddingPx = DRONE_CAPTURE_PADDING_PX,
+  animationDuration = 0,
+}: ApplyDroneCaptureCameraFitArgs): Promise<{ center: [number, number]; zoom: number } | null> {
+  if (!geometry || !cameraRef?.current) return null;
+
+  const normalizedGeometry = normalizeGeometryCoordinates(geometry);
+  const bbox = getGeometryBoundingBox(normalizedGeometry);
+  if (!bbox) return null;
+
+  const fallbackSettings = calculateBoundsAndCamera(normalizedGeometry, {
+    viewport: captureViewport,
+    paddingPx,
+    minZoom: DRONE_CAPTURE_MIN_ZOOM,
+    maxZoom: DRONE_CAPTURE_MAX_ZOOM,
+    bboxMargin: DRONE_CAPTURE_BBOX_MARGIN,
+  });
+
+  const sw: [number, number] = [bbox.minLon, bbox.minLat];
+  const ne: [number, number] = [bbox.maxLon, bbox.maxLat];
+  const setCamera =
+    typeof cameraRef.current?.setCamera === 'function'
+      ? cameraRef.current.setCamera.bind(cameraRef.current)
+      : null;
+
+  const buildPadding = (base: number) => ({
+    paddingTop: Math.round(base * 1.3),
+    paddingBottom: Math.round(base * 0.9),
+    paddingLeft: base,
+    paddingRight: base,
+  });
+
+  const fitWithPadding = (base: number, animMs: number) => {
+    const pad = buildPadding(base);
+    if (setCamera) {
+      setCamera({
+        bounds: { ne, sw },
+        padding: pad,
+        pitch,
+        heading,
+        animationDuration: animMs,
+        animationMode: 'easeTo',
+      });
+      return;
+    }
+    if (typeof cameraRef.current?.fitBounds === 'function') {
+      cameraRef.current.fitBounds(sw, ne, base, animMs);
+      cameraRef.current.setCamera?.({ pitch, heading, animationDuration: 0 });
+    }
+  };
+
+  let activePadding = paddingPx;
+  fitWithPadding(activePadding, animationDuration);
+
+  await delayMs(animationDuration + 120);
+
+  const resolvedMapViewport = resolveMapViewport(mapViewport);
+  const layoutScale =
+    captureViewport.width > 0 ? resolvedMapViewport.width / captureViewport.width : 1;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const layoutPadding = Math.max(12, Math.round(activePadding * layoutScale));
+    const fullyVisible = await isParcelGeometryFullyVisible(
+      mapRef,
+      normalizedGeometry,
+      resolvedMapViewport,
+      layoutPadding,
+    );
+    if (fullyVisible !== false) break;
+    activePadding = Math.round(activePadding * 1.12);
+    fitWithPadding(activePadding, 220);
+    await delayMs(260);
+  }
+
+  return fallbackSettings
+    ? { center: fallbackSettings.center, zoom: fallbackSettings.zoom }
+    : null;
+}
 
 /**
  * Backend durum kontrolü

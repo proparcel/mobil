@@ -46,3 +46,13 @@ export function isPreviewSnapCacheValid(
   if (shapesKey !== undefined && entry.shapesKey !== shapesKey) return false;
   return Date.now() - entry.createdAt < PREVIEW_SNAP_MAX_AGE_MS;
 }
+
+/** Önizleme oturumundan kalan snap — fingerprint kontrolü yok (prewarm tamamlandıysa) */
+export function isPreviewSnapCacheFresh(
+  entry: PreviewSnapCacheEntry | null | undefined,
+  shapesKey?: string,
+): entry is PreviewSnapCacheEntry {
+  if (!entry) return false;
+  if (shapesKey !== undefined && entry.shapesKey !== shapesKey) return false;
+  return Date.now() - entry.createdAt < PREVIEW_SNAP_MAX_AGE_MS;
+}

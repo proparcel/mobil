@@ -1,5 +1,7 @@
 /** Harita snapshot (kaynak viewport) → şablon alanı: Image resizeMode="cover" ile aynı dönüşüm */
 
+import type { MapCropNorm } from './mapViewShotCapture';
+
 export type CoverTransform = {
   scale: number;
   offsetX: number;
@@ -34,4 +36,42 @@ export function transformCapturePoint(
     x: x * t.scale + t.offsetX,
     y: y * t.scale + t.offsetY,
   };
+}
+
+/** mapCropNorm ile kırpılmış kaynak → şablon (MapCaptureClippedImage ile aynı matematik). */
+export function computeCropClipTransform(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+  crop: MapCropNorm,
+): CoverTransform {
+  const cropW = crop.width * srcW;
+  const cropH = crop.height * srcH;
+  if (!(cropW > 0 && cropH > 0 && dstW > 0 && dstH > 0)) {
+    return computeCoverTransform(srcW, srcH, dstW, dstH);
+  }
+  const scale = Math.max(dstW / cropW, dstH / cropH);
+  return {
+    scale,
+    offsetX: -crop.x * srcW * scale,
+    offsetY: -crop.y * srcH * scale,
+  };
+}
+
+export function computeCaptureOverlayTransform(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+  mapCropNorm?: MapCropNorm | null,
+): CoverTransform {
+  if (
+    mapCropNorm &&
+    mapCropNorm.width > 0 &&
+    mapCropNorm.height > 0
+  ) {
+    return computeCropClipTransform(srcW, srcH, dstW, dstH, mapCropNorm);
+  }
+  return computeCoverTransform(srcW, srcH, dstW, dstH);
 }

@@ -14,7 +14,7 @@ export type SidebarSavedQuery = {
   mahalle_id?: string;
   il_tkgm_value?: string;
   ilce_tkgm_value?: string;
-  mahalle_tkgm_value: string;
+  mahalle_tkgm_value?: string;
   mahalle_proparcel_value?: string;
   il: string;
   ilce: string;
@@ -24,6 +24,8 @@ export type SidebarSavedQuery = {
   alan?: string;
   createdAt?: string;
   updatedAt: string;
+  /** Sesli/akıllı sorgu — il/ilçe/ada/parsel dolu, mahalle kullanıcı seçer */
+  partialMahalle?: boolean;
 };
 
 const STORAGE_KEY = "pp_sidebar_saved_queries_v1";
@@ -132,6 +134,20 @@ function extractArea(props?: Record<string, unknown> | null): string {
       props.areaM2);
   if (raw == null || raw === "") return "";
   return String(raw).trim();
+}
+
+export async function clearSidebarSavedQueries(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+  try {
+    const exists = await RNFS.exists(FILE_PATH);
+    if (exists) await RNFS.unlink(FILE_PATH);
+  } catch {
+    // ignore
+  }
 }
 
 export async function loadSidebarSavedQueries(): Promise<SidebarSavedQuery[]> {

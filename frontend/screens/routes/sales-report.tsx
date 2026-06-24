@@ -80,7 +80,7 @@ export default function SalesReportScreen() {
         deed_fee_receipt: receipt,
       });
       if (!res.ok) throw new Error(res.error);
-      Alert.alert("Gönderildi", "Satış bildiriminiz alındı. Onaylanınca 30 coin kazanacaksınız.");
+      Alert.alert("Gönderildi", "Satış bildiriminiz alındı. Onaylanınca 30 kredi kazanacaksınız.");
       router.back();
     } catch (e: any) {
       Alert.alert("Hata", e?.message || "Gönderilemedi");
@@ -172,7 +172,7 @@ export default function SalesReportScreen() {
             <Text style={styles.submitBtnText}>Gönder</Text>
           </TouchableOpacity>
 
-          <Text style={styles.muted}>Onay sonrası 30 Tepe Coin hesabına eklenir.</Text>
+          <Text style={styles.muted}>Onay sonrası 30 Tepe Kredi hesabına eklenir.</Text>
         </View>
       </KeyboardAwareScrollScreen>
     </SafeAreaView>

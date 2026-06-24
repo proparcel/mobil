@@ -22,6 +22,13 @@ export function homeIndexMapStyleURL(Mapbox: { StyleURL?: { SatelliteStreet?: st
   return Mapbox?.StyleURL?.SatelliteStreet || Mapbox?.StyleURL?.Default || "";
 }
 
+/** Yol etiketi olmayan uydu — harita kare yakalama için */
+export function homeIndexMapSatelliteStyleURL(
+  Mapbox: { StyleURL?: { Satellite?: string; Default?: string } } | null,
+) {
+  return Mapbox?.StyleURL?.Satellite || Mapbox?.StyleURL?.Default || "";
+}
+
 /** index.tsx `is3DMode && SkyLayer` paint — atmosphere mavi gökyüzü */
 export const HOME_INDEX_MAP_3D_SKY_STYLE = {
   skyType: "atmosphere" as const,

@@ -23,14 +23,17 @@ import {
   type SmartQueryExtractResponse,
 } from '../services/smartQueryService';
 import {
-  resolveSmartQueryPayload,
-  smartQueryPayloadToFormSeed,
+  resolveSmartQueryForForm,
   type SmartQueryParcelPayload,
 } from '../src/utils/smartQueryResolve';
 import type { LocationHierarchySelection } from '../src/utils/locationHierarchyMap';
 import { useSmartQueryAudioRecorder } from '../src/hooks/useSmartQueryAudioRecorder';
 import VoiceSearchListeningAnimation from './app/VoiceSearchListeningAnimation';
-import { appendVoiceQueryDebugLog } from '../src/utils/voiceQueryDebugLog';
+import {
+  appendSmartQueryDebugLog,
+  logSmartQuerySessionStart,
+} from '../src/utils/smartQueryDebugLog';
+import { showSmartQueryErrorAlert } from '../src/utils/smartQueryErrorAlert';
 import {
   ensureCameraPermission,
   permissionBlockedHint,
@@ -41,6 +44,7 @@ import { useRouter } from '../src/hooks/useNavigation';
 import {
   canUseSmartQuery,
   promptSmartQueryUpgrade,
+  promptSmartQueryLogin,
   SMART_QUERY_UPGRADE_MESSAGE,
 } from '../src/utils/customerFeatureGates';
 
@@ -80,7 +84,7 @@ export default function ParcelSearchModal({
   onIncomingFormSeedConsumed,
 }: ParcelSearchModalProps) {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
   const smartQueryEnabled = canUseSmartQuery(user);
   const [tab, setTab] = useState<TabKey>(initialTab);
@@ -126,10 +130,15 @@ export default function ParcelSearchModal({
   }, [smartQueryEnabled, goToPricing]);
 
   const ensureSmartQueryAccess = useCallback((): boolean => {
+    if (isAuthLoading) return false;
+    if (!isAuthenticated) {
+      promptSmartQueryLogin(() => router.push('login'));
+      return false;
+    }
     if (smartQueryEnabled) return true;
     promptSmartQueryUpgrade(goToPricing);
     return false;
-  }, [smartQueryEnabled, goToPricing]);
+  }, [isAuthLoading, isAuthenticated, smartQueryEnabled, goToPricing, router]);
 
   useEffect(() => {
     if (!incomingFormSeed) return;
@@ -149,23 +158,48 @@ export default function ParcelSearchModal({
     [onBeforeSavedQueryRun]
   );
 
-  const applySmartQueryResult = useCallback(async (result: SmartQueryExtractResponse) => {
-    if (!result.ok) {
-      Alert.alert('Akıllı Sorgu', result.error || 'Sorgu metni çözümlenemedi.');
-      return false;
-    }
+  const applySmartQueryResult = useCallback(
+    async (
+      result: SmartQueryExtractResponse,
+      channel: 'speech' | 'text' | 'image' = 'speech',
+    ) => {
+      const outcome = await resolveSmartQueryForForm(result, {
+        channel,
+        source: 'modal',
+      });
 
-    const resolved = await resolveSmartQueryPayload(result);
-    if (!resolved.ok) {
-      Alert.alert('Akıllı Sorgu', resolved.error);
-      return false;
-    }
+      if (outcome.status === 'complete') {
+        await appendSmartQueryDebugLog('flow_success', 'modal', {
+          channel,
+          summary: outcome.summary,
+          mahalleTkgmValue: outcome.payload.mahalleTkgmValue,
+        });
+        setTab('parcel');
+        setShouldAutoSubmitSeed(false);
+        setFormSeed(outcome.seed);
+        return true;
+      }
 
-    setTab('parcel');
-    setShouldAutoSubmitSeed(false);
-    setFormSeed(smartQueryPayloadToFormSeed(resolved.payload));
-    return true;
-  }, []);
+      if (outcome.status === 'partial') {
+        await appendSmartQueryDebugLog('flow_partial_success', 'modal', {
+          channel,
+          il: outcome.seed.il,
+          ilce: outcome.seed.ilce,
+          ada: outcome.seed.ada,
+          parsel: outcome.seed.parsel,
+        });
+        Alert.alert('Akıllı Sorgu', outcome.message);
+        setTab('parcel');
+        setShouldAutoSubmitSeed(false);
+        setFormSeed(outcome.seed);
+        return true;
+      }
+
+      showSmartQueryErrorAlert(outcome.error);
+      return false;
+    },
+    [],
+  );
 
   const runImageSmartQuery = useCallback(
     async (base64: string, mimeType: string) => {
@@ -179,7 +213,7 @@ export default function ParcelSearchModal({
           return;
         }
 
-        await applySmartQueryResult(response.data);
+        await applySmartQueryResult(response.data, 'image');
       } catch (error: any) {
         Alert.alert('Akıllı Sorgu', error?.message || 'Görsel sorgusu başlatılamadı.');
       } finally {
@@ -294,7 +328,8 @@ export default function ParcelSearchModal({
     if (isSmartExtracting) return;
     if (!ensureSmartQueryAccess()) return;
 
-    await appendVoiceQueryDebugLog('flow_send_start', 'modal', {
+    await appendSmartQueryDebugLog('flow_send_start', 'modal', {
+      channel: 'speech',
       isRecording: voiceRecorder.isRecording,
       hasRecording: voiceRecorder.hasRecording,
       recordingMimeType: voiceRecorder.recordingMimeType,
@@ -309,10 +344,11 @@ export default function ParcelSearchModal({
     }
 
     if (!recording?.base64) {
-      await appendVoiceQueryDebugLog('flow_send_skip', 'modal', {
+      await appendSmartQueryDebugLog('flow_send_skip', 'modal', {
         reason: 'empty_payload',
+        channel: 'speech',
       });
-      Alert.alert('Akıllı Sorgu', 'Lütfen önce konuşarak bir sorgu yapın.');
+      showSmartQueryErrorAlert('Lütfen önce konuşarak bir sorgu yapın.');
       return;
     }
 
@@ -321,21 +357,24 @@ export default function ParcelSearchModal({
     try {
       const response = await extractSmartQueryFromSpeech(recording.base64, recording.mimeType);
       if (!response.ok) {
-        await appendVoiceQueryDebugLog('api_response', 'modal', {
+        await appendSmartQueryDebugLog('flow_error', 'modal', {
+          channel: 'speech',
           phase: 'http_error',
           status: response.status,
           error: response.error,
         });
-        Alert.alert('Akıllı Sorgu', response.error || 'Ses kaydı işlenirken bir hata oluştu.');
+        showSmartQueryErrorAlert(response.error || 'Ses kaydı işlenirken bir hata oluştu.');
         return;
       }
 
-      await applySmartQueryResult(response.data);
+      await applySmartQueryResult(response.data, 'speech');
     } catch (error: any) {
-      await appendVoiceQueryDebugLog('api_network_error', 'modal', {
+      await appendSmartQueryDebugLog('flow_error', 'modal', {
+        channel: 'speech',
+        phase: 'exception',
         message: error?.message || 'Ses sorgusu başlatılamadı.',
       });
-      Alert.alert('Akıllı Sorgu', error?.message || 'Ses sorgusu başlatılamadı.');
+      showSmartQueryErrorAlert(error?.message || 'Ses sorgusu başlatılamadı.');
     } finally {
       setIsSmartExtracting(false);
     }
@@ -356,6 +395,7 @@ export default function ParcelSearchModal({
     }
 
     setSelectedImage(null);
+    await logSmartQuerySessionStart('modal', 'speech');
     await voiceRecorder.startRecording();
   }, [isSmartExtracting, voiceRecorder, handleSpeechSmartQuery, ensureSmartQueryAccess]);
 

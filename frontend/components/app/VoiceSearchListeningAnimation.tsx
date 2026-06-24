@@ -118,6 +118,18 @@ export default function VoiceSearchListeningAnimation({
   }, [audioLevel, levelSv]);
 
   useEffect(() => {
+    // Harita üstü orb: idle iken sürekli SVG/Reanimated döngüsü tüm UI'ı yavaşlatıyor
+    if (mode === 'idle' && mapOrbBackground) {
+      breatheSv.value = 1;
+      rotateSv.value = 0;
+      driftSv.value = 0;
+      pulse1.value = 0;
+      pulse2.value = 0;
+      pulse3.value = 0;
+      lineBoostSv.value = 1;
+      return;
+    }
+
     const breatheMs =
       mode === 'listening' ? 1800 : mode === 'processing' ? 2400 : 3000;
     const rotateMs =
@@ -177,7 +189,7 @@ export default function VoiceSearchListeningAnimation({
       -1,
       false
     );
-  }, [mode, breatheSv, rotateSv, driftSv, pulse1, pulse2, pulse3]);
+  }, [mode, mapOrbBackground, breatheSv, rotateSv, driftSv, pulse1, pulse2, pulse3, lineBoostSv]);
 
   useEffect(() => {
     const target =

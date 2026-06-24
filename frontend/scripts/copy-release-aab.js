@@ -40,6 +40,13 @@ const dest = path.join(outDir, destName);
 fs.copyFileSync(src, dest);
 const sizeMb = (fs.statSync(dest).size / (1024 * 1024)).toFixed(1);
 
+const policySrc = path.join(outDir, `ProParcel-${version}-policy.json`);
+if (fs.existsSync(policySrc)) {
+  const policyDest = dest.replace(/\.aab$/i, "-policy.json");
+  fs.copyFileSync(policySrc, policyDest);
+  console.log("  Policy:", policyDest);
+}
+
 console.log("[copy-release-aab] Tamam");
 console.log("  Hedef:", dest);
 console.log("  Boyut:", `${sizeMb} MB`);

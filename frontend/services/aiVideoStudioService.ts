@@ -20,6 +20,7 @@ export type AiVideoStudioJob = {
   source?: string;
   title?: string;
   body_text?: string;
+  highlight_texts?: string[];
   image_items?: Array<{ image_id?: string; url?: string; relative_path?: string; filename?: string }>;
   processed_url?: string | null;
   thumbnail_url?: string | null;
@@ -96,12 +97,18 @@ export async function listAiVideoStudioJobs(): Promise<{ ok: true; items: AiVide
 
 export async function createAiVideoStudioJob(payload: {
   title: string;
-  bodyText: string;
+  highlightTexts: string[];
   images: MobileUploadImage[];
 }): Promise<{ ok: true; job: AiVideoStudioJob } | { ok: false; error: string }> {
   const form = new FormData();
   form.append("title", payload.title || "");
-  form.append("body_text", payload.bodyText || "");
+  const keywords = (payload.highlightTexts || []).map((item) => String(item || "").trim()).filter(Boolean);
+  keywords.forEach((keyword) => {
+    form.append("highlight_texts", keyword);
+  });
+  if (keywords.length) {
+    form.append("highlight_texts_json", JSON.stringify(keywords));
+  }
   (payload.images || []).forEach((image) => {
     form.append("images", {
       uri: image.uri,
@@ -117,14 +124,24 @@ export async function createAiVideoStudioJob(payload: {
 
 export async function generateAiVideoStudioScript(
   jobId: string,
+  highlightTexts: string[] = [],
 ): Promise<{ ok: true; job: AiVideoStudioJob; script: AiVideoStudioScript } | { ok: false; error: string }> {
+  const keywords = highlightTexts.map((item) => String(item || "").trim()).filter(Boolean);
   const res = await authJsonFetch<{ data?: { job?: AiVideoStudioJob; script?: AiVideoStudioScript } }>(
     `/api/v1/self/ai-video-studio/jobs/${encodeURIComponent(jobId)}/script`,
-    { method: "POST", json: {} },
+    { method: "POST", json: { highlight_texts: keywords } },
   );
   if (!res.ok) return { ok: false, error: errMessage(res.error, "Metin oluşturulamadı.") };
-  const data = (res.data as any)?.data || {};
-  return { ok: true, job: data.job, script: data.script };
+  const payload = (res.data as any)?.data ?? res.data ?? {};
+  const job = payload?.job as AiVideoStudioJob | undefined;
+  const script =
+    (payload?.script as AiVideoStudioScript | undefined) ||
+    ((job?.scene_metadata?.script_preview || null) as AiVideoStudioScript | null) ||
+    undefined;
+  if (!script?.full_narration?.trim()) {
+    return { ok: false, error: "AI metin yanıtı alınamadı." };
+  }
+  return { ok: true, job: job as AiVideoStudioJob, script };
 }
 
 export async function confirmAiVideoStudioJob(

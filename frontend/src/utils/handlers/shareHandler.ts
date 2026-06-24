@@ -37,9 +37,13 @@ function hashString(input: string): string {
 export interface ShareHandlerParams {
   parcelData: any;
   mapRef: React.RefObject<any>;
+  cameraRef?: React.RefObject<any>;
+  camRef?: React.RefObject<{ pitch?: number; zoom?: number; heading?: number }>;
   combinedContainerRef: React.RefObject<CombinedScreenshotCaptureRef | null>;
   mapReadyRef: React.MutableRefObject<import('../mapboxSnapshot').MapReadyState>;
   isSharingRef: React.MutableRefObject<boolean>;
+  isProgrammaticMoveRef?: React.MutableRefObject<boolean>;
+  programmaticTimerRef?: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   setIsProcessingShare: (processing: boolean) => void;
   setCapturedMapUri: (uri: string | null) => void;
   setCapturedModalUri: (uri: string | null) => void;
@@ -50,9 +54,12 @@ export interface ShareHandlerParams {
   bumpOverlayLayout?: () => void;
   prefetchedShareLinkRef?: React.MutableRefObject<Promise<string | null> | null>;
   previewSnapCacheRef?: React.MutableRefObject<PreviewSnapCacheEntry | null>;
-  previewPrewarmInFlightRef?: React.MutableRefObject<Promise<void> | null>;
   getCameraFingerprint?: () => string;
   hasActiveParcel?: boolean;
+  /** Ana sayfa ekran görüntüsü önizlemesinden paylaşım */
+  fromScreenshotPreview?: boolean;
+  mapContainerRef?: React.RefObject<import('react-native').View | null>;
+  getPreviewMapFrameInWindow?: () => import('../screenshotPreviewLayout').ScreenshotPreviewMapFrame | null;
 }
 
 export const createShareHandler = (params: ShareHandlerParams) => {
@@ -60,9 +67,13 @@ export const createShareHandler = (params: ShareHandlerParams) => {
     const {
       parcelData,
       mapRef,
+      cameraRef,
+      camRef,
       combinedContainerRef,
       mapReadyRef,
       isSharingRef,
+      isProgrammaticMoveRef,
+      programmaticTimerRef,
       setIsProcessingShare,
       setCapturedMapUri,
       setCapturedModalUri,
@@ -73,9 +84,11 @@ export const createShareHandler = (params: ShareHandlerParams) => {
       bumpOverlayLayout,
       prefetchedShareLinkRef,
       previewSnapCacheRef,
-      previewPrewarmInFlightRef,
       getCameraFingerprint,
       hasActiveParcel = Boolean(parcelData),
+      fromScreenshotPreview = false,
+      mapContainerRef,
+      getPreviewMapFrameInWindow,
     } = params;
 
     setIsProcessingShare(true);
@@ -100,6 +113,8 @@ export const createShareHandler = (params: ShareHandlerParams) => {
       const captureResult = await captureParcelShareMapUri({
         parcelData,
         mapRef,
+        cameraRef,
+        camRef,
         mapReadyRef,
         dimensions,
         parcelDesign,
@@ -108,7 +123,11 @@ export const createShareHandler = (params: ShareHandlerParams) => {
         bumpOverlayLayout,
         getCameraFingerprint,
         previewSnapCacheRef,
-        previewPrewarmInFlightRef,
+        isProgrammaticMoveRef,
+        programmaticTimerRef,
+        fromScreenshotPreview,
+        mapContainerRef,
+        getPreviewMapFrameInWindow,
       });
       capturePerfSince('capture:map:done', 'capture:map');
 
@@ -117,7 +136,7 @@ export const createShareHandler = (params: ShareHandlerParams) => {
       }
 
       mapUri = captureResult.mapUri;
-      const { overlay, sourceViewport } = captureResult;
+      const { overlay, sourceViewport, mapCropNorm } = captureResult;
       const mapOnly = !hasActiveParcel;
       const skipCombinedViewShot = mapOnly && !overlay;
 
@@ -130,6 +149,7 @@ export const createShareHandler = (params: ShareHandlerParams) => {
           : captureCombinedScreenshotUri(combinedContainerRef, mapUri, {
               overlay,
               sourceViewport,
+              mapCropNorm,
               mapOnly,
               skipViewShot: false,
             }),
@@ -139,6 +159,15 @@ export const createShareHandler = (params: ShareHandlerParams) => {
       capturePerfSince('capture:combined:done', 'capture:combined');
 
       const shareText = formatParcelShareMessage(queryLink);
+
+      if (!shareText && parcelData && hasActiveParcel) {
+        Alert.alert(
+          'Paylaşım linki hazır değil',
+          'Ada/parsel bilgisi bulunamadı. Lütfen önce parsel sorgulayıp tekrar deneyin.',
+        );
+        setShareModalVisible(false);
+        return;
+      }
 
       if (!combinedUri) {
         throw new Error('Paylaşılacak görüntü bulunamadı');

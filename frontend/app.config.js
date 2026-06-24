@@ -23,11 +23,11 @@ const DEV_CLIENT_PACKAGES = [
 module.exports = {
   name: "ProParcel",
   displayName: "ProParcel",
-  version: "2.0.6",
+  version: "2.0.10",
   expo: {
     name: "ProParcel",
     slug: "frontend",
-    version: "2.0.6",
+    version: "2.0.10",
     scheme: "proparcel",
     icon: "./assets/images/icon.png",
     splash: {
@@ -49,7 +49,7 @@ module.exports = {
     jsEngine: "hermes",
     ios: {
       bundleIdentifier: "com.proparcel.app",
-      buildNumber: "26",
+      buildNumber: "33",
       icon: "./assets/images/icon.png",
       supportsTablet: true,
       ...(process.env.IOS_ASSOCIATED_DOMAINS === "1"
@@ -66,7 +66,7 @@ module.exports = {
         NSLocationWhenInUseUsageDescription:
           "ProParcel, haritada konumunuzu göstermek, Konumum ve size yakın harita görünümü için konumunuza erişir.",
         NSCameraUsageDescription:
-          "VR parsel görüntüleme ve fotoğraf çekme için kamera kullanılır. Kamera, parsel sınırlarını gerçek arazi üzerinde göstermek içindir.",
+          "Fotoğraf çekme ve görüntü seçme için kamera kullanılır.",
         NSPhotoLibraryUsageDescription: "Resim seçme için fotoğraf kütüphanesi kullanılır.",
         NSPhotoLibraryAddUsageDescription:
           "Çekilen 3D harita görüntülerini fotoğraf galerinize kaydetmek için izin gerekir.",
@@ -77,6 +77,7 @@ module.exports = {
     },
     android: {
       package: "com.proparcel.mobile",
+      versionCode: 38,
       navigationBar: {
         enforceContrast: false,
         backgroundColor: "#1e293b",
@@ -87,6 +88,15 @@ module.exports = {
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
+      ],
+      // Google Play Photo and Video Permissions policy: galeri secimi Android Photo Picker ile;
+      // READ_MEDIA_* yalnizca surekli medya erisimi gerektiren uygulamalarda kullanilabilir.
+      blockedPermissions: [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_EXTERNAL_STORAGE",
       ],
       icon: "./assets/images/icon.png",
       adaptiveIcon: {
@@ -120,7 +130,7 @@ module.exports = {
           ]),
       "./plugins/withIosNoPushEntitlement.js",
       "./plugins/withIosLocationPermissions.js",
-      "./plugins/withVrParcelNativeModules.js",
+      "./plugins/withOptionalAndroidHardware.js",
       "./plugins/withParcelTerrain3dNativeModules.js",
       "./plugins/withUnitySmokeTestNativeModules.js",
       "./plugins/withUnityLibraryEmbed.js",
@@ -142,16 +152,8 @@ module.exports = {
       [
         "expo-image-picker",
         {
-          cameraPermission:
-            "VR parsel görüntüleme ve fotoğraf çekme için kamera kullanılır.",
+          cameraPermission: "Fotoğraf çekme için kamera kullanılır.",
           photosPermission: "Resim seçme için fotoğraf kütüphanesi kullanılır.",
-        },
-      ],
-      [
-        "expo-camera",
-        {
-          cameraPermission:
-            "VR parsel görüntüleme için kamera kullanılır. Parsel sınırlarını gerçek arazi üzerinde göstermek içindir.",
         },
       ],
       [
@@ -166,6 +168,8 @@ module.exports = {
           photosPermission: "ProParcel, galeriden görüntü seçmek için fotoğraflarınıza erişir.",
           savePhotosPermission: "Çekilen görüntüleri fotoğraf galerinize kaydetmek için izin gerekir.",
           isAccessMediaLocationEnabled: false,
+          // Galeri okuma yok; yalnizca saveToLibraryAsync (yazma). Okuma Android Photo Picker ile.
+          granularPermissions: [],
         },
       ],
       [

@@ -12,8 +12,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { AppStatusBar } from "../../components/app/AppStatusBar";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { MobileAiScreenShell } from "../../components/app/MobileAiScreenHeader";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "../../src/hooks/useNavigation";
@@ -88,16 +88,7 @@ export default function AiDroneJobsScreen() {
   }, [load]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <AppStatusBar />
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel="Geri">
-          <Ionicons name="arrow-back" size={18} color="#f8fafc" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>AI İşlerim</Text>
-        <View style={styles.headerBtn} />
-      </View>
-
+    <MobileAiScreenShell title="AI İşlerim" onBack={() => router.back()} pageBackgroundColor={COLORS.pageBg}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + insets.bottom }]}
@@ -179,34 +170,12 @@ export default function AiDroneJobsScreen() {
           })
         )}
       </ScrollView>
-    </SafeAreaView>
+    </MobileAiScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#1e293b" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#1e293b",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 3,
-    borderBottomColor: "#3b82f6",
-  },
-  headerBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 20, fontWeight: "bold", color: "#fff" },
-  scroll: { flex: 1, backgroundColor: COLORS.pageBg },
+  scroll: { flex: 1 },
   scrollContent: { padding: 16 },
   lead: { fontSize: 14, color: COLORS.muted, lineHeight: 20, marginBottom: 14 },
   card: {

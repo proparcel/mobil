@@ -18,11 +18,15 @@ const CREDIT_ENDPOINTS = {
   USE: "/api/credit/use/",
   COSTS: "/api/credit/costs/",
   GIFT_REWARDS: "/api/credit/gift-rewards/",
+  /** Kayıt hediyesi + engagement kuralları (web landing ile aynı) */
+  GIFT_BOOTSTRAP: "/api/gifts/",
   PACKAGES: "/api/packages/",
   PURCHASE: "/api/packages/purchase/",
   VALIDATE_COUPON: "/api/credit/validate-coupon/",
   /** GET ?reference_id= — 3D tasarım (parsel) lisansı var mı */
   LICENSE_3D: "/api/credit/3d-design-license/",
+  /** GET ?reference_id= — AI Drone Video (parsel) lisansı var mı */
+  LICENSE_DRONE_VIDEO: "/api/credit/drone-video-license/",
   /** GET — Web "3D Tasarımlarım" ile aynı liste (CreditUsage 3d_design) */
   LICENSES_3D_LIST: "/api/credit/3d-design-licenses/",
   /** POST { reference_id } — lisans kaydını sil (kredi iadesi yok) */
@@ -261,11 +265,14 @@ export interface CreditPackage {
   price_per_credit: number;
   package_type?: PackageType;
   is_ek_package?: boolean;
-  /** Tek Kullanım paketlerinde yıllık abonelik zorunluluğu (API) */
+  /** Ek paket API alanı — herkes satın alabilir (false) */
   requires_yearly_subscription?: boolean;
   max_users?: number;
   /** iOS App Store Product ID (backend eşlemesi) */
   ios_product_id?: string | null;
+  /** Google Play Product ID (backend eşlemesi) */
+  android_product_id?: string | null;
+  play_iap_kind?: 'subscription' | 'consumable';
 }
 
 export interface PackagesList {
@@ -290,6 +297,10 @@ export interface CreditCostItem {
   action_type: string;
   display_name: string;
   credits: number;
+  price_try?: number;
+  is_try_priced?: boolean;
+  ios_product_id?: string;
+  google_product_id?: string;
   icon: string;
   icon_fa: string;
   icon_ion: string;
@@ -306,10 +317,20 @@ export interface GiftRewardItem {
   event_type: string;
   display_name: string;
   credits: number;
+  price_try?: number;
+  is_try_priced?: boolean;
   description?: string;
   icon?: string;
   icon_fa?: string;
   is_coming_soon?: boolean;
+}
+
+export interface GiftBootstrap {
+  registration: {
+    default: number;
+    by_member_type?: Record<string, number | { default?: number; editor?: number }>;
+  };
+  engagement?: GiftRewardItem[];
 }
 
 /** Sunucu build_3d_design_licenses_list ile uyumlu */
@@ -507,13 +528,33 @@ class CreditService {
     }, { requireAuth: false });
   }
 
+  /** Tek action_type için TL/kredi fiyat satırı (purchasing_kredits). */
+  async getProductPricingForAction(actionType: string): Promise<CreditCostItem | null> {
+    const key = String(actionType || "").trim();
+    if (!key) return null;
+    try {
+      const res = await this.getCreditCosts();
+      const raw = res as unknown as CreditCosts & { data?: CreditCosts };
+      const payload = raw.data ?? raw;
+      const items = payload.items ?? raw.items ?? [];
+      return items.find((it) => it.action_type === key) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   /**
-   * Tek action_type maliyeti — web ``get_credit_cost_for_action`` ile aynı kaynak (Mongo purchasing_kredits + fallback).
-   * Önce GET /api/credit/check/?action_type= (sunucu DB), sonra /api/credit/costs/ listesi.
+   * Tek action_type maliyeti — Mongo ``purchasing_kredits`` (GET /api/credit/costs/).
+   * ``/api/credit/check/`` yalnızca bakiye yeterliliği içindir; platform admin için
+   * ``required_credit: 0`` döner — fiyat gösterimi için kullanılmaz.
    */
   async getCreditCostForAction(actionType: string): Promise<number | null> {
     const key = String(actionType || "").trim();
     if (!key) return null;
+    const fromCosts = await this.getCreditCostFromCostsList([key]);
+    if (fromCosts != null && fromCosts > 0) {
+      return fromCosts;
+    }
     try {
       const check = await this.checkCredit(key);
       const checkRaw = check as CreditCheck & { required_credit?: number; data?: CreditCheck };
@@ -523,13 +564,13 @@ class CreditService {
           : typeof checkRaw.data?.required_credit === "number"
             ? checkRaw.data.required_credit
             : null;
-      if (fromCheck != null && fromCheck >= 0) {
+      if (fromCheck != null && fromCheck > 0) {
         return fromCheck;
       }
     } catch {
-      /* check endpoint başarısız — costs listesine düş */
+      /* check endpoint başarısız */
     }
-    return this.getCreditCostFromCostsList([key]);
+    return fromCosts;
   }
 
   /**
@@ -544,11 +585,11 @@ class CreditService {
       const items = payload.items ?? raw.items;
       for (const actionKey of actionTypes) {
         if (!actionKey) continue;
-        if (costs && typeof costs[actionKey] === "number" && costs[actionKey] >= 0) {
+        if (costs && typeof costs[actionKey] === "number" && costs[actionKey] > 0) {
           return costs[actionKey];
         }
         const row = items?.find((it) => it.action_type === actionKey);
-        if (row && typeof row.credits === "number" && row.credits >= 0) {
+        if (row && typeof row.credits === "number" && row.credits > 0) {
           return row.credits;
         }
       }
@@ -565,7 +606,7 @@ class CreditService {
     for (const key of actionTypes) {
       if (!key) continue;
       const cost = await this.getCreditCostForAction(key);
-      if (cost != null && cost >= 0) return cost;
+      if (cost != null && cost > 0) return cost;
     }
     return this.getCreditCostFromCostsList(actionTypes);
   }
@@ -585,6 +626,8 @@ class CreditService {
         event_type: row.action_type,
         display_name: row.display_name,
         credits: row.credits,
+        price_try: row.price_try,
+        is_try_priced: row.is_try_priced,
         description: row.description,
         icon: row.icon,
         icon_fa: row.icon_fa,
@@ -592,6 +635,29 @@ class CreditService {
       }));
     } catch {
       return [];
+    }
+  }
+
+  /** Kayıt hediyesi + engagement — GET /api/gifts/ (web landing ile aynı) */
+  async getGiftBootstrap(): Promise<GiftBootstrap | null> {
+    try {
+      const url = `${DJANGO_API_URL}${CREDIT_ENDPOINTS.GIFT_BOOTSTRAP}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (!data?.registration) return null;
+      return {
+        registration: {
+          default: Number(data.registration.default) || 0,
+          by_member_type: data.registration.by_member_type,
+        },
+        engagement: Array.isArray(data.engagement) ? data.engagement : undefined,
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -631,6 +697,21 @@ class CreditService {
     const raw = await authFetch<{ allowed?: boolean; success?: boolean; data?: { allowed?: boolean } }>(
       `${CREDIT_ENDPOINTS.LICENSE_3D}?reference_id=${encodeURIComponent(referenceId)}`,
       { method: "GET" }
+    );
+    const anyRaw = raw as Record<string, unknown>;
+    if (anyRaw && typeof anyRaw.allowed === "boolean") return anyRaw.allowed;
+    const d = anyRaw?.data as { allowed?: boolean } | undefined;
+    if (d && typeof d.allowed === "boolean") return d.allowed;
+    return false;
+  }
+
+  /**
+   * Bu parsel reference_id için AI Drone Video lisansı var mı (action_type: drone_video).
+   */
+  async checkDroneVideoLicense(referenceId: string): Promise<boolean> {
+    const raw = await authFetch<{ allowed?: boolean; success?: boolean; data?: { allowed?: boolean } }>(
+      `${CREDIT_ENDPOINTS.LICENSE_DRONE_VIDEO}?reference_id=${encodeURIComponent(referenceId)}`,
+      { method: "GET" },
     );
     const anyRaw = raw as Record<string, unknown>;
     if (anyRaw && typeof anyRaw.allowed === "boolean") return anyRaw.allowed;

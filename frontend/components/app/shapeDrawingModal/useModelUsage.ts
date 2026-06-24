@@ -66,12 +66,11 @@ export function useModelUsage(): UseModelUsageReturn {
    */
   const getRemainingUses = useCallback(
     (modelId: number): number | null => {
-      // If we don't have an explicit entry, treat as "no remaining uses" (0),
-      // not "unlimited". Unlimited must be explicitly provided as null.
       if (Object.prototype.hasOwnProperty.call(modelUsageMap, modelId)) {
         return modelUsageMap[modelId] ?? null;
       }
-      return 0;
+      // Map henüz dolmadıysa sınırsız kabul et (isAvailable kontrolü ayrı yapılır)
+      return null;
     },
     [modelUsageMap]
   );
@@ -97,9 +96,9 @@ export function useModelUsage(): UseModelUsageReturn {
         const next: ModelUsageMap = { ...prev };
         for (const item of items) {
           if (typeof item.id !== "number") continue;
-          // Only track usage for owned models (remainingUses is meaningful only then).
+          // Sahip olunan modeller sınırsız kullanım (tek seferlik satın alma).
           if (item.isOwned !== true) continue;
-          const value = item.remainingUses ?? null;
+          const value = null;
           if (next[item.id] !== value) {
             next[item.id] = value;
             changed = true;

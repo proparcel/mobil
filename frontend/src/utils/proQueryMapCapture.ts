@@ -1,5 +1,5 @@
 /**
- * Pro sorgu sonrası harita görüntüsü — önce Mapbox Static API (parsel çizgili), gerekirse MapView snapshot.
+ * Pro sorgu sonrası harita görüntüsü — önce MapView snapshot, gerekirse Mapbox Static API yedek.
  */
 
 import type { MutableRefObject, RefObject } from 'react';
@@ -66,8 +66,78 @@ async function uploadMapImageDataUrl(
   return true;
 }
 
+async function tryMapboxCaptureUpload(
+  params: CaptureProQueryMapParams,
+  snapshotId: number | null,
+  identifiers: ProQueryIdentifiers,
+): Promise<boolean> {
+  const dimensions = getCombinedImageDimensions();
+  if (!params.mapRef.current) {
+    let retries = 0;
+    while (!params.mapRef.current && retries < 25) {
+      await new Promise((r) => setTimeout(r, 100));
+      retries++;
+    }
+  }
+
+  if (!params.mapRef.current) {
+    return false;
+  }
+
+  const wasIdle =
+    params.mapReadyRef.current.didFinishLoadingMap &&
+    params.mapReadyRef.current.didFinishLoadingStyle &&
+    params.mapReadyRef.current.isIdle;
+  if (!wasIdle) {
+    params.mapReadyRef.current.isIdle = false;
+    await waitForMapIdle(params.mapReadyRef, 2000, { resetIfAlreadyIdle: false });
+  }
+  await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+
+  const mapUri = await tryMapboxSnap(params.mapRef, dimensions);
+  params.setCapturedMapUri(mapUri || null);
+
+  let uploadUri = mapUri;
+  const captureApi = params.combinedContainerRef.current;
+  if (mapUri && captureApi) {
+    try {
+      const combinedUri =
+        typeof captureApi.captureWithMapUri === 'function'
+          ? await captureApi.captureWithMapUri(mapUri)
+          : await captureApi.capture();
+      if (combinedUri) uploadUri = combinedUri;
+    } catch (e) {
+      console.warn('[proQueryMapCapture] Combined capture başarısız:', e);
+    }
+  }
+
+  if (!uploadUri) {
+    return false;
+  }
+
+  const imageDataUrl = await uriToDataUrl(uploadUri);
+  return uploadMapImageDataUrl(imageDataUrl, snapshotId, identifiers);
+}
+
+async function tryStaticCaptureUpload(
+  params: CaptureProQueryMapParams,
+  snapshotId: number | null,
+  identifiers: ProQueryIdentifiers,
+): Promise<boolean> {
+  if (!params.normalizedGeometry) return false;
+
+  const b64 = await fetchStaticMapBase64(
+    params.normalizedGeometry,
+    params.parcelDesign,
+    'fullCapture',
+  );
+  if (!b64) return false;
+
+  return uploadMapImageDataUrl(staticMapBase64ToDataUrl(b64), snapshotId, identifiers);
+}
+
 /**
- * Static harita (tercih) + isteğe bağlı Mapbox snapshot yedek.
+ * Mapbox snapshot (tercih) + isteğe bağlı Static API yedek.
  */
 export async function captureAndUploadProQueryMapImage(
   params: CaptureProQueryMapParams,
@@ -84,69 +154,23 @@ export async function captureAndUploadProQueryMapImage(
     snapshotId = await resolveDfaSnapshotId(params.data, identifiers);
   }
 
-  if (params.normalizedGeometry) {
-    const b64 = await fetchStaticMapBase64(params.normalizedGeometry, params.parcelDesign);
-    if (b64) {
-      const ok = await uploadMapImageDataUrl(
-        staticMapBase64ToDataUrl(b64),
-        snapshotId,
-        identifiers,
-      );
-      if (ok) return true;
-      console.warn('[proQueryMapCapture] Static map upload başarısız, MapView snapshot deneniyor');
-    } else {
-      console.warn('[proQueryMapCapture] Static map PNG alınamadı, MapView snapshot deneniyor');
-    }
+  try {
+    const mapboxOk = await tryMapboxCaptureUpload(params, snapshotId, identifiers);
+    if (mapboxOk) return true;
+    console.warn('[proQueryMapCapture] MapView snapshot başarısız, Static map deneniyor');
+  } catch (e) {
+    console.warn('[proQueryMapCapture] MapView yakalama exception:', e);
+  } finally {
+    params.setCapturedMapUri(null);
   }
 
   try {
-    const dimensions = getCombinedImageDimensions();
-    if (!params.mapRef.current) {
-      let retries = 0;
-      while (!params.mapRef.current && retries < 25) {
-        await new Promise((r) => setTimeout(r, 100));
-        retries++;
-      }
-    }
-
-    const wasIdle =
-      params.mapReadyRef.current.didFinishLoadingMap &&
-      params.mapReadyRef.current.didFinishLoadingStyle &&
-      params.mapReadyRef.current.isIdle;
-    if (!wasIdle) {
-      params.mapReadyRef.current.isIdle = false;
-      await waitForMapIdle(params.mapReadyRef, 2000, { resetIfAlreadyIdle: false });
-    }
-    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
-
-    const mapUri = await tryMapboxSnap(params.mapRef, dimensions);
-    params.setCapturedMapUri(mapUri || null);
-
-    let uploadUri = mapUri;
-    const captureApi = params.combinedContainerRef.current;
-    if (mapUri && captureApi) {
-      try {
-        const combinedUri =
-          typeof captureApi.captureWithMapUri === 'function'
-            ? await captureApi.captureWithMapUri(mapUri)
-            : await captureApi.capture();
-        if (combinedUri) uploadUri = combinedUri;
-      } catch (e) {
-        console.warn('[proQueryMapCapture] Combined capture başarısız:', e);
-      }
-    }
-
-    if (!uploadUri) {
-      console.warn('[proQueryMapCapture] MapView snapshot yok');
-      return false;
-    }
-
-    const imageDataUrl = await uriToDataUrl(uploadUri);
-    return uploadMapImageDataUrl(imageDataUrl, snapshotId, identifiers);
-  } catch (e) {
-    console.warn('[proQueryMapCapture] MapView yakalama/yükleme exception:', e);
+    const staticOk = await tryStaticCaptureUpload(params, snapshotId, identifiers);
+    if (staticOk) return true;
+    console.warn('[proQueryMapCapture] Static map yedek de başarısız');
     return false;
-  } finally {
-    params.setCapturedMapUri(null);
+  } catch (e) {
+    console.warn('[proQueryMapCapture] Static map exception:', e);
+    return false;
   }
 }

@@ -33,6 +33,8 @@ export interface PortalQueryListItem {
   quarter_id: number | null;
   proparcel_value: string | null;
   title: string | null;
+  city_name?: string | null;
+  town_name?: string | null;
   quarter_name: string | null;
   ada: string | null;
   parsel: string | null;
@@ -264,6 +266,68 @@ export interface PortalRamsarJson {
   ramsar_name?: string | null;
 }
 
+export interface PortalRoadV2FrontageEdge {
+  edge?: string | null;
+  label?: string | null;
+  road_part_id?: string | null;
+  road_id?: string | number | null;
+  source_road_id?: string | number | null;
+  road_name?: string | null;
+  length_m?: number | null;
+  raw?: Record<string, unknown> | null;
+}
+
+/** Portal / mobil API RoadV2 cephe sözleşmesi */
+export interface PortalRoadV2Frontage {
+  system?: string;
+  is_road_v2?: boolean;
+  face_count?: number | null;
+  edge_labels?: string[];
+  edges?: PortalRoadV2FrontageEdge[];
+  selected_length_m?: number | null;
+  total_length_m?: number | null;
+  important_length_m?: number | null;
+  longest_length_m?: number | null;
+  selected_edge?: string | null;
+  corner_count?: number | null;
+  active_corner_road_part_ids?: Array<string | number>;
+  coarse_fallback_used?: boolean;
+  source?: string;
+}
+
+export interface PortalRoadDirectionValues {
+  corner_count?: number | null;
+  active_corner_road_part_ids?: Array<string | number>;
+  coarse_fallback_used?: boolean;
+  [key: string]: unknown;
+}
+
+/** GET /sections/road/ — road_metrics sözleşmesi */
+export interface PortalRoadMetrics {
+  is_road_v2?: boolean;
+  corner_count?: number | null;
+  corner_note?: string | null;
+  connection_count?: number | null;
+  assumed_connection_count?: number | null;
+  frontage_only_count?: number | null;
+  total_frontage_length_m?: number | null;
+  important_frontage_length_m?: number | null;
+  longest_frontage_length_m?: number | null;
+  coarse_fallback_used?: boolean;
+}
+
+export interface PortalRoadSectionResponse {
+  road_metrics?: PortalRoadMetrics | null;
+  roads_preview?: unknown;
+  road_v2_frontage?: PortalRoadV2Frontage | null;
+}
+
+export interface PortalRoadDiagramResponse {
+  svg?: string | null;
+  snapshot_id?: number;
+  generated_at?: string | null;
+}
+
 export interface PortalDfaStep {
   note?: string;
   title?: string;
@@ -425,9 +489,24 @@ export interface PortalQueryDetail {
   price_selection_json: Record<string, unknown> | null;
   edge_measure_data: unknown;
   road_frontage_values?: {
+    important_frontage_length_m?: number | null;
+    longest_frontage_length_m?: number | null;
+    selected_road_frontage_length_m?: number | null;
+    selected_road_frontage_m?: number | null;
+    road_frontage_m?: number | null;
+    total_frontage_length_m?: number | null;
     total_road_frontage_edge_length_m?: number | null;
+    road_v2?: boolean;
+    road_v2_face_count?: number | null;
+    frontage_count?: number | null;
+    unique_road_count?: number | null;
+    accepted_parallel_roads?: Array<Record<string, unknown>> | null;
     [key: string]: unknown;
   } | null;
+  road_v2_frontage?: PortalRoadV2Frontage | null;
+  road_direction_values?: PortalRoadDirectionValues | null;
+  /** RoadV2 analiz bayrağı — true ise UI road_v2_frontage okur */
+  road_v2?: boolean;
   electric_values: unknown;
   electric_line_feature: unknown;
   km_recommended_price: number | null;
@@ -436,6 +515,10 @@ export interface PortalQueryDetail {
   viewer_is_staff: boolean;
   viewer_is_expert_user: boolean;
   viewer_is_expert_for_this_query: boolean;
+  /** Shell/enrichment — expert mahalle ort. Bildir yetkisi */
+  viewer_is_expert?: boolean;
+  /** Shell — sıfır/tahmini fiyat kredi bilgilendirmesi */
+  pro_query_credit_notice?: ProQueryCreditNotice | null;
   expert_price_detail: Record<string, unknown> | null;
   rating_summary: PortalRatingSummary | null;
   comment_count?: number;
@@ -560,12 +643,47 @@ export interface QueryRatingCreatePayload {
   confirm_extreme_price?: boolean;
 }
 
+export interface MahalleOrtSimulationPayload {
+  user_unit_m2?: number;
+  simulated_final_unit_m2?: number;
+  simulated_land_total_tl?: number;
+  simulated_delivery_total_tl?: number;
+  applied_percent_label?: string;
+  is_structure_query?: boolean;
+}
+
+export interface ProQueryCreditNotice {
+  show?: boolean;
+  variant?: 'zero_price_no_charge' | 'km_estimated_no_charge' | string;
+  message?: string;
+}
+
+/** GET /api/portal/recent-queries/<id>/shell/ — detay merge için hafif payload */
+export type PortalQueryShell = Partial<PortalQueryDetail>;
+
+/** Mahalle ort. POST yanıtı — Tepe Coin ödülü */
+export type MahalleOrtReward = MahalleOrtRewardPayload;
+
+export interface MahalleOrtRewardPayload {
+  show_celebration_modal?: boolean;
+  credit_awarded?: number;
+  celebration_message?: string;
+  badge_counted?: boolean;
+  attempts_remaining?: number;
+}
+
 export interface MahalleOrtSignalResponse {
   ok?: boolean;
   db_saved?: boolean;
   ui_only?: boolean;
   message?: string;
   code?: string;
+  simulation?: MahalleOrtSimulationPayload;
+  db_simulation?: MahalleOrtSimulationPayload;
+  reward?: MahalleOrtRewardPayload;
+  /** Expert Bildir — DB'ye yazılan m² fiyatı (doğrudan girilen değer). */
+  saved_m2_price?: number;
+  written_m2_price?: number;
   reference_avg_m2?: number;
   deviation_pct?: number;
   direction?: 'below' | 'above';

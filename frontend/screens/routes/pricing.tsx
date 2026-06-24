@@ -34,9 +34,9 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect } from "@react-navigation/native";
 import { tepeCreditColors } from "../../components/landing/tepeCreditTheme";
 import {
-  ekPackageRequiresYearlySubscription,
   isEkPackage,
   packageHasIapProduct,
+  packageHasPlayProduct,
 } from "../../config/iapProducts";
 
 const TEPE_SAVE_COLORS = {
@@ -66,7 +66,6 @@ export default function PricingScreen() {
   const [coinModalVisible, setCoinModalVisible] = useState(false);
   const [creditUsageItems, setCreditUsageItems] = useState<CreditCostItem[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [hasActiveYearlySubscription, setHasActiveYearlySubscription] = useState(false);
 
   // Icon rengi eşlemesi (icon key -> { bg, color })
   const ICON_COLORS: Record<string, { bg: string; color: string }> = {
@@ -97,7 +96,6 @@ export default function PricingScreen() {
         const packagesList = packagesRes.data.packages || [];
         console.log("[Pricing] Paketler yüklendi:", packagesList.length, "paket");
         setPackages(packagesList);
-        setHasActiveYearlySubscription(Boolean(packagesRes.data.has_active_yearly_subscription));
         if (packagesList.length === 0) {
           setLoadError("Sunucuda aktif paket bulunamadı.");
         }
@@ -129,6 +127,8 @@ export default function PricingScreen() {
               action_type: row.event_type,
               display_name: row.display_name,
               credits: row.credits,
+              price_try: row.price_try,
+              is_try_priced: row.is_try_priced,
               icon: row.icon || "circle",
               icon_fa: row.icon_fa || "",
               icon_ion: row.icon || "ellipse",
@@ -169,7 +169,7 @@ export default function PricingScreen() {
     }, [loadData])
   );
 
-  /** Satın al → ödeme sayfası (iOS: Apple IAP; Android: Havale/EFT) */
+  /** Satın al → ödeme sayfası (iOS: Apple IAP; Android: Google Play) */
   const handlePurchase = useCallback(
     (pkg: CreditPackage) => {
       if (!isAuthenticated) {
@@ -179,13 +179,6 @@ export default function PricingScreen() {
         ]);
         return;
       }
-      if (ekPackageRequiresYearlySubscription(pkg) && !hasActiveYearlySubscription) {
-        Alert.alert(
-          "Yıllık Abonelik Gerekli",
-          "Bu paket yalnızca aktif yıllık aboneliği olan kullanıcılar için geçerlidir."
-        );
-        return;
-      }
       router.push("tepe-coin-purchase", {
         package_id: String(pkg.id),
         package_name: pkg.name,
@@ -193,7 +186,7 @@ export default function PricingScreen() {
         package_credits: String(pkg.credits),
       });
     },
-    [isAuthenticated, router, hasActiveYearlySubscription]
+    [isAuthenticated, router]
   );
 
   const targetAudienceText =
@@ -203,7 +196,9 @@ export default function PricingScreen() {
         ? "Tek seferlik Tepe Kredi paketleri"
         : "Emlak firmaları, danışmanlar ve değerleme uzmanlarına özel paketler";
 
-  const tekKullanimRequiresYearlyInCatalog = packages.some(ekPackageRequiresYearlySubscription);
+  const supportsNativeIap = Platform.OS === "ios" || Platform.OS === "android";
+  const packageHasStoreProduct = (pkg: CreditPackage) =>
+    Platform.OS === "android" ? packageHasPlayProduct(pkg) : packageHasIapProduct(pkg);
 
   const filteredPackages = packages.filter((pkg) => {
     const isEk = isEkPackage(pkg);
@@ -211,7 +206,7 @@ export default function PricingScreen() {
 
     if (customerType === "tek_kullanim") {
       if (!isEk) return false;
-      if (Platform.OS === "ios" && !packageHasIapProduct(pkg)) return false;
+      if (supportsNativeIap && !packageHasStoreProduct(pkg)) return false;
       return true;
     }
 
@@ -219,15 +214,11 @@ export default function PricingScreen() {
 
     if (customerType === "bireysel") {
       if (pkgType !== "bireysel") return false;
-      if (Platform.OS === "ios" && !packageHasIapProduct(pkg)) return false;
-      if (pkgType !== "bireysel") return false;
+      if (supportsNativeIap && !packageHasStoreProduct(pkg)) return false;
       return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
     }
     if (pkgType !== "kurumsal") return false;
-    if (Platform.OS === "ios") {
-      if (!packageHasIapProduct(pkg)) return false;
-      return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
-    }
+    if (supportsNativeIap && !packageHasStoreProduct(pkg)) return false;
     return period === "monthly" ? pkg.duration_months === 1 : pkg.duration_months === 12;
   });
 
@@ -362,18 +353,6 @@ export default function PricingScreen() {
           </TouchableOpacity>
         </View>
 
-        {customerType === "tek_kullanim" &&
-        tekKullanimRequiresYearlyInCatalog &&
-        isAuthenticated &&
-        !hasActiveYearlySubscription ? (
-          <View style={[styles.tekKullanimBanner, styles.tekKullanimBannerLocked]}>
-            <Ionicons name="lock-closed-outline" size={18} color="#b45309" />
-            <Text style={styles.tekKullanimBannerText}>
-              Bazı Tek Kullanım paketleri için aktif yıllık aboneliğiniz olmalıdır.
-            </Text>
-          </View>
-        ) : null}
-
         {/* Aylık / Yıllık — kurumsal ve bireysel */}
         {customerType !== "tek_kullanim" ? (
         <View style={styles.periodToggle}>
@@ -452,11 +431,6 @@ export default function PricingScreen() {
             {filteredPackages.map((pkg) => {
               const isTekKullanim = customerType === "tek_kullanim";
               const showYearlyStyle = !isTekKullanim && period === "yearly";
-              const isTekKullanimLocked =
-                isTekKullanim &&
-                ekPackageRequiresYearlySubscription(pkg) &&
-                isAuthenticated &&
-                !hasActiveYearlySubscription;
               const discountPct = pkg.discount_percent ?? 0;
               const showOriginal =
                 discountPct > 0 && (pkg.original_price ?? 0) > (pkg.price ?? 0);
@@ -594,31 +568,11 @@ export default function PricingScreen() {
                 </View>
 
                 <TouchableOpacity
-                  style={[
-                    styles.purchaseButton,
-                    isTekKullanimLocked && styles.purchaseButtonDisabled,
-                  ]}
+                  style={styles.purchaseButton}
                   onPress={() => handlePurchase(pkg)}
-                  disabled={isTekKullanimLocked}
                 >
-                  <Ionicons
-                    name={
-                      isTekKullanimLocked
-                        ? "lock-closed"
-                        : Platform.OS === "ios"
-                          ? "logo-apple"
-                          : "cart"
-                    }
-                    size={20}
-                    color="#fff"
-                  />
-                  <Text style={styles.purchaseButtonText}>
-                    {isTekKullanimLocked
-                      ? "Yıllık Abonelik Gerekli"
-                      : Platform.OS === "ios"
-                        ? "Apple ile Satın Al"
-                        : "Satın Al"}
-                  </Text>
+                  <Ionicons name="cart" size={20} color="#fff" />
+                  <Text style={styles.purchaseButtonText}>Satın Al</Text>
                 </TouchableOpacity>
               </View>
             );
@@ -679,7 +633,11 @@ export default function PricingScreen() {
                     </View>
                     <View style={styles.usageContent}>
                       <Text style={styles.usageCardTitle}>{item.display_name}</Text>
-                      <Text style={styles.usageCost}>{item.credits} Tepe Kredi</Text>
+                      <Text style={styles.usageCost}>
+                        {item.is_try_priced && typeof item.price_try === "number" && item.price_try > 0
+                          ? `${item.price_try.toLocaleString("tr-TR")} TL`
+                          : `${item.credits} Tepe Kredi`}
+                      </Text>
                       {item.description ? (
                         <Text style={styles.usageDesc}>{item.description}</Text>
                       ) : null}

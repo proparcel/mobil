@@ -17,6 +17,32 @@ const defaultLibraryRoot = path.join(
 
 const TERRAIN_SCENE = "ParcelTerrain3dScene";
 
+/** Google Play / gizlilik acisindan Unity export'ta olmamasi gereken assembly kalıplari */
+const FORBIDDEN_ASSEMBLY_PATTERNS = [
+  "UnityEngine.Advertisements",
+  "UnityEngine.Purchasing",
+  "Unity.Services.Analytics",
+  "Firebase.App",
+  "Firebase.Analytics",
+  "Firebase.Messaging",
+  "GooglePlayGames",
+  "Google.Play.AssetDelivery",
+  "Google.Play.Review",
+];
+
+function validateForbiddenUnityAssemblies(json) {
+  const hits = FORBIDDEN_ASSEMBLY_PATTERNS.filter((pattern) => json.includes(pattern));
+  if (hits.length === 0) return null;
+  return {
+    ok: false,
+    reason: "forbidden_assemblies",
+    message:
+      "Unity export'ta izin gerektiren veya politika riski tasiyan SDK assembly'leri bulundu: " +
+      hits.join(", ") +
+      ". Unity Package Manager'dan kaldirin ve yeniden export alin.",
+  };
+}
+
 function readMetadataText(libraryRoot = defaultLibraryRoot) {
   const metadataPath = path.join(
     libraryRoot,
@@ -52,6 +78,9 @@ function validateUnityArExport(libraryRoot = defaultLibraryRoot) {
   }
 
   const json = fs.readFileSync(jsonPath, "utf8");
+  const forbidden = validateForbiddenUnityAssemblies(json);
+  if (forbidden) return forbidden;
+
   const hasGameScripts = json.includes("Assembly-CSharp");
   const hasArFoundation =
     json.includes("Unity.XR.ARFoundation") ||
@@ -106,6 +135,9 @@ function validateUnitySmokeExport(libraryRoot = defaultLibraryRoot) {
   }
 
   const json = fs.readFileSync(jsonPath, "utf8");
+  const forbidden = validateForbiddenUnityAssemblies(json);
+  if (forbidden) return forbidden;
+
   if (!json.includes("Assembly-CSharp")) {
     return {
       ok: false,
@@ -162,6 +194,9 @@ function validateUnityTerrainExport(libraryRoot = defaultLibraryRoot) {
   }
 
   const json = fs.readFileSync(jsonPath, "utf8");
+  const forbidden = validateForbiddenUnityAssemblies(json);
+  if (forbidden) return forbidden;
+
   if (!json.includes("Assembly-CSharp")) {
     return {
       ok: false,
@@ -226,7 +261,11 @@ function validateUnityTerrainExport(libraryRoot = defaultLibraryRoot) {
 if (require.main === module) {
   const mode = process.env.UNITY_EXPORT_VALIDATE_MODE || "terrain";
   const result =
-    mode === "terrain" ? validateUnityTerrainExport() : validateUnitySmokeExport();
+    mode === "terrain"
+      ? validateUnityTerrainExport()
+      : mode === "ar" || mode === "vr"
+        ? validateUnityArExport()
+        : validateUnitySmokeExport();
   if (result.ok) {
     console.log(`[validate-unity-export] ${result.message}`);
     process.exit(0);
@@ -239,4 +278,6 @@ module.exports = {
   validateUnityArExport,
   validateUnityTerrainExport,
   validateUnitySmokeExport,
+  validateForbiddenUnityAssemblies,
+  FORBIDDEN_ASSEMBLY_PATTERNS,
 };

@@ -135,7 +135,7 @@ export default function ProfileUsageSection({ onOpenPricing }: Props) {
         <Text style={styles.cardTitle}>Kullanımlarım</Text>
       </View>
       <Text style={styles.cardHint}>
-        Tepe Coin bakiyeniz, işlem özetleri ve hareket geçmişiniz.
+        Tepe Kredi bakiyeniz, işlem özetleri ve hareket geçmişiniz.
       </Text>
 
       {error ? (
@@ -171,7 +171,7 @@ export default function ProfileUsageSection({ onOpenPricing }: Props) {
             </View>
             <View style={styles.kpiCard}>
               <Text style={styles.kpiValue}>{Number(summary.usage_last_30_days || 0).toLocaleString('tr-TR')}</Text>
-              <Text style={styles.kpiLabel}>Son 30 gün (coin)</Text>
+              <Text style={styles.kpiLabel}>Son 30 gün (kredi)</Text>
             </View>
           </View>
 
@@ -203,7 +203,7 @@ export default function ProfileUsageSection({ onOpenPricing }: Props) {
               style={[styles.tabBtn, ledgerTab === 'usages' && styles.tabBtnActive]}
               onPress={() => onPickTab('usages')}
             >
-              <Text style={[styles.tabBtnText, ledgerTab === 'usages' && styles.tabBtnTextActive]}>Coin hareketleri</Text>
+              <Text style={[styles.tabBtnText, ledgerTab === 'usages' && styles.tabBtnTextActive]}>Kredi hareketleri</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tabBtn, ledgerTab === 'purchases' && styles.tabBtnActive]}
@@ -285,7 +285,7 @@ export default function ProfileUsageSection({ onOpenPricing }: Props) {
 
       <TouchableOpacity style={styles.ctaBtn} onPress={onOpenPricing}>
         <Ionicons name="add-circle-outline" size={18} color="#3b82f6" />
-        <Text style={styles.ctaBtnText}>Tepe Coin Paketleri</Text>
+        <Text style={styles.ctaBtnText}>Tepe Kredi Paketleri</Text>
       </TouchableOpacity>
     </View>
   );

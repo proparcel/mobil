@@ -58,15 +58,16 @@ export async function runDesignedParcelShare(params: RunDesignedParcelShareParam
     const dimensions = getCombinedImageDimensions();
 
     if (staticMapGeometry) {
-      mapUri = await staticMapGeometryToFileUri(staticMapGeometry);
+      mapUri = await staticMapGeometryToFileUri(staticMapGeometry, null, 'fullCapture');
       staticMapPath = mapUri?.replace(/^file:\/\//, '') ?? null;
     } else {
-      mapUri = await captureParcelShareMapUri({
+      const captureResult = await captureParcelShareMapUri({
         parcelData,
         mapRef,
         mapReadyRef,
         dimensions,
       });
+      mapUri = captureResult?.mapUri ?? null;
     }
 
     setCapturedMapUri(mapUri || null);

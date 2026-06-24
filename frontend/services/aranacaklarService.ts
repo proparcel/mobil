@@ -88,6 +88,14 @@ export async function fetchAranacaklarStats(): Promise<ApiResult<AranacaklarStat
   return authJsonFetch<AranacaklarStats>('/api/aranacaklar/stats/');
 }
 
+export async function fetchAranacaklarPortalFilters(
+  contactId: string,
+): Promise<ApiResult<{ filters: Record<string, unknown> }>> {
+  return authJsonFetch<{ filters: Record<string, unknown> }>(
+    `/api/aranacaklar/${encodeURIComponent(contactId)}/portal-filters/`,
+  );
+}
+
 export async function patchAranacaklarNote(contactId: string, noteId: string, text: string): Promise<ApiResult<unknown>> {
   return authJsonFetch(`/api/aranacaklar/${encodeURIComponent(contactId)}/notes/${encodeURIComponent(noteId)}/`, {
     method: 'PATCH',

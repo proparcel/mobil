@@ -37,12 +37,63 @@ export interface TkgmData {
   properties: unknown;
 }
 
+/** Parsel servisi yanıt vermiyor (HTTP 5xx) — kullanıcıya gösterilecek uyarı metni */
+export const TKGM_NO_RESPONSE_MESSAGE =
+  'Parsel servisi yanıt vermiyor. Lütfen sonra tekrar deneyin.';
+
+/** HTTP 500+ veya TKGM_UNAVAILABLE → sunucu yanıt vermiyor sayılır */
+export function isTkgmNoResponseError(error: unknown): boolean {
+  const err = error as TkgmError;
+  if (err?.type === 'TKGM_UNAVAILABLE') return true;
+  if (err?.type === 'TKGM_ERROR' && typeof err.status === 'number' && err.status >= 500) {
+    return true;
+  }
+  return false;
+}
+
+/** TKGM hatasını kullanıcıya gösterilecek Alert başlık + mesajına çevirir */
+export function getTkgmUserAlert(error: unknown): { title: string; message: string } {
+  const err = error as TkgmError;
+
+  if (isTkgmNoResponseError(error)) {
+    return { title: 'Uyarı', message: TKGM_NO_RESPONSE_MESSAGE };
+  }
+  if (err?.type === 'TKGM_PARCEL_NOT_FOUND') {
+    return { title: 'Parsel Bulunamadı', message: err.message || 'Parsel bulunamadı.' };
+  }
+  if (err?.type === 'TKGM_RATE_LIMIT') {
+    return {
+      title: 'Günlük Sorgu Limiti',
+      message: err.message || 'Günlük sorgu limiti aşıldı. Lütfen daha sonra tekrar deneyin.',
+    };
+  }
+  if (err?.type === 'TIMEOUT') {
+    return { title: 'Uyarı', message: TKGM_NO_RESPONSE_MESSAGE };
+  }
+  if (err?.type === 'CORS_OR_NETWORK_ERROR') {
+    return {
+      title: 'Bağlantı Hatası',
+      message: err.message || 'Parsel servisine bağlanılamadı. İnternet bağlantınızı kontrol edin.',
+    };
+  }
+  if (err?.type === 'TKGM_INVALID_DATA') {
+    return { title: 'Uyarı', message: err.message || 'Beklenmeyen bir yanıt alındı.' };
+  }
+  if (err?.type === 'TKGM_ERROR' && err.message) {
+    return { title: 'Uyarı', message: err.message };
+  }
+  return {
+    title: 'Bağlantı Hatası',
+    message: 'Parsel sorgusu tamamlanamadı. Lütfen internet bağlantınızı kontrol edin.',
+  };
+}
+
 function normalizeTkgmFetchError(error: unknown): TkgmError {
   const err = error as { name?: string; type?: string; message?: string; status?: number; detail?: unknown; originalError?: unknown };
   if (err?.type) return err as TkgmError;
 
   if (err?.name === 'AbortError') {
-    return { type: 'TIMEOUT', message: 'TKGM API zaman aşımı' };
+    return { type: 'TIMEOUT', message: 'Parsel sorgusu zaman aşımına uğradı' };
   }
 
   if (
@@ -52,7 +103,7 @@ function normalizeTkgmFetchError(error: unknown): TkgmError {
   ) {
     return {
       type: 'CORS_OR_NETWORK_ERROR',
-      message: 'TKGM sunucusuna bağlanılamadı. İnternet bağlantınızı kontrol edin.',
+      message: 'Parsel servisine bağlanılamadı. İnternet bağlantınızı kontrol edin.',
       originalError: err,
     };
   }
@@ -127,10 +178,11 @@ async function parseTkgmResponse(
   }
 
   if (!response.ok) {
+    const serverError = response.status >= 500;
     throw {
-      type: 'TKGM_ERROR',
+      type: serverError ? 'TKGM_UNAVAILABLE' : 'TKGM_ERROR',
       status: response.status,
-      message: `HTTP ${response.status}`,
+      message: serverError ? TKGM_NO_RESPONSE_MESSAGE : `HTTP ${response.status}`,
     } as TkgmError;
   }
 

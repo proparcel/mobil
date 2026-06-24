@@ -33,10 +33,19 @@ export async function createSavedQueryApi(payload: {
   title?: string;
   quarter_id?: number | null;
   proparcel_value?: number | null;
+  dfa_snapshot_id?: number | null;
+  snapshot_id?: number | null;
 }): Promise<{ ok: true; data: ApiSavedQuery } | { ok: false; error: string }> {
+  const snapshotId = payload.dfa_snapshot_id ?? payload.snapshot_id;
+  const body: Record<string, unknown> = { ...payload };
+  if (snapshotId != null && Number(snapshotId) > 0) {
+    body.dfa_snapshot_id = Number(snapshotId);
+  }
+  delete body.snapshot_id;
+
   const res = await authJsonFetch<ApiSavedQuery>("/api/user/saved-queries/", {
     method: "POST",
-    json: payload,
+    json: body,
   });
   if (!res.ok) return { ok: false, error: res.error };
   return { ok: true, data: res.data };

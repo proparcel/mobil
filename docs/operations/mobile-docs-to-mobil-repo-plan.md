@@ -1,7 +1,7 @@
 # Mobil dokümantasyon — `docs/mobile/` → `mobil.git` taşıma planı
 
-> **Durum:** M0–M5 uygulandı (mobil.git push); M6 pp33 sunucu; M7 lokal `docs/` silme bekliyor  
-> **Tarih:** 2026-06-19 (güncelleme: 2026-06-18)  
+> **Durum:** M0–M7 tamamlandı; M6 pp33 commit edildi  
+> **Tarih:** 2026-06-19  
 > **İlgili:** [local-pc-mobile-only-cleanup-plan.md](./local-pc-mobile-only-cleanup-plan.md)  
 > **Kural:** Mobil doküman **yalnızca** `https://github.com/proparcel/mobil.git` içinde yaşar; lokal kökte `docs/` **tutulmaz**.
 

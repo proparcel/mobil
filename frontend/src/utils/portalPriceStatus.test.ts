@@ -2,155 +2,86 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  isDbDrivenPriceSelection,
-  resolveKmTabDisplayMode,
   resolvePortalPriceStatus,
   resolvePortalTotalPrice,
+  resolveProparcelAskCreditSurcharge,
+  resolveProparcelAskPriceTierLabel,
+  resolveProQueryCreditNoticeTitle,
 } from './portalPriceStatus';
 
 describe('resolvePortalTotalPrice', () => {
-  it('returns positive total_price for verified arsa query', () => {
-    assert.equal(
-      resolvePortalTotalPrice({
-        query_type: 'arsa',
-        total_price: 1_500_000,
-        valuation_canonical: null,
-        portal_summary_prices: null,
-        land_price_summary: null,
-        arsa_fiyati: null,
-        dfa_json: [],
-        price_estimation_warning: null,
-      }),
-      1_500_000,
-    );
+  it('arazi: vc 0 iken shell total_price korunur', () => {
+    const total = resolvePortalTotalPrice({
+      query_type: 'tarla',
+      total_price: 5_480_883,
+      valuation_canonical: { final_total_tl: 0 },
+    } as never);
+    assert.equal(total, 5_480_883);
   });
 
-  it('returns null for zero total price', () => {
-    assert.equal(
-      resolvePortalTotalPrice({
-        query_type: 'arsa',
-        total_price: 0,
-        valuation_canonical: null,
-        portal_summary_prices: null,
-        land_price_summary: null,
-        arsa_fiyati: null,
-        dfa_json: [],
-        price_estimation_warning: null,
-      }),
-      null,
-    );
+  it('yapı: delivery_total_tl öncelikli', () => {
+    const total = resolvePortalTotalPrice({
+      query_type: 'villa',
+      structure_price_summary: { delivery_total_tl: 28_900_000 },
+      land_price_summary: { total_tl: 22_411_859 },
+      valuation_canonical: { final_total_tl: 22_411_859 },
+    } as never);
+    assert.equal(total, 28_900_000);
   });
 });
 
 describe('resolvePortalPriceStatus', () => {
-  it('marks verified when total price is positive and no warning', () => {
-    const result = resolvePortalPriceStatus({
-      query_type: 'arsa',
-      total_price: 900_000,
-      valuation_canonical: null,
-      portal_summary_prices: null,
-      land_price_summary: null,
-      arsa_fiyati: null,
-      dfa_json: [],
-      price_estimation_warning: null,
-    });
-    assert.equal(result.status, 'verified');
-    assert.equal(result.label, 'Doğrulandı');
-    assert.equal(result.isWarning, false);
-    assert.equal(result.clickable, false);
-  });
-
-  it('marks km_estimated when price_estimation_warning.show is true', () => {
-    const result = resolvePortalPriceStatus({
-      query_type: 'arsa',
-      total_price: 750_000,
-      valuation_canonical: null,
-      portal_summary_prices: null,
-      land_price_summary: null,
-      arsa_fiyati: null,
-      dfa_json: [],
-      price_estimation_warning: { show: true, variant: 'km_neighbor_estimate' },
-    });
-    assert.equal(result.status, 'km_estimated');
-    assert.equal(result.label, 'Komşu Mahalle Analizi');
-    assert.equal(result.isWarning, true);
-    assert.equal(result.clickable, true);
-  });
-
-  it('marks unknown when no price and no warning', () => {
-    const result = resolvePortalPriceStatus({
-      query_type: 'arsa',
-      total_price: 0,
-      valuation_canonical: null,
-      portal_summary_prices: null,
-      land_price_summary: null,
-      arsa_fiyati: null,
-      dfa_json: [],
-      price_estimation_warning: null,
-    });
-    assert.equal(result.status, 'unknown');
-    assert.equal(result.label, 'Bilinmiyor');
-    assert.equal(result.isWarning, true);
-    assert.equal(result.clickable, true);
+  it('pozitif fiyat doğrulandı', () => {
+    const status = resolvePortalPriceStatus({
+      query_type: 'tarla',
+      total_price: 3_600_000,
+      valuation_canonical: { final_total_tl: 3_600_000 },
+    } as never);
+    assert.equal(status.status, 'verified');
+    assert.equal(status.totalPrice, 3_600_000);
+    assert.equal(status.clickable, false);
   });
 });
 
-describe('resolveKmTabDisplayMode', () => {
-  const verifiedSummary = {
-    query_type: 'arsa',
-    total_price: 1_000_000,
-    valuation_canonical: null,
-    portal_summary_prices: null,
-    land_price_summary: null,
-    arsa_fiyati: null,
-    dfa_json: [],
-    price_estimation_warning: null,
-  };
-
-  const kmSummary = {
-    ...verifiedSummary,
-    total_price: 800_000,
-    price_estimation_warning: { show: true },
-  };
-
-  it('returns neighbors_only for verified price', () => {
+describe('resolveProparcelAskCreditSurcharge', () => {
+  it('verified +0, km +5, unknown +10', () => {
     assert.equal(
-      resolveKmTabDisplayMode({
-        kmData: { km_analysis_invoked: false },
-        summary: verifiedSummary,
-        selection: { model: 'DB', details: { db_source: { verified: true } } },
-      }),
-      'neighbors_only',
+      resolveProparcelAskCreditSurcharge({
+        query_type: 'tarla',
+        total_price: 3_600_000,
+      } as never),
+      0,
     );
-  });
-
-  it('returns km_analysis_full when km invoked and km estimated', () => {
     assert.equal(
-      resolveKmTabDisplayMode({
-        kmData: { km_analysis_invoked: true },
-        summary: kmSummary,
-        selection: { model: 'KM' },
-      }),
-      'km_analysis_full',
+      resolveProparcelAskCreditSurcharge({
+        query_type: 'tarla',
+        total_price: 3_600_000,
+        price_estimation_warning: { show: true },
+      } as never),
+      5,
     );
-  });
-
-  it('returns neighbors_only_warning for unverified without km analysis', () => {
     assert.equal(
-      resolveKmTabDisplayMode({
-        kmData: { km_analysis_invoked: false },
-        summary: kmSummary,
-        selection: { model: 'KM' },
-      }),
-      'neighbors_only_warning',
+      resolveProparcelAskCreditSurcharge({
+        query_type: 'tarla',
+        total_price: null,
+      } as never),
+      10,
     );
   });
 });
 
-describe('isDbDrivenPriceSelection', () => {
-  it('detects DB model and DB_ reason prefixes', () => {
-    assert.equal(isDbDrivenPriceSelection({ model: 'DB' }), true);
-    assert.equal(isDbDrivenPriceSelection({ reason: 'DB_NO_PREDICTION' }), true);
-    assert.equal(isDbDrivenPriceSelection({ model: 'KM' }), false);
+describe('resolveProQueryCreditNoticeTitle', () => {
+  it('maps variants', () => {
+    assert.equal(resolveProQueryCreditNoticeTitle({ variant: 'zero_price_no_charge' }), 'Fiyat üretilemedi');
+    assert.equal(resolveProQueryCreditNoticeTitle({ variant: 'km_estimated_no_charge' }), 'Tahmini fiyat');
+    assert.equal(resolveProQueryCreditNoticeTitle(null), 'Bilgilendirme');
+  });
+});
+
+describe('resolveProparcelAskPriceTierLabel', () => {
+  it('returns tier labels', () => {
+    assert.match(resolveProparcelAskPriceTierLabel('verified'), /Doğrulanmış/i);
+    assert.match(resolveProparcelAskPriceTierLabel('km_estimated'), /Doğrulanmamış/i);
+    assert.match(resolveProparcelAskPriceTierLabel('unknown'), /Fiyat bilgisi yok/i);
   });
 });

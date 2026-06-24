@@ -5,7 +5,7 @@
 import { authJsonFetch } from "../../services/apiClient";
 import type { AdaParselSubmitPayload } from "../../components/AdaParselForm";
 import { parseAreaM2 } from "./dfaRows";
-import { fetchTkgmByCoords, fetchTkgmByIds, type TkgmError } from "./tkgmApi";
+import { fetchTkgmByCoords, fetchTkgmByIds, type TkgmError, TKGM_NO_RESPONSE_MESSAGE, isTkgmNoResponseError } from "./tkgmApi";
 import type { PassiveConfirmFn } from "./tkgmPassiveParcel";
 
 export type TkgmParcelResponse = {
@@ -23,22 +23,21 @@ function mapTkgmCatch(error: unknown): string {
     return err.message || "Günlük sorgu limiti aşıldı. Lütfen daha sonra tekrar deneyin.";
   }
   if (err?.type === "TIMEOUT") {
-    return "TKGM sunucusu yanıt vermedi (zaman aşımı).";
+    return TKGM_NO_RESPONSE_MESSAGE;
   }
   if (err?.type === "CORS_OR_NETWORK_ERROR") {
-    return err.message || "TKGM sunucusuna bağlanılamadı.";
+    return err.message || "Parsel servisine bağlanılamadı.";
   }
-  if (err?.type === "TKGM_UNAVAILABLE") {
-    return err.message || "TKGM servisi geçici olarak kullanılamıyor. Lütfen birkaç dakika sonra tekrar deneyin.";
+  if (err?.type === "TKGM_UNAVAILABLE" || isTkgmNoResponseError(err)) {
+    return TKGM_NO_RESPONSE_MESSAGE;
   }
   if (err?.type === "TKGM_INVALID_DATA") {
-    return err.message || "TKGM beklenmeyen bir yanıt döndürdü.";
+    return err.message || "Beklenmeyen bir yanıt alındı.";
   }
   if (err?.type === "TKGM_ERROR") {
-    // 500 vb. sunucu hataları → ham hata yerine uyarı metni
-    return err.message || "TKGM servisinde geçici bir hata oluştu. Lütfen tekrar deneyin.";
+    return err.message || TKGM_NO_RESPONSE_MESSAGE;
   }
-  return err?.message || "TKGM sorgusu başarısız";
+  return err?.message || "Parsel sorgusu başarısız";
 }
 
 /** proparcel_value → mahalle TKGM (DB lookup; TKGM API değil) */
@@ -53,7 +52,7 @@ export async function resolveMahalleTkgmForDirectQuery(
 
   const pv = Number(proparcelValue);
   if (!Number.isFinite(pv) || pv <= 0) {
-    return { ok: false, error: "Mahalle TKGM kodu bulunamadı." };
+    return { ok: false, error: "Mahalle kodu bulunamadı." };
   }
 
   const res = await authJsonFetch<{ mahalle_tkgm_value?: number | string }>(
@@ -62,12 +61,12 @@ export async function resolveMahalleTkgmForDirectQuery(
   );
 
   if (!res.ok) {
-    return { ok: false, error: res.error || "Mahalle TKGM eşlemesi alınamadı." };
+    return { ok: false, error: res.error || "Mahalle eşlemesi alınamadı." };
   }
 
   const mid = Number(res.data?.mahalle_tkgm_value);
   if (!Number.isFinite(mid) || mid <= 0) {
-    return { ok: false, error: "Mahalle TKGM eşlemesi bulunamadı." };
+    return { ok: false, error: "Mahalle eşlemesi bulunamadı." };
   }
 
   return { ok: true, mahalleTkgmValue: mid };

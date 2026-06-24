@@ -302,6 +302,18 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
                     <Text style={styles.footerText}>{new Date().toLocaleDateString('tr-TR')}</Text>
                   </View>
                 </View>
+
+                {onShare ? (
+                  <TouchableOpacity
+                    style={styles.shareButton}
+                    onPress={onShare}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Paylaş"
+                  >
+                    <Ionicons name="share-outline" size={20} color="#fff" />
+                    <Text style={styles.shareButtonText}>Paylaş</Text>
+                  </TouchableOpacity>
+                ) : null}
       </BottomSheetScrollView>
     </AppBottomSheetModal>
   );
@@ -526,6 +538,23 @@ const styles = StyleSheet.create({
     borderRadius: 1.5,
     backgroundColor: '#94a3b8',
     marginHorizontal: 8,
+  },
+  shareButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#3b82f6',
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+  },
+  shareButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
 

@@ -8,16 +8,16 @@ import {
   Alert,
   FlatList,
   StyleSheet,
-  StatusBar,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRoute } from "@react-navigation/native";
 import { useRouter } from "../../src/hooks/useNavigation";
+import { MobileAiScreenShell } from "../../components/app/MobileAiScreenHeader";
 import { selfMessageService, type SelfMessageItem } from "../../services/selfMessageService";
 
 const COLORS = {
@@ -119,23 +119,12 @@ export default function AiDroneEditorChatScreen() {
   }, [draft, threadId]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
-          <Ionicons name="arrow-back" size={18} color="#f8fafc" />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {title}
-          </Text>
-          {params.requestId ? (
-            <Text style={styles.headerSub}>İş #{params.requestId}</Text>
-          ) : null}
-        </View>
-        <View style={styles.headerBtn} />
-      </View>
-
+    <MobileAiScreenShell
+      title={title}
+      subtitle={params.requestId ? `İş #${params.requestId}` : undefined}
+      onBack={() => router.back()}
+      pageBackgroundColor={COLORS.pageBg}
+    >
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator color={COLORS.mine} size="large" />
@@ -184,36 +173,12 @@ export default function AiDroneEditorChatScreen() {
           </View>
         </>
       )}
-    </SafeAreaView>
+    </MobileAiScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#1e293b" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#1e293b",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 3,
-    borderBottomColor: "#3b82f6",
-  },
-  headerBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  headerCenter: { flex: 1, alignItems: "center" },
-  headerTitle: { fontSize: 18, fontWeight: "bold", color: "#fff" },
-  headerSub: { fontSize: 12, color: "#94a3b8", marginTop: 2 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: COLORS.pageBg },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
   listContent: { padding: 12, flexGrow: 1, backgroundColor: COLORS.pageBg },
   empty: { textAlign: "center", color: COLORS.muted, marginTop: 40, fontSize: 14 },
   bubbleWrap: { marginBottom: 8, maxWidth: "85%" },

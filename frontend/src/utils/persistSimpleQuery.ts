@@ -7,7 +7,7 @@ import {
   resolveMahalleTkgmFromLocationsParts,
 } from "./resolveMahalleTkgmFromLocations";
 import { loadSavedQueries, upsertSavedQuery, type LocationHeader, type QueryMode } from "./savedQueries";
-import { upsertSidebarSavedQueryFromPayload } from "./sidebarSavedQueries";
+import { buildSidebarSavedQueryFromPayload, upsertSidebarSavedQueryFromPayload } from "./sidebarSavedQueries";
 
 export type QuerySubmitPayload = {
   mahalleTkgmValue: number;
@@ -122,11 +122,12 @@ export async function persistQueryToMyQueries(
     props.alan ?? props.area ?? props.area_m2 ?? props.yuzolcum ?? props.Yuzolcum ?? props.YUZOLCUM;
   const areaM2 = parseAreaM2(areaRaw);
   const proparcelValue = merged.proparcelValue ?? null;
+  const sidebarItem = buildSidebarSavedQueryFromPayload(merged, mode, props);
 
   const location_header: LocationHeader = {
-    ilAd: (props.ilAd as string) ?? merged.city ?? null,
-    ilceAd: (props.ilceAd as string) ?? merged.town ?? null,
-    mahalleAd: (props.mahalleAd as string) ?? merged.mahalle ?? null,
+    ilAd: (props.ilAd as string) ?? merged.city ?? sidebarItem?.il ?? null,
+    ilceAd: (props.ilceAd as string) ?? merged.town ?? sidebarItem?.ilce ?? null,
+    mahalleAd: (props.mahalleAd as string) ?? merged.mahalle ?? sidebarItem?.mahalle ?? null,
     adaNo: ada,
     parselNo: parsel,
   };
@@ -146,12 +147,14 @@ export async function persistQueryToMyQueries(
   });
 
   try {
-    await upsertSidebarSavedQueryFromPayload(merged, mode, props);
+    if (sidebarItem) {
+      await upsertSidebarSavedQueryFromPayload(merged, mode, props);
+    }
   } catch (err) {
     console.warn("[persistQuery] sidebar Sorgularım kaydı başarısız:", err);
   }
 
-  if (isAuthenticated) {
+  if (isAuthenticated && mode !== 'pro') {
     const mahalleAd = location_header.mahalleAd || "";
     const apiTitle = mahalleAd ? `${mahalleAd} - ${ada}/${parsel}` : `${ada}/${parsel}`;
     try {

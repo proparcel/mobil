@@ -12,7 +12,7 @@ namespace ProParcel.Terrain3d
             yield return null;
             yield return null;
 
-            var bridge = Object.FindObjectOfType<ParcelTerrain3dBridge>();
+            var bridge = Object.FindAnyObjectByType<ParcelTerrain3dBridge>();
             if (bridge != null)
             {
                 bridge.LoadEmbeddedDemoNow();

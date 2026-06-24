@@ -45,7 +45,8 @@ export type RootStackParamList = {
     license_ref?: string;
   };
   "ai-drone-hub": undefined;
-  "ai-drone-simple-editor": undefined;
+  "ai-drone-simple-editor": { jobId?: string } | undefined;
+  "ai-drone-my-videos": undefined;
   "ai-drone-video-info": undefined;
   "ai-drone-jobs": undefined;
   "ai-drone-job-detail": { requestId: string };

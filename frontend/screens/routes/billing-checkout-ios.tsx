@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Linking,
   Modal,
+  Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "react-native";
@@ -25,10 +26,10 @@ import {
   loadProducts,
   purchaseProduct,
   restorePurchases,
-  findStorePrice,
   type IapProductInfo,
+  type ValidateReceiptResult,
 } from "../../services/iapService";
-import { resolveIapProductId } from "../../config/iapProducts";
+import { isEkPackage, resolveIapProductId } from "../../config/iapProducts";
 import { DJANGO_API_URL } from "../../config/api";
 
 function formatMoney(value: number) {
@@ -36,6 +37,95 @@ function formatMoney(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function buildPurchaseSuccessMessage(result: ValidateReceiptResult, pkg: CreditPackage): string {
+  if (result.already_processed) {
+    return "Satın almanız daha önce işlenmişti. Bakiyeniz güncellendi.";
+  }
+  if (result.message?.trim()) {
+    return result.message.trim();
+  }
+  return `Ödemeniz başarılı! ${pkg.credits} Tepe Kredi hesabınıza yüklendi.`;
+}
+
+function isYearlySubscriptionPackage(pkg: CreditPackage | null): boolean {
+  return Boolean(pkg && pkg.duration_months >= 12 && !isEkPackage(pkg));
+}
+
+/** Şimdilik yalnızca GET /api/packages/ fiyatları; App Store localizedPrice kullanılmaz. */
+function resolveCheckoutPrice(pkg: CreditPackage | null): {
+  mainPrice: string;
+  periodSuffix: string;
+  yearlyTotalLine: string | null;
+} {
+  const isYearlySub = isYearlySubscriptionPackage(pkg);
+
+  if (isYearlySub && pkg) {
+    return {
+      mainPrice: `${formatMoney(Number(pkg.monthly_price ?? 0))} ₺`,
+      periodSuffix: "/ay",
+      yearlyTotalLine: `Toplam: ${formatMoney(Number(pkg.price ?? 0))} ₺/yıl`,
+    };
+  }
+
+  const monthly = pkg && pkg.duration_months <= 1;
+  const amount = monthly
+    ? Number(pkg?.monthly_price ?? pkg?.price ?? 0)
+    : Number(pkg?.price ?? 0);
+
+  return {
+    mainPrice: `${formatMoney(amount)} ₺`,
+    periodSuffix: "",
+    yearlyTotalLine: null,
+  };
+}
+function formatChargedAmount(
+  result: ValidateReceiptResult,
+  fallbackStorePrice: string | null,
+  periodSuffix: string
+): string | null {
+  if (result.display_price?.trim()) {
+    const price = result.display_price.trim();
+    if (periodSuffix === "/ay" && !price.toLowerCase().includes("/ay")) {
+      return `${price} /ay`;
+    }
+    return price;
+  }
+  if (result.amount_paid != null) {
+    const cur = (result.currency || "").trim().toUpperCase();
+    const formatted = formatMoney(result.amount_paid);
+    const amount = cur === "TRY" ? `₺${formatted}` : cur ? `${formatted} ${cur}` : `${formatted} ₺`;
+    return periodSuffix === "/ay" ? `${amount} /ay` : amount;
+  }
+  if (fallbackStorePrice) {
+    return periodSuffix === "/ay" && !fallbackStorePrice.includes("/ay")
+      ? `${fallbackStorePrice} /ay`
+      : fallbackStorePrice;
+  }
+  return null;
+}
+
+function showPurchaseSuccessAlert(
+  result: ValidateReceiptResult,
+  pkg: CreditPackage,
+  txId: string,
+  fallbackStorePrice: string | null,
+  periodSuffix: string
+) {
+  const title = result.already_processed ? "Satın Alma Zaten İşlenmiş" : "Satın Alma Başarılı";
+  const lines = [buildPurchaseSuccessMessage(result, pkg)];
+  const charged = formatChargedAmount(result, fallbackStorePrice, periodSuffix);
+  if (charged) {
+    lines.push(`Çekilen tutar: ${charged}`);
+  }
+  if (result.new_balance != null) {
+    lines.push(`Güncel bakiye: ${result.new_balance.toLocaleString("tr-TR")} Tepe Kredi`);
+  }
+  if (txId) {
+    lines.push(`İşlem No: ${txId}`);
+  }
+  Alert.alert(title, lines.join("\n\n"));
 }
 
 export default function BillingCheckoutIosScreen() {
@@ -62,19 +152,9 @@ export default function BillingCheckoutIosScreen() {
   const [legalModalVisible, setLegalModalVisible] = useState(false);
   const [completedTxId, setCompletedTxId] = useState<string | null>(null);
 
-  const displayAmount = useMemo(() => {
-    if (!pkg) return 0;
-    const monthly = pkg.duration_months <= 1;
-    if (monthly) {
-      return Number(pkg.monthly_price ?? pkg.price ?? 0);
-    }
-    return Number(pkg.price ?? 0);
-  }, [pkg]);
+  const checkoutPrice = useMemo(() => resolveCheckoutPrice(pkg), [pkg]);
 
-  const storePrice = useMemo(() => {
-    if (!iapProductId) return null;
-    return findStorePrice(storeProducts, iapProductId);
-  }, [storeProducts, iapProductId]);
+  const showAutoRenewNotice = useMemo(() => isYearlySubscriptionPackage(pkg), [pkg]);
 
   const loadInitial = useCallback(async () => {
     if (!isAuthenticated) {
@@ -97,14 +177,13 @@ export default function BillingCheckoutIosScreen() {
           setPkg(found);
           const sku = resolveIapProductId(found);
           if (!sku) {
-            setError("Bu paket iOS App Store üzerinden satın alınamıyor.");
+            setError("Bu paket uygulama üzerinden satın alınamıyor.");
           } else {
             setIapProductId(sku);
+            // StoreKit katalogu sandbox'ta eksik dönebilir; satın alma SKU ile yine çalışır.
             const inStore = products.some((p) => p.productId === sku);
             if (!inStore) {
-              setError(
-                `App Store bu ürünü tanımıyor: ${sku}. App Store Connect'te Product ID, fiyat (Türkiye), Türkçe ad/açıklama ve Ready to Submit durumunu kontrol edin. Yeni ürünler sandbox'ta birkaç saat gecikebilir.`
-              );
+              console.warn("[BillingCheckoutIOS] SKU StoreKit katalogunda yok (satın alma denenebilir):", sku);
             }
           }
         } else {
@@ -139,7 +218,7 @@ export default function BillingCheckoutIosScreen() {
       return;
     }
     if (!iapProductId || !pkg) {
-      setError("App Store ürünü bulunamadı.");
+      setError("Ürün bulunamadı.");
       return;
     }
 
@@ -152,10 +231,19 @@ export default function BillingCheckoutIosScreen() {
       if (result.success) {
         const tx = result.transaction_id || "";
         setCompletedTxId(tx);
-        setSuccess(
-          result.already_processed
-            ? "Satın almanız daha önce işlenmişti. Bakiyeniz güncellendi."
-            : `Ödemeniz başarılı! ${pkg.credits} Tepe Kredi hesabınıza yüklendi.`
+        const successMsg = buildPurchaseSuccessMessage(result, pkg);
+        const charged = formatChargedAmount(
+          result,
+          checkoutPrice.mainPrice,
+          checkoutPrice.periodSuffix
+        );
+        setSuccess(charged ? `${successMsg}\nÇekilen tutar: ${charged}` : successMsg);
+        showPurchaseSuccessAlert(
+          result,
+          pkg,
+          tx,
+          checkoutPrice.mainPrice,
+          checkoutPrice.periodSuffix
         );
         await refreshBalance();
       } else {
@@ -180,7 +268,9 @@ export default function BillingCheckoutIosScreen() {
       const results = await restorePurchases();
       const okCount = results.filter((r) => r.success).length;
       if (okCount > 0) {
-        setSuccess(`${okCount} satın alma geri yüklendi. Bakiyeniz güncellendi.`);
+        const restoreMsg = `${okCount} satın alma geri yüklendi. Bakiyeniz güncellendi.`;
+        setSuccess(restoreMsg);
+        Alert.alert("Geri Yükleme Başarılı", restoreMsg);
         await refreshBalance();
       } else if (results.length === 0) {
         setSuccess("Geri yüklenecek satın alma bulunamadı.");
@@ -225,7 +315,7 @@ export default function BillingCheckoutIosScreen() {
         <TouchableOpacity style={styles.headerBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>App Store Ödeme</Text>
+        <Text style={styles.headerTitle}>Ödeme</Text>
         <View style={styles.headerRight} />
       </View>
 
@@ -235,7 +325,7 @@ export default function BillingCheckoutIosScreen() {
       >
         <Text style={styles.heroEyebrow}>Güvenli ödeme</Text>
         <Text style={styles.heroText}>
-          Tepe Kredi ve abonelik paketleri Apple In-App Purchase ile satın alınır. Ödeme Apple tarafından işlenir.
+          Tepe Kredi ve abonelik paketlerinizi güvenli ödeme ile satın alabilirsiniz.
         </Text>
 
         {error ? (
@@ -262,14 +352,21 @@ export default function BillingCheckoutIosScreen() {
               {(pkg || params.package_name) && (
                 <View style={styles.pkgMeta}>
                   <Text style={styles.pkgName}>{pkg?.name || params.package_name}</Text>
-                  {pkg?.credits ? (
+                  {pkg?.monthly_credits && isYearlySubscriptionPackage(pkg) ? (
+                    <Text style={styles.pkgCredits}>
+                      Aylık {pkg.monthly_credits.toLocaleString("tr-TR")} Tepe Kredi
+                    </Text>
+                  ) : pkg?.credits ? (
                     <Text style={styles.pkgCredits}>{pkg.credits} Tepe Kredi</Text>
                   ) : null}
-                  <Text style={styles.pkgAmount}>
-                    {storePrice ? storePrice : `${formatMoney(displayAmount)} ₺`}
-                  </Text>
-                  {storePrice ? (
-                    <Text style={styles.storeHint}>Fiyat App Store tarafından gösterilir.</Text>
+                  <View style={styles.priceRow}>
+                    <Text style={styles.pkgAmount}>{checkoutPrice.mainPrice}</Text>
+                    {checkoutPrice.periodSuffix ? (
+                      <Text style={styles.pkgPeriod}>{checkoutPrice.periodSuffix}</Text>
+                    ) : null}
+                  </View>
+                  {checkoutPrice.yearlyTotalLine ? (
+                    <Text style={styles.yearlyTotalLine}>{checkoutPrice.yearlyTotalLine}</Text>
                   ) : null}
                 </View>
               )}
@@ -279,10 +376,7 @@ export default function BillingCheckoutIosScreen() {
               <Text style={styles.cardTitle}>Özet</Text>
               <View style={styles.summaryRow}>
                 <Text style={styles.mutedText}>Ödeme yöntemi</Text>
-                <View style={styles.applePayRow}>
-                  <Ionicons name="logo-apple" size={18} color="#1e293b" />
-                  <Text style={styles.summaryAmount}>Apple In-App Purchase</Text>
-                </View>
+                <Text style={styles.summaryAmount}>Uygulama içi ödeme</Text>
               </View>
               <TouchableOpacity
                 style={styles.consentRow}
@@ -312,12 +406,9 @@ export default function BillingCheckoutIosScreen() {
                 {purchasing ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <>
-                    <Ionicons name="logo-apple" size={20} color="#fff" style={{ marginRight: 8 }} />
-                    <Text style={styles.primaryBtnText}>
-                      {success ? "Satın Alındı" : "Apple ile Satın Al"}
-                    </Text>
-                  </>
+                  <Text style={styles.primaryBtnText}>
+                    {success ? "Satın Alındı" : "Satın Al"}
+                  </Text>
                 )}
               </TouchableOpacity>
               <TouchableOpacity
@@ -333,13 +424,14 @@ export default function BillingCheckoutIosScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.infoCard}>
-              <Ionicons name="information-circle-outline" size={18} color="#64748b" />
-              <Text style={styles.infoText}>
-                Abonelikler otomatik yenilenir. İptal ve yönetim için iPhone Ayarlar → Apple ID → Abonelikler
-                bölümünü kullanın.
-              </Text>
-            </View>
+            {showAutoRenewNotice ? (
+              <View style={styles.infoCard}>
+                <Ionicons name="information-circle-outline" size={18} color="#64748b" />
+                <Text style={styles.infoText}>
+                  Yıllık paketler aylık abonelik olarak tahsil edilir ve otomatik yenilenir. İptal ve yönetim için cihaz ayarlarından abonelikler bölümünü kullanın.
+                </Text>
+              </View>
+            ) : null}
           </>
         )}
       </ScrollView>
@@ -406,10 +498,11 @@ const styles = StyleSheet.create({
   pkgMeta: { marginTop: 4 },
   pkgName: { fontSize: 15, fontWeight: "600", color: "#1e293b" },
   pkgCredits: { fontSize: 13, color: "#64748b", marginTop: 4 },
-  pkgAmount: { fontSize: 22, fontWeight: "700", color: "#1a5fb4", marginTop: 8 },
-  storeHint: { fontSize: 12, color: "#64748b", marginTop: 4 },
+  priceRow: { flexDirection: "row", alignItems: "baseline", marginTop: 8 },
+  pkgAmount: { fontSize: 22, fontWeight: "700", color: "#1a5fb4" },
+  pkgPeriod: { fontSize: 14, fontWeight: "600", color: "#64748b", marginLeft: 4 },
+  yearlyTotalLine: { fontSize: 12, color: "#64748b", marginTop: 6 },
   summaryRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  applePayRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   summaryAmount: { fontSize: 14, fontWeight: "600", color: "#1e293b" },
   consentRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 16 },
   consentText: { flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 },

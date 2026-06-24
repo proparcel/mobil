@@ -89,7 +89,7 @@ export default function AdminUsersScreen() {
               <Text style={adminCommonStyles.cardSub}>
                 {item.role_display} · {item.customer_type_display}
               </Text>
-              <Text style={styles.balance}>Bakiye: {item.balance} Tepe Coin</Text>
+              <Text style={styles.balance}>Bakiye: {item.balance} Tepe Kredi</Text>
               <Text style={adminCommonStyles.cardSub}>{item.created_at}</Text>
             </TouchableOpacity>
           )}

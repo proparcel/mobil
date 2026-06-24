@@ -42,7 +42,7 @@ export default function AdminSalesApprovalsScreen() {
     const res = await approveSalesReport(item.id);
     setActingId(null);
     if (res.ok) {
-      Alert.alert("Onaylandı", "Tepe Coin ödülü kullanıcıya tanımlandı.");
+      Alert.alert("Onaylandı", "Tepe Kredi ödülü kullanıcıya tanımlandı.");
       setItems((prev) => prev.filter((x) => x.id !== item.id));
     } else Alert.alert("Hata", res.error);
   };

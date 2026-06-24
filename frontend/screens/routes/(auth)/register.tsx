@@ -4,7 +4,7 @@
  * Yeni kullanıcı kaydı - Bireysel/Kurumsal + opsiyonel OTP akışı.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -13,7 +13,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   type ScrollView as ScrollViewType,
@@ -29,6 +28,7 @@ import type { RegistrationCompanyItem } from "../../../src/types/auth";
 import { storageService } from "../../../services/storageService";
 import { AppStatusBar } from "../../../components/app/AppStatusBar";
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
+import { KeyboardAwareModal } from "../../../components/app/KeyboardAwareModal";
 import { LandingLegalFooter } from "../../../components/landing/LandingLegalFooter";
 import {
   INPUT_TEXT_COLOR,
@@ -43,6 +43,7 @@ import {
   type EducationPickerValue,
 } from "../../../components/app/EducationPickerFields";
 import { useScrollInputIntoView } from "../../../src/keyboard";
+import type { ScrollInputIntoViewOptions } from "../../../src/keyboard";
 import {
   RegistrationMediaStep,
   type RegistrationMediaValue,
@@ -51,10 +52,27 @@ import {
   RegistrationExpertiseStep,
   type RegistrationExpertiseValue,
 } from "../../../components/auth/RegistrationExpertiseStep";
+import {
+  AccountTypeSelector,
+  RegistrationHeaderDivider,
+  type AccountMemberType,
+} from "../../../components/auth/AccountTypeCard";
+import {
+  CorporateTypeSelector,
+  type RegistrationCorporateType,
+} from "../../../components/auth/CorporateTypeCard";
+import VoiceRegistrationWizard from "../../../components/auth/VoiceRegistrationWizard";
+import type {
+  VoiceRegistrationField,
+  VoiceRegistrationFormPatch,
+} from "../../../src/types/voiceRegistration";
+import { canOpenVoiceRegistrationWizard } from "../../../src/utils/voiceRegistrationResolve";
+import { enforceAsciiEmailAddress } from "../../../src/utils/voiceRegistrationValidators";
+import { appendVoiceQueryDebugLog } from "../../../src/utils/voiceQueryDebugLog";
 
-type MemberType = "individual" | "consultant" | "corporate";
-type RegistrationStep = "info" | "media" | "expertise";
-type CorporateType = "emlak" | "spk" | "lihkab";
+type MemberType = AccountMemberType;
+type RegistrationStep = "type" | "corporate_type" | "info" | "media" | "expertise";
+type CorporateType = RegistrationCorporateType;
 
 function consultantEffectiveType(
   company: RegistrationCompanyItem | null,
@@ -146,17 +164,26 @@ function hasRegistrationPhone(phone: string): boolean {
   return isValidPhoneNumber(phone);
 }
 
-function ScrollInputWrap({
+function RegisterScrollInputWrap({
   scrollRef,
+  minVisibleTop,
   style,
+  scrollOptions,
   children,
 }: {
   scrollRef: React.RefObject<ScrollViewType | null>;
+  minVisibleTop: number;
   style?: StyleProp<ViewStyle>;
+  scrollOptions?: Partial<ScrollInputIntoViewOptions>;
   children: (focus: { onFocus: () => void; onBlur: () => void }) => React.ReactNode;
 }) {
   const wrapRef = useRef<View>(null);
-  const { handleFocus, handleBlur } = useScrollInputIntoView({ scrollRef, inputWrapRef: wrapRef });
+  const { handleFocus, handleBlur } = useScrollInputIntoView({
+    scrollRef,
+    inputWrapRef: wrapRef,
+    minVisibleTop,
+    ...scrollOptions,
+  });
   return (
     <View ref={wrapRef} collapsable={false} style={style}>
       {children({ onFocus: handleFocus, onBlur: handleBlur })}
@@ -169,9 +196,10 @@ export default function RegisterScreen() {
   const { isLoading, syncSessionFromLoginResponse } = useAuth();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollViewType>(null);
+  const minInputVisibleTop = insets.top + 56 + 16;
 
   // State
-  const [registrationStep, setRegistrationStep] = useState<RegistrationStep>("info");
+  const [registrationStep, setRegistrationStep] = useState<RegistrationStep>("type");
   const [registrationMedia, setRegistrationMedia] = useState<RegistrationMediaValue>({
     avatarUri: null,
     companyLogoUri: null,
@@ -188,6 +216,7 @@ export default function RegisterScreen() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
   const [referralCode, setReferralCode] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [corporateType, setCorporateType] = useState<CorporateType | null>(null);
@@ -219,6 +248,8 @@ export default function RegisterScreen() {
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpModalError, setOtpModalError] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
+  const [voiceWizardVisible, setVoiceWizardVisible] = useState(false);
+  const passwordInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     storageService.getDeferredReferralCode().then((code) => {
@@ -325,9 +356,6 @@ export default function RegisterScreen() {
 
     // Kurumsal için ek alanlar
     if (memberType === "corporate") {
-      if (!companyName) {
-        newErrors.companyName = "Firma adı gereklidir";
-      }
       if (!corporateType) {
         newErrors.corporateType = "Firma tipi seçiniz";
       }
@@ -385,6 +413,12 @@ export default function RegisterScreen() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const resolveCorporateCompanyName = () => {
+    const trimmed = companyName.trim();
+    if (trimmed) return trimmed;
+    return `${firstName.trim()} ${lastName.trim()}`.trim();
+  };
+
   const buildRegisterData = () => {
     const selectedCompanyProfileId = selectedCompany?.company_profile_id;
 
@@ -422,7 +456,7 @@ export default function RegisterScreen() {
       ...(memberType === "corporate" && {
         corporate_type: corporateType || undefined,
         ...(corporateType && corporateType !== "spk" ? { is_expert: false } : {}),
-        company_name: companyName,
+        company_name: resolveCorporateCompanyName(),
         company_license_no: companyLicenseNo,
         office_no: corporateType === "lihkab" ? officeNo.trim() : undefined,
         spk_tc_no: corporateType === "spk" ? spkTcNo : undefined,
@@ -467,6 +501,7 @@ export default function RegisterScreen() {
     if (errs.company_profile_id?.[0]) mapped.companyPicker = errs.company_profile_id[0];
     if (errs.company_vergi_no?.[0]) mapped.companyPicker = errs.company_vergi_no[0];
     if (errs.consultant_license_no?.[0]) mapped.consultantLicenseNo = errs.consultant_license_no[0];
+    if (errs.company_name?.[0]) mapped.companyName = errs.company_name[0];
     return mapped;
   };
 
@@ -491,7 +526,7 @@ export default function RegisterScreen() {
       });
 
       if (response.success && response.data) {
-        syncSessionFromLoginResponse(response.data);
+        await syncSessionFromLoginResponse(response.data);
         setShowOtpModal(false);
         await storageService.clearDeferredReferralCode();
         router.replace("index");
@@ -562,6 +597,135 @@ export default function RegisterScreen() {
     void proceedToOtp();
   };
 
+  const clearMemberTypeSpecificFields = () => {
+    setConsultantLicenseNo("");
+    setCompanyName("");
+    setCorporateType(null);
+    setCompanyLicenseNo("");
+    setOfficeNo("");
+    setSpkTcNo("");
+    setPostalCode("");
+    setEducationLevel(null);
+    setEducationDetails(EMPTY_EDUCATION_PICKER);
+    setCorporateAddress({
+      cityId: null,
+      cityName: "",
+      districtId: null,
+      districtName: "",
+      quarterId: null,
+      quarterName: "",
+      quarterValue: null,
+      streetAndNumber: "",
+    });
+    setCompanySearchText("");
+    setCompanySearchResults([]);
+    setSelectedCompany(null);
+    setCompanySearchError("");
+    setIsCompanyPickerOpen(false);
+  };
+
+  const handleMemberTypeSelect = (type: MemberType) => {
+    if (type !== memberType) {
+      clearMemberTypeSpecificFields();
+    }
+    setMemberType(type);
+    setErrors({});
+    setRegistrationStep(type === "corporate" ? "corporate_type" : "info");
+  };
+
+  const handleCorporateTypeSelect = (type: CorporateType) => {
+    setCorporateType(type);
+    if (type === "spk") {
+      setEducationLevel(1);
+    } else if (type === "lihkab") {
+      setEducationLevel(null);
+      setEducationDetails(EMPTY_EDUCATION_PICKER);
+    }
+    setErrors((e) => ({
+      ...e,
+      corporateType: "",
+      universityId: "",
+      departmentId: "",
+    }));
+    setRegistrationStep("info");
+  };
+
+  const handleOpenVoiceWizard = useCallback(() => {
+    const gate = canOpenVoiceRegistrationWizard({
+      memberType,
+      corporateType,
+      selectedCompany,
+      consultantCorporateType: consultantSubtype,
+    });
+    if (!gate.ok) {
+      Alert.alert("Sesli Üyelik", gate.message);
+      return;
+    }
+    setVoiceWizardVisible(true);
+  }, [memberType, corporateType, selectedCompany, consultantSubtype]);
+
+  const handleVoiceFieldResolved = useCallback(
+    (patch: VoiceRegistrationFormPatch, _field: VoiceRegistrationField) => {
+      if (patch.firstName != null) setFirstName(patch.firstName);
+      if (patch.lastName != null) setLastName(patch.lastName);
+      if (patch.phoneNumber != null) {
+        setPhoneNumber(String(patch.phoneNumber).replace(/\D/g, ""));
+      }
+      if (patch.email != null) setEmail(enforceAsciiEmailAddress(patch.email));
+      if (patch.companyName != null) setCompanyName(patch.companyName);
+      if (patch.companyLicenseNo != null) setCompanyLicenseNo(patch.companyLicenseNo);
+      if (patch.spkTcNo != null) setSpkTcNo(patch.spkTcNo);
+      if (patch.officeNo != null) setOfficeNo(patch.officeNo);
+      if (patch.consultantLicenseNo != null) setConsultantLicenseNo(patch.consultantLicenseNo);
+      if (patch.selectedCompany != null) {
+        setSelectedCompany(patch.selectedCompany);
+        setCompanySearchText(getCompanyDisplayName(patch.selectedCompany));
+      }
+      if (patch.corporateAddress) {
+        setCorporateAddress((prev) => ({
+          ...prev,
+          ...(patch.corporateAddress?.cityId != null
+            ? { cityId: patch.corporateAddress.cityId }
+            : {}),
+          ...(patch.corporateAddress?.cityName != null
+            ? { cityName: patch.corporateAddress.cityName }
+            : {}),
+          ...(patch.corporateAddress?.districtId != null
+            ? { districtId: patch.corporateAddress.districtId }
+            : {}),
+          ...(patch.corporateAddress?.districtName != null
+            ? { districtName: patch.corporateAddress.districtName }
+            : {}),
+          ...(patch.corporateAddress?.quarterId != null
+            ? { quarterId: patch.corporateAddress.quarterId }
+            : {}),
+          ...(patch.corporateAddress?.quarterName != null
+            ? { quarterName: patch.corporateAddress.quarterName }
+            : {}),
+          ...(patch.corporateAddress?.quarterValue != null
+            ? { quarterValue: patch.corporateAddress.quarterValue }
+            : {}),
+          ...(patch.corporateAddress?.streetAndNumber != null
+            ? { streetAndNumber: patch.corporateAddress.streetAndNumber }
+            : {}),
+        }));
+      }
+    },
+    [],
+  );
+
+  const handleVoiceWizardCompleted = useCallback(() => {
+    setVoiceWizardVisible(false);
+    void appendVoiceQueryDebugLog("wizard_completed", "voice_registration", {});
+    setTimeout(() => {
+      passwordInputRef.current?.focus();
+    }, 300);
+  }, []);
+
+  const handleVoiceWizardClose = useCallback(() => {
+    setVoiceWizardVisible(false);
+  }, []);
+
   const handleRegistrationBack = () => {
     if (registrationStep === "expertise") {
       setRegistrationStep("media");
@@ -569,6 +733,14 @@ export default function RegisterScreen() {
     }
     if (registrationStep === "media") {
       setRegistrationStep("info");
+      return;
+    }
+    if (registrationStep === "info") {
+      setRegistrationStep(memberType === "corporate" ? "corporate_type" : "type");
+      return;
+    }
+    if (registrationStep === "corporate_type") {
+      setRegistrationStep("type");
       return;
     }
     router.back();
@@ -634,14 +806,19 @@ export default function RegisterScreen() {
     }
   };
 
+  const formStepCount = showExpertiseStep ? 4 : 3;
   const stepSubtitle =
-    registrationStep === "info"
-      ? "Hesap bilgilerinizi girin"
-      : registrationStep === "media"
-        ? showExpertiseStep
-          ? "2/3 Profil fotoğrafı"
-          : "2/2 Profil fotoğrafı"
-        : "3/3 Uzmanlık bölgeleri";
+    registrationStep === "type"
+      ? "Üyelik tipinizi seçin"
+      : registrationStep === "corporate_type"
+        ? "Firma tipinizi seçin"
+        : registrationStep === "info"
+        ? "Hesap bilgilerinizi girin"
+        : registrationStep === "media"
+          ? showExpertiseStep
+            ? `3/${formStepCount} Profil fotoğrafı`
+            : `3/${formStepCount} Profil fotoğrafı`
+          : `${formStepCount}/${formStepCount} Uzmanlık bölgeleri`;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -662,14 +839,18 @@ export default function RegisterScreen() {
         behaviorContext="auth"
         headerHeight={56}
         backgroundColor="#fff"
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: 24 + insets.bottom + 48 },
+        ]}
       >
         {/* Header */}
         <View style={styles.formHeader}>
           <Text style={styles.formTitle}>Hesap Oluştur</Text>
-          <Text style={styles.formSubtitle}>
-            {registrationStep === "info" ? "ProParcel'e hoş geldiniz" : stepSubtitle}
-          </Text>
+          <Text style={styles.formSubtitle}>{stepSubtitle}</Text>
+          {registrationStep === "type" || registrationStep === "corporate_type" ? (
+            <RegistrationHeaderDivider />
+          ) : null}
         </View>
 
         {/* Error Message */}
@@ -693,67 +874,45 @@ export default function RegisterScreen() {
             onContinue={() => void proceedToOtp()}
             onSkip={() => void proceedToOtp()}
             busy={isSending}
+            voiceMemberType={memberType}
+            voiceCorporateType={corporateType}
+            voiceSelectedCompany={selectedCompany}
+          />
+        ) : null}
+
+        {registrationStep === "type" ? (
+          <AccountTypeSelector
+            value={memberType}
+            layout="stack"
+            onChange={setMemberType}
+            onSelect={handleMemberTypeSelect}
+          />
+        ) : null}
+
+        {registrationStep === "corporate_type" ? (
+          <CorporateTypeSelector
+            value={corporateType}
+            onChange={setCorporateType}
+            onSelect={handleCorporateTypeSelect}
           />
         ) : null}
 
         {registrationStep === "info" ? (
         <>
-        {/* Member Type Selection */}
-        <View style={styles.tabs}>
-            <TouchableOpacity
-              style={[styles.tab, memberType === "individual" && styles.activeTab]}
-              onPress={() => {
-                setMemberType("individual");
-                setErrors({});
-              }}
-            >
-              <Text
-                style={[
-                  styles.tabText,
-                  memberType === "individual" && styles.activeTabText,
-                ]}
-              >
-                Bireysel
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, memberType === "consultant" && styles.activeTab]}
-              onPress={() => {
-                setMemberType("consultant");
-                setErrors({});
-              }}
-            >
-              <Text
-                style={[
-                  styles.tabText,
-                  memberType === "consultant" && styles.activeTabText,
-                ]}
-              >
-                Danışman
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, memberType === "corporate" && styles.activeTab]}
-              onPress={() => {
-                setMemberType("corporate");
-                setErrors({});
-              }}
-            >
-              <Text
-                style={[
-                  styles.tabText,
-                  memberType === "corporate" && styles.activeTabText,
-                ]}
-              >
-                Kurumsal
-              </Text>
-            </TouchableOpacity>
-          </View>
+        <TouchableOpacity
+          style={styles.voiceRegisterBtn}
+          onPress={handleOpenVoiceWizard}
+          accessibilityRole="button"
+          accessibilityLabel="Sesli Komut ile Üye Ol"
+        >
+          <Ionicons name="mic-outline" size={20} color="#1d4ed8" />
+          <Text style={styles.voiceRegisterBtnText}>Sesli Komut ile Üye Ol</Text>
+        </TouchableOpacity>
 
         {/* Form */}
         <View style={styles.form}>
             {/* First Name */}
-            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+            <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>Ad *</Text>
@@ -774,10 +933,10 @@ export default function RegisterScreen() {
                   ) : null}
                 </>
               )}
-            </ScrollInputWrap>
+            </RegisterScrollInputWrap>
 
             {/* Last Name */}
-            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+            <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>Soyad *</Text>
@@ -798,10 +957,10 @@ export default function RegisterScreen() {
                   ) : null}
                 </>
               )}
-            </ScrollInputWrap>
+            </RegisterScrollInputWrap>
 
             {/* Email */}
-            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+            <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>E-posta *</Text>
@@ -823,10 +982,10 @@ export default function RegisterScreen() {
                   {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
                 </>
               )}
-            </ScrollInputWrap>
+            </RegisterScrollInputWrap>
 
             {/* Phone */}
-            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+            <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>Telefon</Text>
@@ -854,7 +1013,7 @@ export default function RegisterScreen() {
                   {errors.phone ? <Text style={styles.fieldError}>{errors.phone}</Text> : null}
                 </>
               )}
-            </ScrollInputWrap>
+            </RegisterScrollInputWrap>
 
             {/* Consultant Fields */}
             {memberType === "consultant" && (
@@ -890,7 +1049,7 @@ export default function RegisterScreen() {
                   ) : null}
                   {isCompanyPickerOpen ? (
                     <View style={styles.select2Dropdown}>
-                      <ScrollInputWrap scrollRef={scrollRef}>
+                      <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop}>
                         {({ onFocus, onBlur }) => (
                           <TextInput
                             style={styles.select2SearchInput}
@@ -907,7 +1066,7 @@ export default function RegisterScreen() {
                             onBlur={onBlur}
                           />
                         )}
-                      </ScrollInputWrap>
+                      </RegisterScrollInputWrap>
 
                       {isCompanySearching ? (
                         <View style={styles.companyPickerStatus}>
@@ -981,7 +1140,7 @@ export default function RegisterScreen() {
                 </View>
 
                 {consultantSubtype === "spk" ? (
-                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                  <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
                     {({ onFocus, onBlur }) => (
                       <>
                         <Text style={styles.label}>Lisans No *</Text>
@@ -1004,7 +1163,7 @@ export default function RegisterScreen() {
                         ) : null}
                       </>
                     )}
-                  </ScrollInputWrap>
+                  </RegisterScrollInputWrap>
                 ) : null}
 
                 <View style={styles.inputContainer}>
@@ -1126,13 +1285,13 @@ export default function RegisterScreen() {
             {/* Corporate Fields */}
             {memberType === "corporate" && (
               <>
-                <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
                   {({ onFocus, onBlur }) => (
                     <>
-                      <Text style={styles.label}>Firma Marka/Ünvan *</Text>
+                      <Text style={styles.label}>Firma Marka/Ünvan</Text>
                       <TextInput
                         style={[styles.input, errors.companyName && styles.inputError]}
-                        placeholder="Firma adı"
+                        placeholder="Boş bırakılırsa ad soyad kullanılır"
                         placeholderTextColor="#999"
                         value={companyName}
                         onChangeText={(text) => {
@@ -1144,61 +1303,18 @@ export default function RegisterScreen() {
                       />
                       {errors.companyName ? (
                         <Text style={styles.fieldError}>{errors.companyName}</Text>
-                      ) : null}
+                      ) : (
+                        <Text style={styles.helperText}>
+                          Yetki belgeniz varsa ve firma değilseniz bu adımı geçin. Boş bırakılırsa ad
+                          soyad kullanılır.
+                        </Text>
+                      )}
                     </>
                   )}
-                </ScrollInputWrap>
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Firma Tipi *</Text>
-                  <View style={styles.corporateTypeTabs}>
-                    {[
-                      { value: "emlak", label: "Emlak" },
-                      { value: "spk", label: "SPK" },
-                      { value: "lihkab", label: "LİHKAB" },
-                    ].map((item) => (
-                      <TouchableOpacity
-                        key={item.value}
-                        style={[
-                          styles.corporateTypeTab,
-                          corporateType === item.value && styles.corporateTypeTabActive,
-                        ]}
-                        onPress={() => {
-                          setCorporateType(item.value as CorporateType);
-                          if (item.value === "spk") {
-                            setEducationLevel(1);
-                          } else if (item.value === "lihkab") {
-                            setEducationLevel(null);
-                            setEducationDetails(EMPTY_EDUCATION_PICKER);
-                          }
-                          if (errors.corporateType) {
-                            setErrors((e) => ({
-                              ...e,
-                              corporateType: "",
-                              universityId: "",
-                              departmentId: "",
-                            }));
-                          }
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.corporateTypeTabText,
-                            corporateType === item.value && styles.corporateTypeTabTextActive,
-                          ]}
-                        >
-                          {item.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  {errors.corporateType ? (
-                    <Text style={styles.fieldError}>{errors.corporateType}</Text>
-                  ) : null}
-                </View>
+                </RegisterScrollInputWrap>
 
                 {corporateType === "spk" ? (
-                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                  <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
                     {({ onFocus, onBlur }) => (
                       <>
                         <Text style={styles.label}>TC Kimlik No *</Text>
@@ -1221,11 +1337,11 @@ export default function RegisterScreen() {
                         ) : null}
                       </>
                     )}
-                  </ScrollInputWrap>
+                  </RegisterScrollInputWrap>
                 ) : null}
 
                 {corporateType === "lihkab" ? (
-                  <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                  <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
                     {({ onFocus, onBlur }) => (
                       <>
                         <Text style={styles.label}>Büro No *</Text>
@@ -1246,10 +1362,10 @@ export default function RegisterScreen() {
                         ) : null}
                       </>
                     )}
-                  </ScrollInputWrap>
+                  </RegisterScrollInputWrap>
                 ) : null}
 
-                <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+                <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
                   {({ onFocus, onBlur }) => (
                     <>
                       <Text style={styles.label}>Lisans / Yetki Belge No *</Text>
@@ -1274,7 +1390,7 @@ export default function RegisterScreen() {
                       ) : null}
                     </>
                   )}
-                </ScrollInputWrap>
+                </RegisterScrollInputWrap>
 
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>Adres Bilgileri *</Text>
@@ -1388,11 +1504,12 @@ export default function RegisterScreen() {
             )}
 
             {/* Password */}
-            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+            <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop} style={styles.inputContainer}>
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>Şifre *</Text>
                   <TextInput
+                    ref={passwordInputRef}
                     style={[styles.input, errors.password && styles.inputError, securePasswordInputStyle]}
                     placeholder="En az 8 karakter"
                     placeholderTextColor="#999"
@@ -1413,36 +1530,61 @@ export default function RegisterScreen() {
                   ) : null}
                 </>
               )}
-            </ScrollInputWrap>
+            </RegisterScrollInputWrap>
 
             {/* Password Confirm */}
-            <ScrollInputWrap scrollRef={scrollRef} style={styles.inputContainer}>
+            <RegisterScrollInputWrap scrollRef={scrollRef} minVisibleTop={minInputVisibleTop}
+              scrollRef={scrollRef}
+              style={styles.inputContainer}
+              scrollOptions={{ keyboardOverlapMargin: 56 }}
+            >
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>Şifre Tekrar *</Text>
-                  <TextInput
-                    style={[styles.input, errors.passwordConfirm && styles.inputError, securePasswordInputStyle]}
-                    placeholder="Şifrenizi tekrar girin"
-                    placeholderTextColor="#999"
-                    secureTextEntry
-                    value={passwordConfirm}
-                    onChangeText={(text) => {
-                      setPasswordConfirm(text);
-                      if (errors.passwordConfirm)
-                        setErrors((e) => ({ ...e, passwordConfirm: "" }));
-                    }}
-                    autoComplete="password-new"
-                    textContentType="newPassword"
-                    onFocus={onFocus}
-                    onBlur={onBlur}
-                    {...securePasswordInputProps}
-                  />
+                  <View
+                    style={[
+                      styles.passwordRow,
+                      errors.passwordConfirm && styles.inputError,
+                    ]}
+                  >
+                    <TextInput
+                      style={[styles.passwordInput, securePasswordInputStyle]}
+                      placeholder="Şifrenizi tekrar girin"
+                      placeholderTextColor="#999"
+                      secureTextEntry={!showPasswordConfirm}
+                      value={passwordConfirm}
+                      onChangeText={(text) => {
+                        setPasswordConfirm(text);
+                        if (errors.passwordConfirm)
+                          setErrors((e) => ({ ...e, passwordConfirm: "" }));
+                      }}
+                      autoComplete="password-new"
+                      textContentType="newPassword"
+                      onFocus={onFocus}
+                      onBlur={onBlur}
+                      {...securePasswordInputProps}
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordToggle}
+                      onPress={() => setShowPasswordConfirm((v) => !v)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        showPasswordConfirm ? "Şifreyi gizle" : "Şifreyi göster"
+                      }
+                    >
+                      <Ionicons
+                        name={showPasswordConfirm ? "eye-off-outline" : "eye-outline"}
+                        size={22}
+                        color="#64748b"
+                      />
+                    </TouchableOpacity>
+                  </View>
                   {errors.passwordConfirm ? (
                     <Text style={styles.fieldError}>{errors.passwordConfirm}</Text>
                   ) : null}
                 </>
               )}
-            </ScrollInputWrap>
+            </RegisterScrollInputWrap>
 
             {/* Devam - önce varlık kontrolü, yoksa OTP + modal */}
             <TouchableOpacity
@@ -1472,7 +1614,7 @@ export default function RegisterScreen() {
       </KeyboardAwareScrollScreen>
 
       {/* OTP Onay Modal */}
-      <Modal
+      <KeyboardAwareModal
         visible={showOtpModal}
         transparent
         animationType="fade"
@@ -1482,7 +1624,13 @@ export default function RegisterScreen() {
           style={styles.modalOverlay}
           onPress={() => setShowOtpModal(false)}
         >
-          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={[
+              styles.modalContent,
+              { paddingBottom: 24 + insets.bottom + 48 },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <Text style={styles.modalTitle}>Doğrulama Kodu</Text>
             <Text style={styles.modalSubtitle}>
               {phoneNumber.slice(0, 3)}****{phoneNumber.slice(-2)} numarasına gönderilen 6 haneli kodu girin
@@ -1525,7 +1673,17 @@ export default function RegisterScreen() {
             </TouchableOpacity>
           </Pressable>
         </Pressable>
-      </Modal>
+      </KeyboardAwareModal>
+
+      <VoiceRegistrationWizard
+        visible={voiceWizardVisible}
+        memberType={memberType}
+        corporateType={corporateType}
+        selectedCompany={selectedCompany}
+        onFieldResolved={handleVoiceFieldResolved}
+        onCompleted={handleVoiceWizardCompleted}
+        onClose={handleVoiceWizardClose}
+      />
     </SafeAreaView>
   );
 }
@@ -1563,7 +1721,7 @@ const styles = StyleSheet.create({
   headerRight: { width: 36, height: 36 },
   formHeader: {
     alignItems: "center",
-    marginBottom: 32,
+    marginBottom: 28,
     marginTop: 24,
   },
   formTitle: {
@@ -1576,37 +1734,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666",
   },
-  tabs: {
-    flexDirection: "row",
-    marginBottom: 24,
-    borderRadius: 8,
-    backgroundColor: "#f5f5f5",
-    padding: 4,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: "center",
-    borderRadius: 6,
-  },
-  activeTab: {
-    backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#666",
-  },
-  activeTabText: {
-    color: "#1a73e8",
-  },
   form: {
     marginBottom: 24,
+  },
+  voiceRegisterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+    backgroundColor: "#eff6ff",
+  },
+  voiceRegisterBtnText: {
+    color: "#1d4ed8",
+    fontSize: 15,
+    fontWeight: "700",
   },
   inputContainer: {
     marginBottom: 20,
@@ -1628,6 +1775,29 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: "#dc3545",
+  },
+  passwordRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    backgroundColor: "#fafafa",
+  },
+  passwordInput: {
+    flex: 1,
+    borderWidth: 0,
+    padding: 16,
+    paddingRight: 8,
+    fontSize: 16,
+    backgroundColor: "transparent",
+    color: INPUT_TEXT_COLOR,
+  },
+  passwordToggle: {
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    justifyContent: "center",
+    alignItems: "center",
   },
   phoneInputContainer: {
     flexDirection: "row",
@@ -1692,32 +1862,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15,
     backgroundColor: "#f8fafc",
-  },
-  corporateTypeTabs: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  corporateTypeTab: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    alignItems: "center",
-    backgroundColor: "#fff",
-  },
-  corporateTypeTabActive: {
-    backgroundColor: "#1a73e8",
-    borderColor: "#1a73e8",
-  },
-  corporateTypeTabText: {
-    color: "#334155",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  corporateTypeTabTextActive: {
-    color: "#fff",
   },
   educationOptions: {
     flexDirection: "row",

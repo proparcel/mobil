@@ -10,15 +10,20 @@ import VoiceSearchListeningAnimation from './VoiceSearchListeningAnimation';
 import { useSmartQueryAudioRecorder } from '../../src/hooks/useSmartQueryAudioRecorder';
 import { extractSmartQueryFromSpeech } from '../../services/smartQueryService';
 import {
-  resolveSmartQueryPayload,
-  type SmartQueryParcelPayload,
+  resolveSmartQueryForForm,
 } from '../../src/utils/smartQueryResolve';
-import { appendVoiceQueryDebugLog } from '../../src/utils/voiceQueryDebugLog';
+import type { SidebarSavedQuery } from '../../src/utils/sidebarSavedQueries';
+import {
+  appendSmartQueryDebugLog,
+  logSmartQuerySessionStart,
+} from '../../src/utils/smartQueryDebugLog';
+import { showSmartQueryErrorAlert } from '../../src/utils/smartQueryErrorAlert';
 import { useAuth } from '../../screens/contexts/AuthContext';
 import { useRouter } from '../../src/hooks/useNavigation';
 import {
   canUseSmartQuery,
   promptSmartQueryUpgrade,
+  promptSmartQueryLogin,
 } from '../../src/utils/customerFeatureGates';
 
 const ORB_IDLE_SIZE = 94;
@@ -27,15 +32,28 @@ const ORB_LIFT_Y = 54;
 const ORB_PIN_SCALE = 1.02;
 
 type Props = {
-  onQueryResolved: (payload: SmartQueryParcelPayload) => void;
+  onFormSeedResolved: (seed: SidebarSavedQuery) => void;
   onInteraction?: () => void;
 };
 
-export default function HomeVoiceQueryOrb({ onQueryResolved, onInteraction }: Props) {
+export default function HomeVoiceQueryOrb({ onFormSeedResolved, onInteraction }: Props) {
   const voiceRecorder = useSmartQueryAudioRecorder();
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
   const smartQueryEnabled = canUseSmartQuery(user);
+
+  const ensureVoiceQueryAccess = useCallback((): boolean => {
+    if (isAuthLoading) return false;
+    if (!isAuthenticated) {
+      promptSmartQueryLogin(() => router.push('login'));
+      return false;
+    }
+    if (!smartQueryEnabled) {
+      promptSmartQueryUpgrade(() => router.push('pricing'));
+      return false;
+    }
+    return true;
+  }, [isAuthLoading, isAuthenticated, smartQueryEnabled, router]);
   const [isExtracting, setIsExtracting] = useState(false);
 
   const voiceAnimMode = isExtracting ? 'processing' : voiceRecorder.isRecording ? 'listening' : 'idle';
@@ -73,12 +91,9 @@ export default function HomeVoiceQueryOrb({ onQueryResolved, onInteraction }: Pr
 
   const handleSpeechSend = useCallback(async () => {
     if (isExtracting) return;
-    if (!smartQueryEnabled) {
-      promptSmartQueryUpgrade(() => router.push('pricing'));
-      return;
-    }
+    if (!ensureVoiceQueryAccess()) return;
 
-    await appendVoiceQueryDebugLog('flow_send_start', 'orb', {
+    await appendSmartQueryDebugLog('flow_send_start', 'orb', {
       isRecording: voiceRecorder.isRecording,
       hasRecording: voiceRecorder.hasRecording,
       recordingMimeType: voiceRecorder.recordingMimeType,
@@ -93,10 +108,10 @@ export default function HomeVoiceQueryOrb({ onQueryResolved, onInteraction }: Pr
 
     if (!recording?.base64) {
       setIsExtracting(false);
-      await appendVoiceQueryDebugLog('flow_send_skip', 'orb', {
+      await appendSmartQueryDebugLog('flow_send_skip', 'orb', {
         reason: 'empty_payload',
       });
-      Alert.alert('Akıllı Sorgu', 'Lütfen önce konuşarak bir sorgu yapın.');
+      showSmartQueryErrorAlert('Lütfen önce konuşarak bir sorgu yapın.');
       return;
     }
 
@@ -105,46 +120,57 @@ export default function HomeVoiceQueryOrb({ onQueryResolved, onInteraction }: Pr
     try {
       const response = await extractSmartQueryFromSpeech(recording.base64, recording.mimeType);
       if (!response.ok) {
-        await appendVoiceQueryDebugLog('api_response', 'orb', {
+        await appendSmartQueryDebugLog('flow_error', 'orb', {
           phase: 'http_error',
           status: response.status,
           error: response.error,
         });
-        Alert.alert('Akıllı Sorgu', response.error || 'Ses kaydı işlenirken bir hata oluştu.');
+        showSmartQueryErrorAlert(response.error || 'Ses kaydı işlenirken bir hata oluştu.');
         return;
       }
 
-      if (!response.data.ok) {
-        await appendVoiceQueryDebugLog('api_response', 'orb', {
-          phase: 'data_not_ok',
-          error: response.data.error,
-          engine: response.data.engine,
+      const outcome = await resolveSmartQueryForForm(response.data, {
+        channel: 'speech',
+        source: 'orb',
+      });
+
+      if (outcome.status === 'complete') {
+        await appendSmartQueryDebugLog('flow_success', 'orb', {
+          summary: outcome.summary,
+          mahalleTkgmValue: outcome.payload.mahalleTkgmValue,
         });
-        Alert.alert('Akıllı Sorgu', response.data.error || 'Sorgu metni çözümlenemedi.');
+        onFormSeedResolved(outcome.seed);
         return;
       }
 
-      const resolved = await resolveSmartQueryPayload(response.data);
-      if (!resolved.ok) {
-        Alert.alert('Akıllı Sorgu', resolved.error);
+      if (outcome.status === 'partial') {
+        await appendSmartQueryDebugLog('flow_partial_success', 'orb', {
+          il: outcome.seed.il,
+          ilce: outcome.seed.ilce,
+          ada: outcome.seed.ada,
+          parsel: outcome.seed.parsel,
+        });
+        Alert.alert('Akıllı Sorgu', outcome.message);
+        onFormSeedResolved(outcome.seed);
         return;
       }
 
-      onQueryResolved(resolved.payload);
+      showSmartQueryErrorAlert(outcome.error);
     } catch (error: any) {
-      Alert.alert('Akıllı Sorgu', error?.message || 'Ses sorgusu başlatılamadı.');
+      await appendSmartQueryDebugLog('flow_error', 'orb', {
+        phase: 'exception',
+        message: error?.message || 'Ses sorgusu başlatılamadı.',
+      });
+      showSmartQueryErrorAlert(error?.message || 'Ses sorgusu başlatılamadı.');
     } finally {
       setIsExtracting(false);
     }
-  }, [isExtracting, voiceRecorder, onQueryResolved, smartQueryEnabled, router]);
+  }, [isExtracting, voiceRecorder, onFormSeedResolved, ensureVoiceQueryAccess]);
 
   const handleAnimationPress = useCallback(async () => {
     onInteraction?.();
     if (isExtracting) return;
-    if (!smartQueryEnabled) {
-      promptSmartQueryUpgrade(() => router.push('pricing'));
-      return;
-    }
+    if (!ensureVoiceQueryAccess()) return;
 
     if (voiceRecorder.isRecording) {
       setIsExtracting(true);
@@ -152,8 +178,9 @@ export default function HomeVoiceQueryOrb({ onQueryResolved, onInteraction }: Pr
       return;
     }
 
+    await logSmartQuerySessionStart('orb', 'speech');
     await voiceRecorder.startRecording();
-  }, [isExtracting, voiceRecorder, handleSpeechSend, onInteraction, smartQueryEnabled, router]);
+  }, [isExtracting, voiceRecorder, handleSpeechSend, onInteraction, ensureVoiceQueryAccess]);
 
   const handleCancel = useCallback(async () => {
     if (isExtracting) return;

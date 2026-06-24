@@ -12,18 +12,19 @@ import {
   Switch,
   Text,
   TextInput,
-  StatusBar,
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AdaParselForm, { type AdaParselSubmitPayload } from "../../components/AdaParselForm";
 import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
+import { MobileAiScreenShell } from "../../components/app/MobileAiScreenHeader";
 import { useScrollInputIntoView } from "../../src/keyboard";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../contexts/AuthContext";
 import { creditService } from "../../services/creditService";
+import { getProductPricing, purchaseProductLicense } from "../../services/productLicenseService";
 import { aiDroneProparcelService } from "../../services/aiDroneProparcelService";
 import { extractNitelikText } from "../../src/utils/propertyTypeUtils";
 import {
@@ -57,7 +58,8 @@ export default function AiDroneVideoInfoScreen() {
     inputWrapRef: noteInputWrapRef,
   });
   const { isAuthenticated } = useAuth();
-  const [creditCost, setCreditCost] = useState<number | null>(null);
+  const [priceTry, setPriceTry] = useState<number | null>(null);
+  const [isTryPriced, setIsTryPriced] = useState(true);
   const [costLoading, setCostLoading] = useState(true);
   const [queryLoading, setQueryLoading] = useState(false);
   const [parcelPayload, setParcelPayload] = useState<AdaParselSubmitPayload | null>(null);
@@ -70,8 +72,16 @@ export default function AiDroneVideoInfoScreen() {
 
   const loadCreditCost = useCallback(async () => {
     setCostLoading(true);
-    const cost = await creditService.getCreditCostForActionTypes([DRONE_SERVICE_ACTION, "drone_video"]);
-    setCreditCost(cost);
+    const row = await getProductPricing(DRONE_SERVICE_ACTION);
+    const tryMode = Boolean(row?.is_try_priced);
+    setIsTryPriced(tryMode);
+    if (tryMode) {
+      setPriceTry(typeof row?.price_try === "number" ? row.price_try : null);
+    } else {
+      const cost = await creditService.getCreditCostForAction(DRONE_SERVICE_ACTION);
+      setPriceTry(null);
+      if (cost != null) setPriceTry(cost);
+    }
     setCostLoading(false);
   }, []);
 
@@ -135,12 +145,16 @@ export default function AiDroneVideoInfoScreen() {
       Alert.alert("Parsel seçin", "Önce il, ilçe, mahalle, ada ve parsel girip Sorgula deyin.");
       return;
     }
-    if (creditCost == null) {
-      Alert.alert("Kredi bilgisi", "Kredi maliyeti yüklenemedi. Lütfen tekrar deneyin.", [
+    if (priceTry == null && !costLoading) {
+      Alert.alert("Fiyat bilgisi", "Paket fiyatı yüklenemedi. Lütfen tekrar deneyin.", [
         { text: "Tamam", onPress: () => void loadCreditCost() },
       ]);
       return;
     }
+
+    const priceLabel = isTryPriced
+      ? `${Math.round(priceTry ?? 0)} ₺ (App Store / Google Play)`
+      : `${priceTry} Tepe Kredi`;
 
     const summaryLine = resultSummary || "";
     const cardLine = showUserCard && userCardConfirmed
@@ -149,7 +163,7 @@ export default function AiDroneVideoInfoScreen() {
     const noteLine = userNote.trim() ? `\n\nNotunuz:\n${userNote.trim().slice(0, 200)}` : "";
     Alert.alert(
       "Onay",
-      `${creditCost} Tepe Coin harcanacak.\n\n${summaryLine}\n\n${cardLine}${noteLine}\n\nDevam edilsin mi?`,
+      `${priceLabel} harcanacak.\n\n${summaryLine}\n\n${cardLine}${noteLine}\n\nDevam edilsin mi?`,
       [
         { text: "Vazgeç", style: "cancel" },
         {
@@ -161,6 +175,28 @@ export default function AiDroneVideoInfoScreen() {
                 typeof globalThis.crypto?.randomUUID === "function"
                   ? globalThis.crypto.randomUUID()
                   : `aidrone-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+              const mahalleTkgm = String(parcelPayload.mahalleTkgmValue ?? "").trim();
+              const referenceId = `${mahalleTkgm}_${parcelPayload.ada}_${parcelPayload.parsel}`;
+
+              let paymentReference: string | undefined;
+              if (isTryPriced) {
+                const iapResult = await purchaseProductLicense({
+                  actionType: DRONE_SERVICE_ACTION,
+                  referenceId,
+                  description: JSON.stringify({
+                    service: DRONE_SERVICE_ACTION,
+                    summary: summaryLine,
+                    show_user_card: showUserCard && userCardConfirmed,
+                  }),
+                });
+                if (!iapResult.success) {
+                  Alert.alert("Ödeme başarısız", iapResult.error || iapResult.message || "IAP doğrulanamadı.");
+                  return;
+                }
+                paymentReference = iapResult.transaction_id || `iap:${Date.now()}`;
+              }
+
               const res = await aiDroneProparcelService.createRequest({
                 parcel: {
                   mahalleTkgmValue: parcelPayload.mahalleTkgmValue,
@@ -175,14 +211,17 @@ export default function AiDroneVideoInfoScreen() {
                 userNote: userNote.trim(),
                 showUserCard: showUserCard && userCardConfirmed,
                 idempotencyKey,
+                paymentReference,
               });
               if (res.success) {
-                const used = res.creditsUsed ?? creditCost;
+                const used = res.creditsUsed ?? 0;
                 const balance = res.newBalance;
                 const newId = res.requestId;
                 Alert.alert(
                   "Talep alındı",
-                  `${used} Tepe Coin kullanıldı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`,
+                  isTryPriced
+                    ? `Ödemeniz alındı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`
+                    : `${used} Tepe Kredi kullanıldı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`,
                   [
                     ...(newId
                       ? [{ text: "İş detayı", onPress: () => router.push("ai-drone-job-detail", { requestId: String(newId) }) }]
@@ -208,7 +247,9 @@ export default function AiDroneVideoInfoScreen() {
     canSubmitOrder,
     parcelPayload,
     tkgmData,
-    creditCost,
+    priceTry,
+    isTryPriced,
+    costLoading,
     resultSummary,
     userNote,
     showUserCard,
@@ -218,23 +259,17 @@ export default function AiDroneVideoInfoScreen() {
   ]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel="Geri">
-          <Ionicons name="arrow-back" size={18} color="#f8fafc" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>AI Drone Video</Text>
-        <View style={styles.headerBtn} />
-      </View>
-
+    <MobileAiScreenShell
+      title="AI Drone Video"
+      onBack={() => router.back()}
+      pageBackgroundColor={COLORS.pageBg}
+    >
       <KeyboardAwareScrollScreen
         ref={scrollRef}
         headerHeight={63}
         backgroundColor={COLORS.pageBg}
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + insets.bottom }]}
-        nestedScrollEnabled={false}
       >
         <View style={styles.card}>
           <View style={styles.iconCircle}>
@@ -275,8 +310,10 @@ export default function AiDroneVideoInfoScreen() {
             <Text style={styles.creditLabel}>Sizin yerinize üretim hizmeti</Text>
             {costLoading ? (
               <ActivityIndicator color="#b45309" style={{ marginTop: 6, alignSelf: "flex-start" }} />
-            ) : creditCost != null ? (
-              <Text style={styles.creditValue}>{creditCost} Tepe Coin</Text>
+            ) : priceTry != null ? (
+              <Text style={styles.creditValue}>
+                {isTryPriced ? `${Math.round(priceTry)} ₺` : `${priceTry} Tepe Kredi`}
+              </Text>
             ) : (
               <TouchableOpacity onPress={() => void loadCreditCost()} activeOpacity={0.7}>
                 <Text style={styles.creditRetry}>Maliyet yüklenemedi — yenile</Text>
@@ -362,11 +399,11 @@ export default function AiDroneVideoInfoScreen() {
           <TouchableOpacity
             style={[
               styles.primaryBtn,
-              (!canSubmitOrder || purchaseBusy || creditCost == null) && styles.primaryBtnDisabled,
+              (!canSubmitOrder || purchaseBusy || (priceTry == null && costLoading)) && styles.primaryBtnDisabled,
             ]}
             onPress={handleWeDoItForYou}
             activeOpacity={0.85}
-            disabled={!canSubmitOrder || purchaseBusy || creditCost == null}
+            disabled={!canSubmitOrder || purchaseBusy || (priceTry == null && !costLoading)}
           >
             {purchaseBusy ? (
               <ActivityIndicator color="#fff" />
@@ -382,34 +419,12 @@ export default function AiDroneVideoInfoScreen() {
           ) : null}
         </View>
       </KeyboardAwareScrollScreen>
-    </SafeAreaView>
+    </MobileAiScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#1e293b" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#1e293b",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 3,
-    borderBottomColor: "#3b82f6",
-  },
-  headerBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 20, fontWeight: "bold", color: "#fff" },
-  scroll: { flex: 1, backgroundColor: COLORS.pageBg },
+  scroll: { flex: 1 },
   scrollContent: { padding: 16 },
   card: {
     backgroundColor: COLORS.cardBg,

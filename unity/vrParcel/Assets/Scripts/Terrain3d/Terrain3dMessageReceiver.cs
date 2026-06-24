@@ -91,7 +91,7 @@ namespace ProParcel.Terrain3d
             if (bridge != null) return;
             bridge = ParcelTerrain3dBridge.Instance;
             if (bridge == null)
-                bridge = Object.FindObjectOfType<ParcelTerrain3dBridge>();
+                bridge = Object.FindAnyObjectByType<ParcelTerrain3dBridge>();
             Debug.Log("[Terrain3d] ResolveBridge found=" + (bridge != null));
         }
     }

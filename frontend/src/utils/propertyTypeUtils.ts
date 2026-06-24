@@ -116,18 +116,18 @@ export function generatePropertyTypeTitle(nitelikText: string): { title: string;
 
   if (matchesTarla) {
     suggestedType = 'Tarla';
-    title = `Arazi tipi genel olarak "Tarla" sınıfına uymaktadır.\nTKGM'den gelen veri bu şekilde: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
+    title = `Arazi tipi genel olarak "Tarla" sınıfına uymaktadır.\nKayıtlı nitelik: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
   } else if (matchesTicari) {
     suggestedType = 'Ticari';
-    title = `Arazi tipi genel olarak "Ticari" sınıfına uymaktadır.\nTKGM'den gelen veri bu şekilde: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
+    title = `Arazi tipi genel olarak "Ticari" sınıfına uymaktadır.\nKayıtlı nitelik: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
   } else if (matchesArsa) {
     suggestedType = 'Arsa';
-    title = `Arazi tipi genel olarak "Arsa" sınıfına uymaktadır.\nTKGM'den gelen veri bu şekilde: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
+    title = `Arazi tipi genel olarak "Arsa" sınıfına uymaktadır.\nKayıtlı nitelik: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
   } else if (matchesEvKoy) {
     suggestedType = 'Arsa';
-    title = `Arazi tipi genel olarak "Arsa veya Köy içi" sınıfına uymaktadır.\nTKGM'den gelen veri bu şekilde: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
+    title = `Arazi tipi genel olarak "Arsa veya Köy içi" sınıfına uymaktadır.\nKayıtlı nitelik: "${nitelikText || '?'}".\nLütfen onayladığınız tipi seçin.`;
   } else {
-    title = `TKGM'den gelen nitelik: "${nitelikText || '?'}".\nArazi tipi doğru mu? Eğer doğru değilse aşağıdan uygun türü seçin.`;
+    title = `Kayıtlı nitelik: "${nitelikText || '?'}".\nArazi tipi doğru mu? Eğer doğru değilse aşağıdan uygun türü seçin.`;
   }
 
   return { title, suggestedType };

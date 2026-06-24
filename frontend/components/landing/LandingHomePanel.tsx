@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   ScrollView,
@@ -15,6 +15,7 @@ import { LandingNewPlatformBadge } from './LandingNewPlatformBadge';
 import { LandingLegalFooter } from './LandingLegalFooter';
 import { LandingTopBar } from './LandingTopBar';
 import { landingColors, LANDING_BOTTOM_CHROME } from './landingTheme';
+import { creditService } from '../../services/creditService';
 
 const BOTTOM_NAV_SPACE = LANDING_BOTTOM_CHROME;
 
@@ -38,6 +39,16 @@ export function LandingHomePanel({
   const insets = useSafeAreaInsets();
   const fade = useRef(new Animated.Value(0)).current;
   const slide = useRef(new Animated.Value(24)).current;
+  const [registrationCredits, setRegistrationCredits] = useState(0);
+
+  const loadRegistrationCredits = useCallback(async () => {
+    const bootstrap = await creditService.getGiftBootstrap();
+    setRegistrationCredits(Number(bootstrap?.registration?.default) || 0);
+  }, []);
+
+  useEffect(() => {
+    loadRegistrationCredits();
+  }, [loadRegistrationCredits]);
 
   useEffect(() => {
     if (!reveal) return;
@@ -73,7 +84,9 @@ export function LandingHomePanel({
             </Text>
           </View>
 
-          <LandingGiftCard onStart={onStart} />
+          {registrationCredits > 0 ? (
+            <LandingGiftCard credits={registrationCredits} onStart={onStart} />
+          ) : null}
           <LandingFeatureGrid onFeaturePress={onFeaturePress} />
           <LandingPartnerBanner onDetails={onPartnerDetails} />
           <LandingLegalFooter variant="scroll" tone="dark" />

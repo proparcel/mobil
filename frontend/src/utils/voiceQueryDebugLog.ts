@@ -6,7 +6,7 @@ export const VOICE_QUERY_DEBUG_LOG_PATH = `${RNFS.DocumentDirectoryPath}/voice-q
 
 const MAX_LOG_BYTES = 512 * 1024;
 
-export type VoiceQueryLogSource = 'orb' | 'modal' | 'recorder' | 'api';
+export type VoiceQueryLogSource = 'orb' | 'modal' | 'recorder' | 'api' | 'voice_registration' | 'voice_expertise';
 
 export type VoiceQueryLogEvent =
   | 'session_header'
@@ -20,7 +20,19 @@ export type VoiceQueryLogEvent =
   | 'flow_send_skip'
   | 'api_request'
   | 'api_response'
-  | 'api_network_error';
+  | 'api_network_error'
+  | 'wizard_opened'
+  | 'step_started'
+  | 'recording_auto_started'
+  | 'recording_stopped_by_confirm'
+  | 'audio_too_short'
+  | 'field_resolved'
+  | 'field_invalid'
+  | 'step_completed'
+  | 'wizard_completed'
+  | 'wizard_cancelled'
+  | 'permission_denied'
+  | 'network_error';
 
 type LogPayload = Record<string, unknown>;
 

@@ -13,6 +13,7 @@ import type {
   PortalQueryListParams,
   PortalQueryListResponse,
   PortalQueryDetail,
+  PortalQueryShell,
   PortalSolarEnergyScoreResponse,
   PortalWindEnergyScoreResponse,
   PortalRatingsResponse,
@@ -26,8 +27,29 @@ import type {
   MahalleOrtSignalResponse,
   PortalKmSectionData,
   PortalKmPriceMapResponse,
+  PortalRoadDiagramResponse,
+  PortalRoadSectionResponse,
   PortalTerrain3dResponse,
 } from '../src/types/portal';
+
+function logPortalApiFailure(
+  endpoint: string,
+  status: number,
+  parsed: Record<string, unknown> | null,
+  rawText: string,
+): void {
+  if (!__DEV__) return;
+  const preview = rawText.length > 500 ? `${rawText.slice(0, 500)}…` : rawText;
+  console.warn('[portalService] API FAIL', {
+    endpoint,
+    status,
+    error: parsed?.error ?? parsed?.detail ?? parsed?.message,
+    code: parsed?.code,
+    view: parsed?.view,
+    snapshot_id: parsed?.snapshot_id,
+    bodyPreview: preview,
+  });
+}
 
 async function authDjangoJsonFetch<T>(
   endpoint: string,
@@ -63,17 +85,34 @@ async function authDjangoJsonFetch<T>(
   try {
     const parsed = text ? JSON.parse(text) : null;
     if (!res.ok) {
+      const payload =
+        parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined;
+      logPortalApiFailure(endpoint, status, payload ?? null, text);
       return {
         ok: false,
         status,
         error: parsed?.error || parsed?.detail || parsed?.message || `HTTP ${status}`,
         code: typeof parsed?.code === 'string' ? parsed.code : undefined,
-        payload: parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined,
+        payload,
       };
     }
     return { ok: true, data: parsed as T };
   } catch {
-    if (!res.ok) return { ok: false, status, error: `HTTP ${status}` };
+    if (!res.ok) {
+      logPortalApiFailure(endpoint, status, null, text);
+      const trimmed = text.trim();
+      const preview = trimmed.slice(0, 300);
+      return {
+        ok: false,
+        status,
+        error: preview || `HTTP ${status}`,
+        payload: {
+          bodyPreview: trimmed.slice(0, 800),
+          contentType: res.headers.get('content-type') || '',
+          parseError: true,
+        },
+      };
+    }
     return { ok: true, data: text as any as T };
   }
 }
@@ -291,6 +330,13 @@ export async function getPortalRecentQueryDetail(
   return authDjangoJsonFetch<PortalQueryDetail>(`/api/portal/recent-queries/${snapshotId}/`);
 }
 
+/** GET /api/portal/recent-queries/<id>/shell/ — viewer_is_expert, pro_query_credit_notice vb. */
+export async function getPortalRecentQueryShell(
+  snapshotId: number,
+): Promise<ApiResult<PortalQueryShell>> {
+  return authDjangoJsonFetch<PortalQueryShell>(`/api/portal/recent-queries/${snapshotId}/shell/`);
+}
+
 /**
  * GET /api/portal/recent-queries/<snapshot_id>/terrain-3d/
  * Yalnızca kullanıcı 3D istediğinde; detay yüklenirken çağrılmaz.
@@ -402,6 +448,24 @@ export async function getPortalKmSection(
   );
 }
 
+/** GET /api/portal/recent-queries/<id>/sections/road/ — hızlı snapshot okuma */
+export async function getPortalRoadSection(
+  snapshotId: number,
+): Promise<ApiResult<PortalRoadSectionResponse>> {
+  return authDjangoJsonFetch<PortalRoadSectionResponse>(
+    `/api/portal/recent-queries/${snapshotId}/sections/road/`,
+  );
+}
+
+/** GET /api/portal/recent-queries/<id>/sections/road/diagram/ — RoadV2 replay SVG */
+export async function getPortalRoadDiagram(
+  snapshotId: number,
+): Promise<ApiResult<PortalRoadDiagramResponse>> {
+  return authDjangoJsonFetch<PortalRoadDiagramResponse>(
+    `/api/portal/recent-queries/${snapshotId}/sections/road/diagram/`,
+  );
+}
+
 /** GET /api/portal/km-price-map/?proparcel_value=&property_type= */
 export async function getPortalKmPriceMap(
   proparcelValue: string | number,
@@ -416,18 +480,22 @@ export async function getPortalKmPriceMap(
 
 /** Mahalle ortalaması son60 sinyali — DB kayıt / UI-only / expert onay */
 export async function postMahalleOrtSignal(
-  snapshotId: number,
+  snapshotId: string | number,
   m2Price: number,
-  options?: { confirmExtremePrice?: boolean },
+  options?: { persist?: boolean; confirmExtremePrice?: boolean },
 ): Promise<ApiResult<MahalleOrtSignalResponse>> {
+  const body: Record<string, unknown> = {
+    m2_price: m2Price,
+    persist: Boolean(options?.persist),
+  };
+  if (options?.confirmExtremePrice) {
+    body.confirm_extreme_price = true;
+  }
   return authDjangoJsonFetch<MahalleOrtSignalResponse>(
     `/api/portal/recent-queries/${snapshotId}/mahalle-ort-signal/`,
     {
       method: 'POST',
-      json: {
-        m2_price: m2Price,
-        ...(options?.confirmExtremePrice ? { confirm_extreme_price: true } : {}),
-      },
+      json: body,
     },
   );
 }

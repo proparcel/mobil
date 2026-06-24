@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -8,7 +8,6 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  StatusBar,
   Text,
   TextInput,
   TouchableOpacity,
@@ -21,7 +20,12 @@ import { launchImageLibrary } from "react-native-image-picker";
 import RNFS from "react-native-fs";
 
 import { useRoute, useRouter } from "../../src/hooks/useNavigation";
+import { useScrollInputIntoView } from "../../src/keyboard";
 import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
+import { AppStatusBar } from "../../components/app/AppStatusBar";
+import { MobileAiScreenHeader } from "../../components/app/MobileAiScreenHeader";
+import { AiVideoStudioPurchaseModal } from "../../components/ai-video-studio/AiVideoStudioPurchaseModal";
+import { KeywordPillInput } from "../../components/ai-video-studio/KeywordPillInput";
 import { creditService } from "../../services/creditService";
 import {
   absoluteStudioMediaUrl,
@@ -54,6 +58,8 @@ const hasNativeVideoView =
 
 const MAX_IMAGES = 5;
 const MAX_TEXT_CHARS = 420;
+/** MobileAiScreenHeader (~63) + sekme çubuğu (~61) — iOS KAV offset */
+const AI_VIDEO_STUDIO_HEADER_CHROME = 124;
 
 const COLORS = {
   pageBg: "#f8fafc",
@@ -104,8 +110,9 @@ export default function AiVideoStudioScreen() {
   const routeParams = (route.params || {}) as { tab?: TabKey; jobId?: string };
 
   const [activeTab, setActiveTab] = useState<TabKey>(routeParams.tab === "videos" ? "videos" : "create");
-  const [title, setTitle] = useState("AI Video");
-  const [bodyText, setBodyText] = useState("");
+  const [title, setTitle] = useState("Emlak ilanı");
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [videoText, setVideoText] = useState("");
   const [images, setImages] = useState<MobileUploadImage[]>([]);
   const [jobs, setJobs] = useState<AiVideoStudioJob[]>([]);
   const [scriptDraft, setScriptDraft] = useState<AiVideoStudioScript | null>(null);
@@ -116,12 +123,33 @@ export default function AiVideoStudioScreen() {
   const [balance, setBalance] = useState<number | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(routeParams.jobId || null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const titleInputWrapRef = useRef<View>(null);
+  const keywordsInputWrapRef = useRef<View>(null);
+  const videoTextInputWrapRef = useRef<View>(null);
+  const { handleFocus: scrollTitleIntoView, handleBlur: scrollTitleBlur } = useScrollInputIntoView({
+    scrollRef,
+    inputWrapRef: titleInputWrapRef,
+  });
+  const { handleFocus: scrollKeywordsIntoView, handleBlur: scrollKeywordsBlur } = useScrollInputIntoView({
+    scrollRef,
+    inputWrapRef: keywordsInputWrapRef,
+    keyboardOverlapMargin: 48,
+  });
+  const { handleFocus: scrollVideoTextIntoView, handleBlur: scrollVideoTextBlur } = useScrollInputIntoView({
+    scrollRef,
+    inputWrapRef: videoTextInputWrapRef,
+    keyboardOverlapMargin: 48,
+  });
 
   const currentJob = useMemo(() => latestJob(jobs), [jobs]);
   const prepareJobId = useMemo(() => currentJob?.job_id || null, [currentJob?.job_id]);
 
-  const canPrepareText =
-    bodyText.trim().length > 0 && bodyText.length <= MAX_TEXT_CHARS && !submitting;
+  const hasKeywords = keywords.length > 0;
+  const canPrepareText = hasKeywords && !submitting;
+  const canCreateVideo = !!scriptDraft?.full_narration?.trim() && !!videoText.trim();
 
   const selectedJob = useMemo(
     () => jobs.find((j) => j.job_id === selectedJobId) || null,
@@ -157,6 +185,7 @@ export default function AiVideoStudioScreen() {
           const preview = (latest?.scene_metadata?.script_preview || null) as AiVideoStudioScript | null;
           if (latest?.status === "script_ready" && preview) {
             setScriptDraft(preview);
+            setVideoText(String(preview.full_narration || "").trim());
           } else {
             setScriptDraft(null);
           }
@@ -231,22 +260,30 @@ export default function AiVideoStudioScreen() {
     });
   }, [images.length]);
 
+  const onVideoTextChange = useCallback((value: string) => {
+    setVideoText(value);
+    setScriptDraft((prev) => (prev ? { ...prev, full_narration: value } : prev));
+  }, []);
+
   const onPrepare = useCallback(async () => {
-    if (!canPrepareText) {
-      Alert.alert("Eksik", "Geçerli bir video metni girin (en fazla 420 karakter).");
+    if (!hasKeywords) {
+      Alert.alert("Anahtar kelime gerekli", "Emlak ilanı için en az 1 anahtar kelime girin.");
       return;
     }
     if (!images.length) {
       Alert.alert("Görsel gerekli", "Metin hazırlamak için en az 1 görsel seçin.");
       return;
     }
+    if (submitting) return;
     setSubmitting(true);
     try {
-      const created = await createAiVideoStudioJob({ title, bodyText, images });
+      const created = await createAiVideoStudioJob({ title, highlightTexts: keywords, images });
       if (!created.ok) throw new Error(created.error);
-      const generated = await generateAiVideoStudioScript(created.job.job_id);
+      const generated = await generateAiVideoStudioScript(created.job.job_id, keywords);
       if (!generated.ok) throw new Error(generated.error);
+      const narration = String(generated.script?.full_narration || "").trim();
       setScriptDraft(generated.script);
+      setVideoText(narration);
       await refreshJobs();
       Alert.alert("Hazır", "Video metni hazır. Düzenleyip Video Oluştur ile onaylayabilirsiniz.");
     } catch (e: any) {
@@ -254,17 +291,18 @@ export default function AiVideoStudioScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [bodyText, canPrepareText, images, refreshJobs, title]);
+  }, [hasKeywords, images, keywords, refreshJobs, submitting, title]);
 
-  const runConfirm = useCallback(async () => {
+  const runConfirm = useCallback(async (): Promise<boolean> => {
     const jobId = prepareJobId;
-    if (!jobId || !scriptDraft?.full_narration?.trim()) {
+    const narration = videoText.trim();
+    if (!jobId || !narration) {
       Alert.alert("Eksik", "Önce metin hazırlayın.");
-      return;
+      return false;
     }
     setConfirming(true);
     try {
-      const result = await confirmAiVideoStudioJob(jobId, scriptDraft.full_narration);
+      const result = await confirmAiVideoStudioJob(jobId, narration);
       if (!result.ok) {
         if (result.status === 402) {
           Alert.alert(
@@ -275,11 +313,12 @@ export default function AiVideoStudioScreen() {
               { text: "Paketler", onPress: () => router.push("pricing") },
             ],
           );
-          return;
+          return false;
         }
         throw new Error(result.error);
       }
       setScriptDraft(null);
+      setVideoText("");
       await refreshJobs();
       const balRes = await creditService.getBalance();
       if (balRes.success && balRes.data) {
@@ -288,30 +327,26 @@ export default function AiVideoStudioScreen() {
       Alert.alert("Başladı", "Video üretimi başladı. Hazır olunca bildirim alacaksınız.");
       setActiveTab("videos");
       setSelectedJobId(jobId);
+      return true;
     } catch (e: any) {
       Alert.alert("Hata", e?.message || "Video üretimi başlatılamadı.");
+      return false;
     } finally {
       setConfirming(false);
     }
-  }, [prepareJobId, refreshJobs, router, scriptDraft]);
+  }, [prepareJobId, refreshJobs, router, videoText]);
 
   const onCreateVideo = useCallback(() => {
-    if (!scriptDraft?.full_narration?.trim()) {
+    if (!videoText.trim()) {
       Alert.alert("Eksik", "Önce metin hazırlayın.");
       return;
     }
-    const summary = formatStudioQuoteSummary(quote);
-    const balanceLine =
-      balance != null ? `\n\nMevcut bakiye: ${balance} Tepe Kredi` : "";
-    Alert.alert(
-      "Video Oluştur",
-      `${summary || "Üretim ücreti hesaplanıyor."}\n\nOnayladığınızda video üretimi başlar. Kredi, video başarıyla hazır olunca düşülür.${balanceLine}\n\nHazır olunca bildirim alacaksınız.`,
-      [
-        { text: "İptal", style: "cancel" },
-        { text: "Oluştur", onPress: () => runConfirm() },
-      ],
-    );
-  }, [balance, quote, runConfirm, scriptDraft]);
+    if (!quote || quote.total == null) {
+      Alert.alert("Fiyat", "Ücret hesaplanamadı. Görsel sayısını kontrol edip tekrar deneyin.");
+      return;
+    }
+    setPurchaseModalVisible(true);
+  }, [quote, videoText]);
 
   const onDeleteJob = useCallback(
     async (jobId: string) => {
@@ -325,7 +360,10 @@ export default function AiVideoStudioScreen() {
               const result = await deleteAiVideoStudioJob(jobId);
               if (!result.ok) throw new Error(result.error);
               if (selectedJobId === jobId) setSelectedJobId(null);
-              if (prepareJobId === jobId) setScriptDraft(null);
+              if (prepareJobId === jobId) {
+                setScriptDraft(null);
+                setVideoText("");
+              }
               await refreshJobs();
             } catch (e: any) {
               Alert.alert("Hata", e?.message || "İş silinemedi.");
@@ -399,29 +437,18 @@ export default function AiVideoStudioScreen() {
         ) : null}
 
         <Text style={styles.label}>Başlık</Text>
-        <TextInput
-          value={title}
-          onChangeText={setTitle}
-          style={styles.input}
-          maxLength={80}
-          placeholder="AI Video"
-          placeholderTextColor="#94a3b8"
-        />
-
-        <Text style={[styles.label, styles.spacingTop]}>Video metni</Text>
-        <TextInput
-          value={bodyText}
-          onChangeText={setBodyText}
-          style={[styles.input, styles.textarea]}
-          maxLength={MAX_TEXT_CHARS}
-          multiline
-          textAlignVertical="top"
-          placeholder="Seslendirmede okunacak metni yazın."
-          placeholderTextColor="#94a3b8"
-        />
-        <Text style={styles.counter}>
-          {bodyText.length}/{MAX_TEXT_CHARS} karakter
-        </Text>
+        <View ref={titleInputWrapRef} collapsable={false}>
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            style={styles.input}
+            maxLength={80}
+            placeholder="Emlak ilanı"
+            placeholderTextColor="#94a3b8"
+            onFocus={scrollTitleIntoView}
+            onBlur={scrollTitleBlur}
+          />
+        </View>
 
         <TouchableOpacity style={[styles.secondaryBtn, styles.spacingTop]} onPress={pickImages} activeOpacity={0.85}>
           <Ionicons name="images-outline" size={18} color="#0f172a" />
@@ -444,6 +471,46 @@ export default function AiVideoStudioScreen() {
           </ScrollView>
         ) : null}
 
+        <Text style={[styles.label, styles.spacingTop]}>İlan anahtar kelimeleri</Text>
+        <Text style={styles.fieldHint}>
+          Emlak ilanını tanımlayan kelimeleri girin. AI bu kelimelerden seslendirme metnini oluşturur.
+        </Text>
+        <View ref={keywordsInputWrapRef} collapsable={false}>
+          <KeywordPillInput
+            keywords={keywords}
+            onChange={setKeywords}
+            placeholder="deniz manzarası, 3+1, merkezi konum"
+            onFocus={scrollKeywordsIntoView}
+            onBlur={scrollKeywordsBlur}
+          />
+        </View>
+
+        {hasKeywords ? (
+          <>
+            <Text style={[styles.label, styles.spacingTop]}>Video metni</Text>
+            <Text style={styles.fieldHint}>
+              Metin Hazırla ile AI metni oluşturur; isterseniz kendiniz de yazabilirsiniz.
+            </Text>
+            <View ref={videoTextInputWrapRef} collapsable={false}>
+              <TextInput
+                value={videoText}
+                onChangeText={onVideoTextChange}
+                style={[styles.input, styles.textarea]}
+                maxLength={MAX_TEXT_CHARS}
+                multiline
+                textAlignVertical="top"
+                placeholder="Metin Hazırla ile oluşturulacak veya buraya yazın."
+                placeholderTextColor="#94a3b8"
+                onFocus={scrollVideoTextIntoView}
+                onBlur={scrollVideoTextBlur}
+              />
+              <Text style={styles.counter}>
+                {videoText.length}/{MAX_TEXT_CHARS} karakter
+              </Text>
+            </View>
+          </>
+        ) : null}
+
         <View style={styles.buttonRow}>
           <TouchableOpacity
             style={[styles.primaryBtn, !canPrepareText && styles.btnDisabled]}
@@ -453,34 +520,18 @@ export default function AiVideoStudioScreen() {
             <Ionicons name="sparkles-outline" size={18} color="#fff" />
             <Text style={styles.primaryBtnText}>{submitting ? "Metin hazırlanıyor..." : "Metin Hazırla"}</Text>
           </TouchableOpacity>
+          {canCreateVideo ? (
+            <TouchableOpacity
+              style={[styles.primaryBtn, styles.createVideoBtn, confirming && styles.btnDisabled]}
+              onPress={onCreateVideo}
+              disabled={confirming}
+            >
+              <Ionicons name="film-outline" size={18} color="#fff" />
+              <Text style={styles.primaryBtnText}>{confirming ? "Başlatılıyor..." : "Video Oluştur"}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
-
-      {scriptDraft ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Script önizleme</Text>
-          <TextInput
-            value={scriptDraft.full_narration || ""}
-            onChangeText={(value) => setScriptDraft((prev) => (prev ? { ...prev, full_narration: value } : prev))}
-            style={[styles.input, styles.textarea]}
-            maxLength={MAX_TEXT_CHARS}
-            multiline
-            textAlignVertical="top"
-            placeholderTextColor="#94a3b8"
-          />
-          <Text style={styles.counter}>
-            {(scriptDraft.full_narration || "").length}/{MAX_TEXT_CHARS} karakter
-          </Text>
-          <TouchableOpacity
-            style={[styles.primaryBtn, confirming && styles.btnDisabled, styles.spacingTop]}
-            onPress={onCreateVideo}
-            disabled={confirming}
-          >
-            <Ionicons name="film-outline" size={18} color="#fff" />
-            <Text style={styles.primaryBtnText}>{confirming ? "Başlatılıyor..." : "Video Oluştur"}</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
 
       {currentJob && currentJob.status === "processing" ? (
         <View style={styles.card}>
@@ -590,14 +641,8 @@ export default function AiVideoStudioScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor="#1e293b" />
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel="Geri">
-          <Ionicons name="arrow-back" size={18} color="#f8fafc" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>AI Video Oluşturucu</Text>
-        <View style={styles.headerBtn} />
-      </View>
+      <AppStatusBar />
+      <MobileAiScreenHeader title="AI Video Oluşturucu" onBack={() => router.back()} />
 
       <View style={styles.tabBar}>
         <TouchableOpacity
@@ -620,7 +665,8 @@ export default function AiVideoStudioScreen() {
         </View>
       ) : (
         <KeyboardAwareScrollScreen
-          headerHeight={63}
+          ref={scrollRef}
+          headerHeight={AI_VIDEO_STUDIO_HEADER_CHROME}
           backgroundColor={COLORS.pageBg}
           style={styles.content}
           contentContainerStyle={[styles.contentInner, { paddingBottom: 28 + insets.bottom }]}
@@ -628,33 +674,23 @@ export default function AiVideoStudioScreen() {
           {activeTab === "create" ? renderCreateTab() : renderVideosTab()}
         </KeyboardAwareScrollScreen>
       )}
+
+      <AiVideoStudioPurchaseModal
+        visible={purchaseModalVisible}
+        onClose={() => setPurchaseModalVisible(false)}
+        quote={quote}
+        jobTitle={title}
+        jobId={prepareJobId}
+        initialBalance={balance}
+        onBalanceChange={setBalance}
+        onPurchaseSuccess={runConfirm}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#1e293b" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#1e293b",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 3,
-    borderBottomColor: "#3b82f6",
-  },
-  headerBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 20, fontWeight: "bold", color: "#fff" },
   tabBar: {
     flexDirection: "row",
     backgroundColor: COLORS.cardBg,
@@ -714,6 +750,7 @@ const styles = StyleSheet.create({
   balanceLine: { marginTop: 8, color: "#0f172a", fontWeight: "800" },
   quoteLine: { marginTop: 6, color: "#475569", fontSize: 12, lineHeight: 18 },
   label: { marginTop: 12, marginBottom: 6, color: "#475569", fontWeight: "800", fontSize: 12 },
+  fieldHint: { marginBottom: 6, color: "#64748b", lineHeight: 18, fontSize: 13 },
   spacingTop: { marginTop: 12 },
   input: {
     borderWidth: 1,
@@ -767,6 +804,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryBtnText: { color: "#fff", fontWeight: "900" },
+  createVideoBtn: { backgroundColor: "#0f766e" },
   ghostBtn: {
     height: 44,
     borderRadius: 12,

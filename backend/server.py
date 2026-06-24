@@ -88,6 +88,12 @@ class TextQueryRequest(BaseModel):
 class ImageQueryExtractRequest(BaseModel):
     image: str
 
+class VoiceRegistrationFieldExtractRequest(BaseModel):
+    field: str
+    audio: str
+    mimeType: str = "audio/m4a"
+    context: Dict[str, Any] = Field(default_factory=dict)
+
 class ImageToTextRequest(BaseModel):
     image: str  # Base64 encoded image
     mimeType: str  # image/jpeg, image/png, etc.
@@ -453,6 +459,53 @@ async def text_query_extract(request: TextQueryRequest):
             status_code=500,
             detail=f"Beklenmeyen hata: {str(e)}"
         )
+
+
+@api_router.post("/voice-registration-field-extract")
+async def voice_registration_field_extract(request: VoiceRegistrationFieldExtractRequest):
+    """Django POST /api/voice_registration_field_extract/ proxy."""
+    try:
+        django_url = os.environ.get("DJANGO_API_URL", "http://127.0.0.1:7000")
+        import requests
+
+        response = requests.post(
+            f"{django_url}/api/voice_registration_field_extract/",
+            json={
+                "field": request.field,
+                "audio": request.audio,
+                "mimeType": request.mimeType,
+                "context": request.context,
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=60,
+        )
+
+        if response.status_code != 200:
+            logger.error(
+                "Django voice registration API hatası: %s - %s",
+                response.status_code,
+                response.text[:300],
+            )
+            try:
+                return response.json()
+            except Exception:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Django API hatası: {response.text[:200]}",
+                )
+
+        return response.json()
+    except HTTPException:
+        raise
+    except requests.exceptions.ConnectionError as e:
+        logger.error("Django bağlantı hatası (voice registration): %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Django backend'e bağlanılamadı.",
+        )
+    except Exception as e:
+        logger.error("Voice registration extract hatası: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @api_router.post("/image-query-extract")

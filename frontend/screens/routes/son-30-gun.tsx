@@ -53,6 +53,15 @@ import { API_URL } from '../../config/api';
 import { getPublicVitrinListings } from '../../services/vitrinSearchService';
 import type { VitrinListingItem, VitrinListingSearchParams } from '../../src/types/vitrin';
 import { isLandCategoryFiltersForListing, mapPortalQueryTypeToListingCategory } from '../../src/utils/portalListingCategory';
+import {
+  fetchAranacaklarList,
+  fetchAranacaklarPortalFilters,
+  type AranacaklarListRow,
+} from '../../services/aranacaklarService';
+import {
+  mapPortalFiltersToMobileDraft,
+  type Son30MobileDraftPatch,
+} from '../../src/utils/aranacaklarPortalFilters';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../../services/authService';
 
@@ -1178,6 +1187,26 @@ function QueryCardStarRow({ metaPct }: { metaPct: number | null | undefined }) {
   );
 }
 
+function formatQueryCardLocation(item: PortalQueryListItem): string {
+  const clean = (v: unknown) => {
+    const s = String(v ?? '').trim();
+    return s && s !== '—' ? s : '';
+  };
+  const city = clean(item.city_name);
+  const town = clean(item.town_name);
+  const quarter = clean(item.quarter_name);
+  const title = clean(item.title);
+
+  const fromFields = [city, town, quarter].filter(Boolean);
+  if (fromFields.length >= 2) return fromFields.join(' / ');
+  if (title) {
+    if (city && !title.includes(city)) return `${city} / ${title}`;
+    return title;
+  }
+  if (fromFields.length) return fromFields.join(' / ');
+  return '—';
+}
+
 function QueryCard({ item, onPress }: { item: PortalQueryListItem; onPress: () => void }) {
   const typeLabel = QUERY_TYPE_LABELS[(item.query_type || '').toLowerCase()] || item.query_type || 'Arsa';
   const adaParsel = `${item.ada || '0'}/${item.parsel || '0'}`;
@@ -1220,8 +1249,8 @@ function QueryCard({ item, onPress }: { item: PortalQueryListItem; onPress: () =
           </View>
         </View>
         <View style={cardStyles.topRow}>
-          <Text style={cardStyles.location} numberOfLines={1}>
-            {item.quarter_name || item.title || '—'}
+          <Text style={cardStyles.location} numberOfLines={2}>
+            {formatQueryCardLocation(item)}
           </Text>
         </View>
         <View style={cardStyles.adaParselNavRow}>
@@ -1730,6 +1759,12 @@ export default function Son30GunScreen() {
   const [draftListingHisseli, setDraftListingHisseli] = useState(false);
   const [draftMaxNavCityM, setDraftMaxNavCityM] = useState('');
   const [draftMaxNavTownM, setDraftMaxNavTownM] = useState('');
+  const [draftAranacaklarContactId, setDraftAranacaklarContactId] = useState('');
+  const [draftAranacaklarContactName, setDraftAranacaklarContactName] = useState('');
+  const [appliedAranacaklarContactId, setAppliedAranacaklarContactId] = useState('');
+  const [appliedAranacaklarContactName, setAppliedAranacaklarContactName] = useState('');
+  const [aranacaklarContacts, setAranacaklarContacts] = useState<AranacaklarListRow[]>([]);
+  const [aranacaklarContactsLoading, setAranacaklarContactsLoading] = useState(false);
   const [categoryRootNodes, setCategoryRootNodes] = useState<PublicListingCategoryNode[]>([]);
   const [categoryChildrenByRoot, setCategoryChildrenByRoot] = useState<Record<string, PublicListingCategoryNode[]>>({});
   const [categoryTreeLoading, setCategoryTreeLoading] = useState(false);
@@ -1742,6 +1777,7 @@ export default function Son30GunScreen() {
   const activeFilterCount = useMemo(() => {
     if (listMode === 'ilanlar') {
       let c = 0;
+      if (appliedAranacaklarContactId) c++;
       if (effectiveAppliedListingFilters.city_id != null) c++;
       if (effectiveAppliedListingFilters.district_id != null) c++;
       if (effectiveAppliedListingFilters.quarter_id != null) c++;
@@ -1771,6 +1807,7 @@ export default function Son30GunScreen() {
       return c;
     }
     let c = 0;
+    if (appliedAranacaklarContactId) c++;
     if (appliedFilters.city_id) c++;
     if (appliedFilters.town_id) c++;
     if (appliedFilters.quarter_id) c++;
@@ -1800,7 +1837,7 @@ export default function Son30GunScreen() {
     if (appliedFilters.max_nav_city_m != null) c++;
     if (appliedFilters.max_nav_town_m != null) c++;
     return c;
-  }, [listMode, appliedFilters, appliedListingFilters, effectiveAppliedListingFilters]);
+  }, [listMode, appliedFilters, appliedListingFilters, effectiveAppliedListingFilters, appliedAranacaklarContactId]);
 
   const activeSortBy = useMemo(
     () => (listMode === 'ilanlar' ? effectiveAppliedListingFilters.sort_by : appliedFilters.sort_by) || '',
@@ -2039,11 +2076,12 @@ export default function Son30GunScreen() {
   }, [draftCity, draftTown, locationsCountsFor]);
 
   useEffect(() => {
-    if (listMode !== 'ilanlar') {
+    if (listMode !== 'ilanlar' && listMode !== 'proSorgular') {
       setScopeTowns([]);
       return;
     }
-    const cid = effectiveAppliedListingFilters.city_id;
+    const cid =
+      listMode === 'ilanlar' ? effectiveAppliedListingFilters.city_id : appliedFilters.city_id;
     if (cid == null) {
       setScopeTowns([]);
       return;
@@ -2052,14 +2090,18 @@ export default function Son30GunScreen() {
     (async () => {
       try {
         const res = await getPortalLocations(cid, undefined, {
-          countsFor: 'listings',
-          categoryMain: effectiveAppliedListingFilters.category_main,
-          categoryLeafId: effectiveAppliedListingFilters.category_leaf_id,
-          listingType: effectiveAppliedListingFilters.listing_type,
+          countsFor: listMode === 'ilanlar' ? 'listings' : locationsCountsFor,
+          ...(listMode === 'ilanlar'
+            ? {
+                categoryMain: effectiveAppliedListingFilters.category_main,
+                categoryLeafId: effectiveAppliedListingFilters.category_leaf_id,
+                listingType: effectiveAppliedListingFilters.listing_type,
+              }
+            : {}),
         });
         if (!cancelled && res.ok && res.data?.towns) setScopeTowns(res.data.towns);
       } catch (e) {
-        console.warn('[Son30Gun] vitrin scope ilçe hata:', e);
+        console.warn('[Son30Gun] scope ilçe hata:', e);
       }
     })();
     return () => {
@@ -2067,6 +2109,8 @@ export default function Son30GunScreen() {
     };
   }, [
     listMode,
+    locationsCountsFor,
+    appliedFilters.city_id,
     effectiveAppliedListingFilters.city_id,
     effectiveAppliedListingFilters.category_main,
     effectiveAppliedListingFilters.category_leaf_id,
@@ -2074,12 +2118,14 @@ export default function Son30GunScreen() {
   ]);
 
   useEffect(() => {
-    if (listMode !== 'ilanlar') {
+    if (listMode !== 'ilanlar' && listMode !== 'proSorgular') {
       setScopeQuarters([]);
       return;
     }
-    const cid = effectiveAppliedListingFilters.city_id;
-    const tid = effectiveAppliedListingFilters.district_id;
+    const cid =
+      listMode === 'ilanlar' ? effectiveAppliedListingFilters.city_id : appliedFilters.city_id;
+    const tid =
+      listMode === 'ilanlar' ? effectiveAppliedListingFilters.district_id : appliedFilters.town_id;
     if (cid == null || tid == null) {
       setScopeQuarters([]);
       return;
@@ -2088,14 +2134,18 @@ export default function Son30GunScreen() {
     (async () => {
       try {
         const res = await getPortalLocations(cid, tid, {
-          countsFor: 'listings',
-          categoryMain: effectiveAppliedListingFilters.category_main,
-          categoryLeafId: effectiveAppliedListingFilters.category_leaf_id,
-          listingType: effectiveAppliedListingFilters.listing_type,
+          countsFor: listMode === 'ilanlar' ? 'listings' : locationsCountsFor,
+          ...(listMode === 'ilanlar'
+            ? {
+                categoryMain: effectiveAppliedListingFilters.category_main,
+                categoryLeafId: effectiveAppliedListingFilters.category_leaf_id,
+                listingType: effectiveAppliedListingFilters.listing_type,
+              }
+            : {}),
         });
         if (!cancelled && res.ok && res.data?.quarters) setScopeQuarters(res.data.quarters);
       } catch (e) {
-        console.warn('[Son30Gun] vitrin scope mahalle hata:', e);
+        console.warn('[Son30Gun] scope mahalle hata:', e);
       }
     })();
     return () => {
@@ -2103,6 +2153,9 @@ export default function Son30GunScreen() {
     };
   }, [
     listMode,
+    locationsCountsFor,
+    appliedFilters.city_id,
+    appliedFilters.town_id,
     effectiveAppliedListingFilters.city_id,
     effectiveAppliedListingFilters.district_id,
     effectiveAppliedListingFilters.category_main,
@@ -2185,6 +2238,8 @@ export default function Son30GunScreen() {
       setDraftMaxNavCityM(numOrEmpty(appliedFilters.max_nav_city_m));
       setDraftMaxNavTownM(numOrEmpty(appliedFilters.max_nav_town_m));
       setDraftListingAttrJson(String(appliedListingFilters.listing_attr || '').trim());
+      setDraftAranacaklarContactId(appliedAranacaklarContactId);
+      setDraftAranacaklarContactName(appliedAranacaklarContactName);
     } else {
       const nextMain = appliedListingFilters.category_main || '';
       setDraftCity(appliedListingFilters.city_id ?? null);
@@ -2217,8 +2272,10 @@ export default function Son30GunScreen() {
       setDraftMaxNavCityM(numOrEmpty(appliedListingFilters.max_nav_city_m));
       setDraftMaxNavTownM(numOrEmpty(appliedListingFilters.max_nav_town_m));
       setDraftListingAttrJson(String(appliedListingFilters.listing_attr || '').trim());
+      setDraftAranacaklarContactId(appliedAranacaklarContactId);
+      setDraftAranacaklarContactName(appliedAranacaklarContactName);
     }
-  }, [filterSheetVisible, sortSheetVisible, listMode, appliedFilters, appliedListingFilters]);
+  }, [filterSheetVisible, sortSheetVisible, listMode, appliedFilters, appliedListingFilters, appliedAranacaklarContactId, appliedAranacaklarContactName]);
 
   // ── Load list ──
 
@@ -2463,6 +2520,8 @@ export default function Son30GunScreen() {
     setAppliedFilters({});
     setAppliedListingFilters(next);
     setMineOnly(false);
+    setAppliedAranacaklarContactId('');
+    setAppliedAranacaklarContactName('');
   }, [
     routeName,
     routeParams.categoryMain,
@@ -2547,6 +2606,108 @@ export default function Son30GunScreen() {
     },
     [router],
   );
+
+  const applyMobileDraftPatch = useCallback((patch: Son30MobileDraftPatch) => {
+    if (patch.cityId !== undefined) setDraftCity(patch.cityId);
+    if (patch.townId !== undefined) setDraftTown(patch.townId);
+    if (patch.quarterId !== undefined) setDraftQuarter(patch.quarterId);
+    if (patch.categoryMain !== undefined) setDraftCategoryMain(patch.categoryMain);
+    if (patch.categoryTypeIds !== undefined) setDraftCategoryTypeIds(patch.categoryTypeIds);
+    if (patch.categoryLeafIds !== undefined) setDraftCategoryLeafIds(patch.categoryLeafIds);
+    if (patch.expandedCategoryRootId !== undefined) setExpandedCategoryRootId(patch.expandedCategoryRootId);
+    if (patch.hisseli !== undefined) setDraftHisseli(patch.hisseli);
+    if (patch.unitPriceMin !== undefined) setDraftUnitPriceMin(patch.unitPriceMin);
+    if (patch.unitPriceMax !== undefined) setDraftUnitPriceMax(patch.unitPriceMax);
+    if (patch.totalPriceMin !== undefined) setDraftTotalPriceMin(patch.totalPriceMin);
+    if (patch.totalPriceMax !== undefined) setDraftTotalPriceMax(patch.totalPriceMax);
+    if (patch.proExpertAnswered !== undefined) setDraftProExpertAnswered(patch.proExpertAnswered);
+    if (patch.listingExpertAnswered !== undefined) setDraftListingExpertAnswered(patch.listingExpertAnswered);
+    if (patch.proPriceAdvantageOnly !== undefined) setDraftProPriceAdvantageOnly(patch.proPriceAdvantageOnly);
+    if (patch.listingPriceAdvantageOnly !== undefined) setDraftListingPriceAdvantageOnly(patch.listingPriceAdvantageOnly);
+    if (patch.areaM2Min !== undefined) setDraftAreaM2Min(patch.areaM2Min);
+    if (patch.areaM2Max !== undefined) setDraftAreaM2Max(patch.areaM2Max);
+    if (patch.proRoadMinM !== undefined) setDraftProRoadMinM(patch.proRoadMinM);
+    if (patch.proRoadMaxM !== undefined) setDraftProRoadMaxM(patch.proRoadMaxM);
+    if (patch.gmMin !== undefined) setDraftGmMin(patch.gmMin);
+    if (patch.gmMax !== undefined) setDraftGmMax(patch.gmMax);
+    if (patch.metaMax !== undefined) setDraftMetaMax(patch.metaMax);
+    if (patch.puanMin !== undefined) setDraftPuanMin(patch.puanMin);
+    if (patch.puanMax !== undefined) setDraftPuanMax(patch.puanMax);
+    if (patch.proHasRoad !== undefined) setDraftProHasRoad(patch.proHasRoad);
+    if (patch.proHasWater !== undefined) setDraftProHasWater(patch.proHasWater);
+    if (patch.proHasPower !== undefined) setDraftProHasPower(patch.proHasPower);
+    if (patch.listingAreaMin !== undefined) setDraftListingAreaMin(patch.listingAreaMin);
+    if (patch.listingAreaMax !== undefined) setDraftListingAreaMax(patch.listingAreaMax);
+    if (patch.listingRoadMin !== undefined) setDraftListingRoadMin(patch.listingRoadMin);
+    if (patch.listingRoadMax !== undefined) setDraftListingRoadMax(patch.listingRoadMax);
+    if (patch.listingGmMin !== undefined) setDraftListingGmMin(patch.listingGmMin);
+    if (patch.listingGmMax !== undefined) setDraftListingGmMax(patch.listingGmMax);
+    if (patch.listingPuanMin !== undefined) setDraftListingPuanMin(patch.listingPuanMin);
+    if (patch.listingPuanMax !== undefined) setDraftListingPuanMax(patch.listingPuanMax);
+    if (patch.listingHasRoad !== undefined) setDraftListingHasRoad(patch.listingHasRoad);
+    if (patch.listingHasWater !== undefined) setDraftListingHasWater(patch.listingHasWater);
+    if (patch.listingHasPower !== undefined) setDraftListingHasPower(patch.listingHasPower);
+    if (patch.listingUnitPriceMin !== undefined) setDraftListingUnitPriceMin(patch.listingUnitPriceMin);
+    if (patch.listingUnitPriceMax !== undefined) setDraftListingUnitPriceMax(patch.listingUnitPriceMax);
+    if (patch.listingMetaMax !== undefined) setDraftListingMetaMax(patch.listingMetaMax);
+    if (patch.listingHisseli !== undefined) setDraftListingHisseli(patch.listingHisseli);
+    if (patch.maxNavCityM !== undefined) setDraftMaxNavCityM(patch.maxNavCityM);
+    if (patch.maxNavTownM !== undefined) setDraftMaxNavTownM(patch.maxNavTownM);
+    if (patch.listingAttrJson !== undefined) setDraftListingAttrJson(patch.listingAttrJson);
+    if (patch.sortBy !== undefined) setDraftSortBy(patch.sortBy);
+    if (patch.sortDir !== undefined) setDraftSortDir(patch.sortDir);
+  }, []);
+
+  const aranacaklarContactPickerItems = useMemo((): FilterPickerItem[] => {
+    const rows = aranacaklarContacts.map((row) => ({
+      value: row.contact.contact_id,
+      label: row.contact.full_name || row.contact.contact_id,
+    }));
+    return [{ value: '', label: 'Kayıtlı kişi seçin…' }, ...rows];
+  }, [aranacaklarContacts]);
+
+  useEffect(() => {
+    if (!filterSheetVisible || !isAuthenticated) return;
+    let cancelled = false;
+    setAranacaklarContactsLoading(true);
+    void fetchAranacaklarList().then((res) => {
+      if (cancelled) return;
+      setAranacaklarContactsLoading(false);
+      if (res.ok && Array.isArray(res.data?.results)) {
+        setAranacaklarContacts(res.data.results);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filterSheetVisible, isAuthenticated]);
+
+  const onSelectAranacaklarContact = useCallback(
+    async (value: string | number | null) => {
+      const contactId = value ? String(value) : '';
+      if (!contactId) {
+        setDraftAranacaklarContactId('');
+        setDraftAranacaklarContactName('');
+        return;
+      }
+      const row = aranacaklarContacts.find((r) => r.contact.contact_id === contactId);
+      const name = row?.contact.full_name || contactId;
+      setDraftAranacaklarContactId(contactId);
+      setDraftAranacaklarContactName(name);
+      const res = await fetchAranacaklarPortalFilters(contactId);
+      if (res.ok && res.data?.filters) {
+        applyMobileDraftPatch(mapPortalFiltersToMobileDraft(res.data.filters, listMode));
+      }
+    },
+    [aranacaklarContacts, listMode, applyMobileDraftPatch],
+  );
+
+  const clearAppliedAranacaklarContact = useCallback(() => {
+    setDraftAranacaklarContactId('');
+    setDraftAranacaklarContactName('');
+    setAppliedAranacaklarContactId('');
+    setAppliedAranacaklarContactName('');
+  }, []);
 
   // ── Apply filters from bottom sheet ──
 
@@ -2695,6 +2856,8 @@ export default function Son30GunScreen() {
         return next;
       });
     }
+    setAppliedAranacaklarContactId(draftAranacaklarContactId);
+    setAppliedAranacaklarContactName(draftAranacaklarContactName);
     setFilterSheetVisible(false);
   }, [
     listMode,
@@ -2747,6 +2910,8 @@ export default function Son30GunScreen() {
     draftMaxNavCityM,
     draftMaxNavTownM,
     draftListingAttrJson,
+    draftAranacaklarContactId,
+    draftAranacaklarContactName,
     appliedFilters.sort_by,
     appliedFilters.sort_dir,
     appliedListingFilters.sort_by,
@@ -2859,6 +3024,10 @@ export default function Son30GunScreen() {
     setDraftMaxNavCityM('');
     setDraftMaxNavTownM('');
     setDraftListingAttrJson('');
+    setDraftAranacaklarContactId('');
+    setDraftAranacaklarContactName('');
+    setAppliedAranacaklarContactId('');
+    setAppliedAranacaklarContactName('');
     if (listMode === 'ilanlar') {
       setAppliedListingFilters((prev) => {
         const next: VitrinListingSearchParams = {};
@@ -2898,6 +3067,32 @@ export default function Son30GunScreen() {
       const next: VitrinListingSearchParams = { ...prev };
       next.city_id = cityId;
       next.district_id = districtId;
+      delete next.quarter_id;
+      return next;
+    });
+    setDraftCity(cityId);
+    setDraftTown(districtId);
+    setDraftQuarter(null);
+  }, []);
+
+  const handleQueryScopeCity = useCallback((cityId: number) => {
+    setAppliedFilters((prev) => {
+      const next: PortalQueryListParams = { ...prev };
+      next.city_id = cityId;
+      delete next.town_id;
+      delete next.quarter_id;
+      return next;
+    });
+    setDraftCity(cityId);
+    setDraftTown(null);
+    setDraftQuarter(null);
+  }, []);
+
+  const handleQueryScopeDistrict = useCallback((cityId: number, districtId: number) => {
+    setAppliedFilters((prev) => {
+      const next: PortalQueryListParams = { ...prev };
+      next.city_id = cityId;
+      next.town_id = districtId;
       delete next.quarter_id;
       return next;
     });
@@ -2956,6 +3151,34 @@ export default function Son30GunScreen() {
     return null;
   }, [listMode, effectiveAppliedListingFilters, listingItems, cities, scopeTowns, scopeQuarters]);
 
+  const queryLocationScope = useMemo(() => {
+    if (listMode !== 'proSorgular') return null;
+    const af = appliedFilters || {};
+    if (af.city_id) {
+      const c = cities.find((x) => x.id === af.city_id);
+      const t = af.town_id != null ? scopeTowns.find((x) => x.id === af.town_id) : undefined;
+      const q = af.quarter_id != null ? scopeQuarters.find((x) => x.id === af.quarter_id) : undefined;
+      return {
+        cityName: c?.name ?? '',
+        districtName: t?.name ?? '',
+        quarterName: q?.name ?? '',
+        cityId: af.city_id,
+        districtId: af.town_id ?? null,
+        quarterId: af.quarter_id ?? null,
+      };
+    }
+    const first = items[0];
+    if (!first) return null;
+    return {
+      cityName: String(first.city_name ?? '').trim(),
+      districtName: String(first.town_name ?? '').trim(),
+      quarterName: String(first.quarter_name ?? '').trim(),
+      cityId: first.city_id,
+      districtId: first.town_id,
+      quarterId: first.quarter_id,
+    };
+  }, [listMode, appliedFilters, items, cities, scopeTowns, scopeQuarters]);
+
   // ── Render helpers ──
 
   const renderQueryItem = useCallback(
@@ -2981,6 +3204,12 @@ export default function Son30GunScreen() {
     const scope = listingLocationScope;
     return !!(scope && (scope.cityName || scope.districtName || scope.quarterName) && !listingInitialLoad);
   }, [listMode, listingLocationScope, listingInitialLoad]);
+
+  const showQueryLocationScopeBar = useMemo(() => {
+    if (listMode !== 'proSorgular') return false;
+    const scope = queryLocationScope;
+    return !!(scope && (scope.cityName || scope.districtName || scope.quarterName) && !initialLoad);
+  }, [listMode, queryLocationScope, initialLoad]);
 
   const ListHeader = useMemo(() => {
     if (listMode === 'ilanlar') {
@@ -3120,6 +3349,18 @@ export default function Son30GunScreen() {
         </View>
       ) : null}
 
+      {appliedAranacaklarContactId ? (
+        <View style={styles.activeSummaryBar}>
+          <TouchableOpacity style={styles.activeSummaryChip} onPress={clearAppliedAranacaklarContact} activeOpacity={0.85}>
+            <Ionicons name="person-outline" size={14} color={COLORS.accentBlue} />
+            <Text style={styles.activeSummaryChipText}>
+              {appliedAranacaklarContactName || `Kişi ${appliedAranacaklarContactId}`}
+            </Text>
+            <Ionicons name="close" size={14} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {listMode === 'ilanlar' && showListingLocationScopeBar && listingLocationScope ? (
         <ListingLocationScopeBar
           cityName={listingLocationScope.cityName}
@@ -3129,6 +3370,18 @@ export default function Son30GunScreen() {
           districtId={listingLocationScope.districtId}
           onPressCity={handleListingScopeCity}
           onPressDistrict={handleListingScopeDistrict}
+        />
+      ) : null}
+
+      {listMode === 'proSorgular' && showQueryLocationScopeBar && queryLocationScope ? (
+        <ListingLocationScopeBar
+          cityName={queryLocationScope.cityName}
+          districtName={queryLocationScope.districtName}
+          quarterName={queryLocationScope.quarterName}
+          cityId={queryLocationScope.cityId}
+          districtId={queryLocationScope.districtId}
+          onPressCity={handleQueryScopeCity}
+          onPressDistrict={handleQueryScopeDistrict}
         />
       ) : null}
 
@@ -3180,6 +3433,24 @@ export default function Son30GunScreen() {
         </View>
 
         <BottomSheetScrollView style={styles.sheetScroll} contentContainerStyle={{ paddingBottom: 150 }} bounces={false} showsVerticalScrollIndicator={false}>
+          {isAuthenticated ? (
+            <>
+              <Text style={styles.sheetSectionTitle}>Müşteri Filtresi</Text>
+              <FilterPickerRow
+                label=""
+                items={aranacaklarContactPickerItems}
+                selectedValue={draftAranacaklarContactId || null}
+                onSelect={(v) => {
+                  void onSelectAranacaklarContact(v);
+                }}
+                loading={aranacaklarContactsLoading}
+              />
+              <Text style={styles.customerFilterHint}>
+                Kayıtlı kişi seçince talep filtreleri taslağa yüklenir; «Ara» ile listeyi güncelleyin.
+              </Text>
+            </>
+          ) : null}
+
           <Text style={styles.sheetSectionTitle}>Konum Seç</Text>
           <FilterPickerRow
             label=""
@@ -3707,6 +3978,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: COLORS.accentBlue,
+    flexShrink: 1,
+  },
+  customerFilterHint: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    lineHeight: 17,
+    marginBottom: 12,
+    paddingHorizontal: 2,
   },
 
   // List

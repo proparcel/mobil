@@ -109,6 +109,13 @@ Dokümanlar aşağıdaki klasör yapısında organize edilmiştir:
     - `aranacaklar_modulu.md` - Aranacaklar (rehber kişi, talep, not, takip; Django Mongo + REST API + mobil)
     - `keyboard_and_input_display.md` - Klavye ve TextInput gösterim standardı (tek KAV, scroll-into-view, sheet/modal; yapay zeka ve geliştirici referansı)
   - **modules/** - İzole mobil modül dokümanları (kolay kaldırılabilir)
+    - **akilli_ses/** - Akıllı Ses (ortak ses altyapısı, Sesli Sorgu referansı, Sesli Üyelik)
+      - `modul_overview.md` - Modül amacı, alt özellikler, klasör haritası
+      - `ortak_altyapi.md` - Recorder, animasyon, debug log
+      - `sesli_sorgu_referans.md` - Parsel Akıllı Sorgu → smart_query.md köprüsü
+      - `sesli_uyelik.md` - Sesli üyelik sihirbazı akışı
+      - `api_voice_registration.md` - voice_registration_field_extract API sözleşmesi
+      - `test_matrisi.md` - Cihaz test senaryoları
     - **vr_parcel/** - VR parsel görüntüleme (Basit Sorgu parseli + Unity AR kalibrasyon)
       - `modul_overview.md` - Modül amacı, klasör haritası, entegrasyon noktaları, feature flag
       - `kullanici_akisi.md` - Kullanıcı adımları ve uyarı metinleri
@@ -119,6 +126,8 @@ Dokümanlar aşağıdaki klasör yapısında organize edilmiştir:
       - `test_matrisi.md` - Fiziksel cihaz test matrisi
   - **components/** - Component dokümanları
     - `ada_parsel_form.md` - Ada/Parsel sorgu formu
+    - `smart_query.md` - Akıllı Sorgu (ses, metin, görsel; ana harita orb + ParcelSearchModal)
+    - `customer_type_feature_gates_mobile.md` - Akıllı Sorgu abonelik kapıları (customer_type / features.smart_query)
     - `parcel_modal.md` - Parsel detay modal'ı
     - `kenar_yol_cizimi_tam_dokuman.md` - Kenar/yol çizim mimarisi
     - `kenar_yol_cizimi_is_akisi_ve_sorunlar.md` - Çizim iş akışı ve sorunları

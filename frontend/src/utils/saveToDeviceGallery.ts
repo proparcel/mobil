@@ -34,11 +34,8 @@ export async function saveImageUrisToPhotoLibrary(uris: string[]): Promise<SaveT
       return { ok: false, savedCount: 0, error: "Medya kütüphanesi bu cihazda kullanılamıyor." };
     }
 
-    // Android 13+: granüler izin; bare RN'de app.config plugin manifest'i her zaman güncellemez — AndroidManifest'te READ_MEDIA_* var.
-    const permissionResult =
-      Platform.OS === "android"
-        ? await MediaLibrary.requestPermissionsAsync(true, ["photo"])
-        : await MediaLibrary.requestPermissionsAsync(true);
+    // Android: yalnizca yazma izni (READ_MEDIA_* yok). iOS: galeriye ekleme izni.
+    const permissionResult = await MediaLibrary.requestPermissionsAsync(true);
     const { status } = permissionResult;
     if (status !== "granted") {
       return {
@@ -67,4 +64,15 @@ export async function saveImageUrisToPhotoLibrary(uris: string[]): Promise<SaveT
     console.warn("[saveToDeviceGallery]", e);
     return { ok: false, savedCount: 0, error: msg || "Galeri kaydı başarısız." };
   }
+}
+
+/**
+ * Yerel video dosyasını (file://) sistem fotoğraf galerisine yazar.
+ */
+export async function saveVideoFileToPhotoLibrary(fileUri: string): Promise<SaveToGalleryResult> {
+  const path = normalizeFileUri(String(fileUri || "").trim());
+  if (!path.startsWith("file://")) {
+    return { ok: false, savedCount: 0, error: "Geçersiz video dosya yolu." };
+  }
+  return saveImageUrisToPhotoLibrary([path]);
 }

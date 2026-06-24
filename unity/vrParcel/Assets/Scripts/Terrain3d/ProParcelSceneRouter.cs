@@ -2,13 +2,11 @@ using System.Collections;
 using System.IO;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEngine.XR.ARFoundation;
-using ProParcel.VrParcel.Bridge;
 
 namespace ProParcel.Terrain3d
 {
     /// <summary>
-    /// DontDestroyOnLoad sahne yönlendirici — boot scene VR kalır, terrain runtime LoadScene.
+    /// DontDestroyOnLoad sahne yönlendirici — terrain runtime LoadScene.
     /// RN ile iletişim: UnitySendMessage + cache trigger dosyasi (pp_terrain_pending.trigger).
     /// </summary>
     public class ProParcelSceneRouter : MonoBehaviour
@@ -16,7 +14,6 @@ namespace ProParcel.Terrain3d
         public static ProParcelSceneRouter Instance { get; private set; }
 
         private const string TerrainSceneName = "ParcelTerrain3dScene";
-        private const string VrSceneName = "VrParcelScene";
         private const string TriggerFileName = "pp_terrain_pending.trigger";
 
         private string pendingTerrainJson;
@@ -104,56 +101,19 @@ namespace ProParcel.Terrain3d
             }
         }
 
-        private void Start()
+        public void LoadTerrainAndOpen(string payloadRefOrJson)
         {
-            if (!string.IsNullOrEmpty(TerrainPayloadStore.PendingJson))
+            if (string.IsNullOrWhiteSpace(payloadRefOrJson))
             {
-                LoadTerrainAndOpen(TerrainPayloadStore.PendingJson);
-                TerrainPayloadStore.PendingJson = null;
-            }
-        }
-
-        /** UnitySendMessage entry — jsonOrFileRef veya @file:/path/to.json */
-        public void LoadTerrainAndOpen(string jsonOrFileRef)
-        {
-            Terrain3dAndroidLog.Info("[ProParcelSceneRouter] LoadTerrainAndOpen called ref=" +
-                (jsonOrFileRef != null && jsonOrFileRef.Length > 80
-                    ? jsonOrFileRef.Substring(0, 80) + "..."
-                    : jsonOrFileRef));
-
-            var resolved = TerrainPayloadIO.Resolve(jsonOrFileRef);
-            if (string.IsNullOrEmpty(resolved))
-            {
-                Terrain3dAndroidLog.Error("[ProParcelSceneRouter] Bos terrain payload");
-                Terrain3dErrorUi.Show("Terrain dosyasi okunamadi.\n@file referansini kontrol edin.");
+                Terrain3dErrorUi.Show("Terrain payload bos.");
                 return;
             }
 
-            Terrain3dAndroidLog.Info("[ProParcelSceneRouter] resolved jsonLength=" + resolved.Length);
-            pendingTerrainJson = resolved;
-
-            if (Instance == null || !isActiveAndEnabled)
+            pendingTerrainJson = payloadRefOrJson;
+            if (!terrainLoadRunning)
             {
-                TerrainPayloadStore.PendingJson = resolved;
-                Terrain3dAndroidLog.Error("[ProParcelSceneRouter] Router hazir degil — kuyruk");
-                return;
+                StartCoroutine(LoadTerrainRoutine());
             }
-
-            if (terrainLoadRunning)
-            {
-                Terrain3dAndroidLog.Info("[ProParcelSceneRouter] Yukleme suruyor — payload guncellendi");
-                return;
-            }
-
-            StartCoroutine(LoadTerrainRoutine());
-        }
-
-        public void LoadVrScene(string _unused = "")
-        {
-            terrainLoadRunning = false;
-            Terrain3dErrorUi.Hide();
-            if (SceneManager.GetActiveScene().name == VrSceneName) return;
-            SceneManager.LoadScene(VrSceneName);
         }
 
         private IEnumerator LoadTerrainRoutine()
@@ -161,11 +121,6 @@ namespace ProParcel.Terrain3d
             terrainLoadRunning = true;
             Terrain3dAndroidLog.Info("[ProParcelSceneRouter] LoadTerrainRoutine basladi activeScene=" +
                 SceneManager.GetActiveScene().name);
-
-            if (VrParcelBridge.Instance != null)
-            {
-                VrParcelBridge.Instance.OnCloseSession();
-            }
 
             if (SceneManager.GetActiveScene().name != TerrainSceneName)
             {
@@ -176,7 +131,7 @@ namespace ProParcel.Terrain3d
                 if (!canLoad)
                 {
                     var msg = "Sahne build'de yok: " + TerrainSceneName +
-                        "\nBuild Settings > Scenes In Build index 1 olmali.";
+                        "\nBuild Settings > Scenes In Build index 0 olmali.";
                     Terrain3dAndroidLog.Error("[ProParcelSceneRouter] " + msg);
                     Terrain3dErrorUi.Show(msg);
                     terrainLoadRunning = false;
@@ -201,12 +156,10 @@ namespace ProParcel.Terrain3d
                     SceneManager.GetActiveScene().name);
             }
 
-            DisableArFeed();
-
             yield return null;
             yield return null;
 
-            var bridge = FindObjectOfType<ParcelTerrain3dBridge>();
+            var bridge = FindAnyObjectByType<ParcelTerrain3dBridge>();
             if (bridge != null && !string.IsNullOrEmpty(pendingTerrainJson))
             {
                 Terrain3dAndroidLog.Info("[ProParcelSceneRouter] ParcelTerrain3dBridge bulundu, OnOpenViewer");
@@ -222,18 +175,6 @@ namespace ProParcel.Terrain3d
             }
 
             terrainLoadRunning = false;
-        }
-
-        private static void DisableArFeed()
-        {
-            var session = Object.FindObjectOfType<ARSession>(true);
-            if (session != null) session.enabled = false;
-
-            var cameraManager = Object.FindObjectOfType<ARCameraManager>(true);
-            if (cameraManager != null) cameraManager.enabled = false;
-
-            var background = Object.FindObjectOfType<ARCameraBackground>(true);
-            if (background != null) background.enabled = false;
         }
     }
 }

@@ -8,23 +8,25 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  PermissionsAndroid,
   Linking,
   RefreshControl,
   TextInput,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import Contacts from 'react-native-contacts';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { normalizePhoneToE164TR } from '../../src/utils/phoneE164';
 import { useRouter } from '../../src/hooks/useNavigation';
 import { createAranacaklarContact } from '../../services/aranacaklarService';
+import {
+  ERR_CONTACTS_PERMISSION,
+  getPhonebookMemoryCache,
+  hasUsablePhonebookCache,
+  loadPhonebookContacts,
+  type PhonebookRow,
+} from '../../services/phonebookCacheService';
 import AranacaklarScreenShell from '../../components/app/AranacaklarScreenShell';
 import { KeyboardAwareBody } from '../../components/app/KeyboardAwareBody';
 import { SCROLL_VIEW_KEYBOARD_PROPS } from '../../src/keyboard';
+import { normalizePhoneToE164TR } from '../../src/utils/phoneE164';
 import { CONTACT_SIDE_OPTIONS, type ContactSide } from '../../src/utils/aranacaklarContactSide';
-
-type Row = { recordID: string; displayName: string; phoneNumber: string };
 
 const COLORS = {
   textPrimary: '#0f172a',
@@ -35,84 +37,13 @@ const COLORS = {
   pageBg: '#f8fafc',
 } as const;
 
-const ERR_CONTACTS_PERMISSION = 'Rehber izni gerekli.';
-
-/** Sadece rehber okuma — native takılırsa üst sınır */
-const READ_CONTACTS_MS = 120_000;
-
-/** Bellek + AsyncStorage; süre sınırı yok. Güncel rehber için liste aşağı çekilir. */
-const PHONEBOOK_STORAGE_KEY = 'pp_phonebook_cache_v1';
-
-type PhonebookCache = { rows: Row[]; loadedAt: number };
-
-let phonebookCache: PhonebookCache | null = null;
-
-async function loadPhonebookFromDisk(): Promise<PhonebookCache | null> {
-  try {
-    const raw = await AsyncStorage.getItem(PHONEBOOK_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { rows?: Row[]; loadedAt?: number };
-    if (!Array.isArray(parsed.rows) || parsed.rows.length === 0) return null;
-    return {
-      rows: parsed.rows,
-      loadedAt: typeof parsed.loadedAt === 'number' ? parsed.loadedAt : Date.now(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function savePhonebookToDisk(rows: Row[]): Promise<void> {
-  try {
-    await AsyncStorage.setItem(
-      PHONEBOOK_STORAGE_KEY,
-      JSON.stringify({ v: 1, rows, loadedAt: Date.now() })
-    );
-  } catch {
-    /* depolama dolu / izin — sessiz */
-  }
-}
-
-function hasUsableMemoryCache(): boolean {
-  return Boolean(phonebookCache && phonebookCache.rows.length > 0);
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
-}
-
-/**
- * İzin diyaloğu kullanıcı yanıtını bekler — zaman aşımı yok (önceki 25 sn limiti hatalı reddediyordu).
- * Android: doğrudan READ_CONTACTS (sistem penceresi).
- * iOS: Contacts API (sistem penceresi, süresiz bekleme).
- */
-async function ensureContactsPermission(): Promise<void> {
-  if (Platform.OS === 'android') {
-    const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_CONTACTS);
-    if (r !== PermissionsAndroid.RESULTS.GRANTED) {
-      throw new Error(ERR_CONTACTS_PERMISSION);
-    }
-    return;
-  }
-  let perm = await Contacts.checkPermission();
-  if (perm === 'authorized' || perm === 'limited') return;
-  perm = await Contacts.requestPermission();
-  if (perm !== 'authorized' && perm !== 'limited') {
-    throw new Error(ERR_CONTACTS_PERMISSION);
-  }
-}
-
 function openAppPermissionSettings(): void {
   Linking.openSettings().catch(() => {
     Alert.alert('Ayarlar', 'Uygulama ayarları açılamadı. Ayarlar → Uygulamalar → ProParcel → İzinler yolunu kullanın.');
   });
 }
 
-function filterPhonebookRows(rows: Row[], q: string): Row[] {
+function filterPhonebookRows(rows: PhonebookRow[], q: string): PhonebookRow[] {
   const t = q.trim();
   if (!t) return rows;
   const qLower = t.toLocaleLowerCase('tr-TR');
@@ -129,8 +60,8 @@ function filterPhonebookRows(rows: Row[], q: string): Row[] {
 
 export default function AranacaklarPickerScreen() {
   const router = useRouter();
-  const [items, setItems] = useState<Row[]>(() => phonebookCache?.rows ?? []);
-  const [loading, setLoading] = useState(() => !hasUsableMemoryCache());
+  const [items, setItems] = useState<PhonebookRow[]>(() => getPhonebookMemoryCache());
+  const [loading, setLoading] = useState(() => !hasUsablePhonebookCache());
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -143,71 +74,34 @@ export default function AranacaklarPickerScreen() {
     async (opts: { signal: { cancelled: boolean }; force?: boolean; isRefresh?: boolean }) => {
       const { signal, force = false, isRefresh = false } = opts;
 
-      if (!force && hasUsableMemoryCache() && phonebookCache) {
+      if (!force && hasUsablePhonebookCache()) {
         if (!signal.cancelled) {
-          setItems(phonebookCache.rows);
+          setItems(getPhonebookMemoryCache());
           setErr(null);
           setLoading(false);
         }
         return;
       }
 
-      if (!force && !hasUsableMemoryCache()) {
-        const fromDisk = await loadPhonebookFromDisk();
-        if (signal.cancelled) return;
-        if (fromDisk?.rows?.length) {
-          phonebookCache = fromDisk;
-          setItems(fromDisk.rows);
-          setErr(null);
-          setLoading(false);
-          return;
-        }
-      }
-
       if (!isRefresh) setLoading(true);
       else setRefreshing(true);
       setErr(null);
-      try {
-        await ensureContactsPermission();
-        if (signal.cancelled) return;
-        // Fotoğrafsız okuma — büyük rehberlerde getAll() dakikalarca sürebilir
-        const list = await withTimeout(
-          Contacts.getAllWithoutPhotos(),
-          READ_CONTACTS_MS,
-          'Rehber okuması çok uzun sürdü. Kişi sayısı çok fazlaysa bir süre sonra tekrar deneyin.'
-        );
-        if (signal.cancelled) return;
-        const rows: Row[] = [];
-        for (const c of list || []) {
-          const name = (c.displayName || `${c.givenName || ''} ${c.familyName || ''}`).trim();
-          const num = c.phoneNumbers?.[0]?.number || '';
-          if (!name || !num) continue;
-          rows.push({
-            recordID: String(c.recordID || c.rawContactId || Math.random()),
-            displayName: name,
-            phoneNumber: num,
-          });
-        }
-        rows.sort((a, b) => a.displayName.localeCompare(b.displayName, 'tr'));
-        if (!signal.cancelled) {
-          const snapshot: PhonebookCache = { rows, loadedAt: Date.now() };
-          phonebookCache = snapshot;
-          setItems(rows);
-          void savePhonebookToDisk(rows);
-        }
-      } catch (e: any) {
-        if (signal.cancelled) return;
-        const msg = e?.message || 'Rehber okunamadı.';
-        setErr(msg);
-        if (msg === ERR_CONTACTS_PERMISSION) {
+
+      const result = await loadPhonebookContacts({ force, requestPermission: true });
+      if (signal.cancelled) return;
+
+      if (result.ok) {
+        setItems(result.rows);
+        setErr(null);
+      } else {
+        setErr(result.error);
+        if (result.error === ERR_CONTACTS_PERMISSION) {
           openAppPermissionSettings();
         }
-      } finally {
-        if (!signal.cancelled) {
-          setLoading(false);
-          setRefreshing(false);
-        }
       }
+
+      setLoading(false);
+      setRefreshing(false);
     },
     []
   );
@@ -237,7 +131,7 @@ export default function AranacaklarPickerScreen() {
 
   const onRetry = () => setRetryKey((k) => k + 1);
 
-  async function onAdd(row: Row) {
+  async function onAdd(row: PhonebookRow) {
     const e164 = normalizePhoneToE164TR(row.phoneNumber);
     const res = await createAranacaklarContact({
       full_name: row.displayName,

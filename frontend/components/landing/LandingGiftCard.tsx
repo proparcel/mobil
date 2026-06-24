@@ -5,10 +5,11 @@ import { LandingGlassCard } from './LandingGlassCard';
 import { landingColors, landingRadii } from './landingTheme';
 
 type Props = {
+  credits: number;
   onStart: () => void;
 };
 
-export function LandingGiftCard({ onStart }: Props) {
+export function LandingGiftCard({ credits, onStart }: Props) {
   return (
     <LandingGlassCard glow style={styles.card}>
       <View style={styles.topRow}>
@@ -18,8 +19,8 @@ export function LandingGiftCard({ onStart }: Props) {
           </View>
           <View>
             <Text style={styles.giftEyebrow}>Yeni Üyelere Özel</Text>
-            <Text style={styles.giftAmount}>10 Kredi</Text>
-            <Text style={styles.giftProSorgu}>(10 ProSorgu)</Text>
+            <Text style={styles.giftAmount}>{credits} Kredi</Text>
+            <Text style={styles.giftProSorgu}>({credits} ProSorgu)</Text>
           </View>
         </View>
         <View style={styles.freePill}>

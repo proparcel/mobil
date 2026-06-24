@@ -6,6 +6,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useRouter, useLocalSearchParams } from '../../src/hooks/useNavigation';
 import { useProfileAwareBack } from '../../src/utils/profileReturnNavigation';
 import { portalPageUrl } from '../../config/portalSite';
+import { authService } from '../../services/authService';
 import { storageService } from '../../services/storageService';
 
 function buildFetchInject(token: string): string {
@@ -51,7 +52,8 @@ export function PortalWebViewContent({ path: pathProp, title: titleProp }: Porta
   const params = useLocalSearchParams<{ path?: string; title?: string }>();
   const handleBack = useProfileAwareBack(() => router.back());
   const [token, setToken] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [tokenReady, setTokenReady] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
 
   const path = pathProp ?? params.path ?? '/';
   const title = titleProp ?? params.title ?? 'ProParcel';
@@ -59,10 +61,32 @@ export function PortalWebViewContent({ path: pathProp, title: titleProp }: Porta
   const uri = useMemo(() => portalPageUrl(path), [path]);
 
   useEffect(() => {
-    storageService.getAccessToken().then((t) => setToken(t || ''));
+    let cancelled = false;
+    (async () => {
+      let accessToken = await storageService.getAccessToken();
+      if (!accessToken) {
+        const refreshed = await authService.refreshToken();
+        if (refreshed) accessToken = await storageService.getAccessToken();
+      }
+      if (!cancelled) {
+        setToken(accessToken || '');
+        setTokenReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const injectedBefore = useCallback(() => buildFetchInject(token), [token]);
+
+  const webSource = useMemo(
+    () => ({
+      uri,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    }),
+    [uri, token],
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -76,19 +100,35 @@ export function PortalWebViewContent({ path: pathProp, title: titleProp }: Porta
         </Text>
         <View style={styles.backBtn} />
       </View>
-      {loading ? (
-        <View style={styles.loader}>
+      {!tokenReady ? (
+        <View style={styles.center}>
           <ActivityIndicator size="large" color="#3b82f6" />
         </View>
-      ) : null}
-      <WebView
-        source={{ uri }}
-        style={styles.web}
-        onLoadEnd={() => setLoading(false)}
-        injectedJavaScriptBeforeContentLoaded={injectedBefore()}
-        sharedCookiesEnabled
-        domStorageEnabled
-      />
+      ) : !token ? (
+        <View style={styles.center}>
+          <Text style={styles.authText}>Bu sayfa için giriş yapmanız gerekir.</Text>
+          <TouchableOpacity style={styles.authBtn} onPress={() => router.push('login')}>
+            <Text style={styles.authBtnText}>Giriş yap</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+          {pageLoading ? (
+            <View style={styles.loader}>
+              <ActivityIndicator size="large" color="#3b82f6" />
+            </View>
+          ) : null}
+          <WebView
+            key={token}
+            source={webSource}
+            style={styles.web}
+            onLoadEnd={() => setPageLoading(false)}
+            injectedJavaScriptBeforeContentLoaded={injectedBefore()}
+            sharedCookiesEnabled
+            domStorageEnabled
+          />
+        </>
+      )}
     </SafeAreaView>
   );
 }
@@ -112,4 +152,13 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center' },
   web: { flex: 1, backgroundColor: '#fff' },
   loader: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  authText: { fontSize: 15, color: '#94a3b8', textAlign: 'center', marginBottom: 16 },
+  authBtn: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  authBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

@@ -244,6 +244,12 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
           case "hukuki-metinler":
             router.push("legal-hub");
             break;
+          case "destek":
+            router.push("portal-webview", {
+              path: "/destek/",
+              title: "Destek",
+            });
+            break;
           case "ilanlarim":
             router.push("ilanlarim");
             break;
@@ -269,6 +275,16 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
             break;
           case "ai-drone-video":
             router.push("ai-drone-hub");
+            break;
+          case "ai-drone-my-videos":
+            if (!isAuthenticated) {
+              Alert.alert("Giriş gerekli", "Videolarınızı görmek için giriş yapın.", [
+                { text: "İptal", style: "cancel" },
+                { text: "Giriş", onPress: () => router.push("login") },
+              ]);
+              return;
+            }
+            router.push("ai-drone-my-videos");
             break;
           case "ai-drone-jobs":
             if (!isAuthenticated) {
@@ -337,6 +353,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
           items={getMenuItems(true, !!isAuthenticated, isAppAdminUser(user), user, userProfile)}
           st={userMenuSheetDarkStyles}
           variant="dark"
+          sheetVisible={visible}
           submenuOpenId={submenuOpenId}
           uzmanGorusuOpen={uzmanGorusuOpen}
           setUzmanGorusuOpen={setUzmanGorusuOpen}

@@ -65,6 +65,13 @@ true;
 /** A4 tasarım genişliği (report_v5_layout.css ile uyumlu); ekrana sığdırmak için zoom. */
 const REPORT_DESIGN_WIDTH = 794;
 
+/** Mobil rapor yükleme + PDF üretim zaman aşımı (ms). */
+const MOBILE_PDF_TIMEOUT_MS = 360_000;
+const PDF_LIBRARY_POLL_MS = 400;
+const REPORT_READY_POLL_MS = 160;
+const PDF_LIBRARY_MAX_ATTEMPTS = Math.ceil(MOBILE_PDF_TIMEOUT_MS / PDF_LIBRARY_POLL_MS);
+const REPORT_READY_MAX_TICKS = Math.ceil(MOBILE_PDF_TIMEOUT_MS / REPORT_READY_POLL_MS);
+
 /**
  * PDF: report_share (ESM) + html2pdf defer ile geç yüklenir; kısa timeout ile "motor hazır değil" oluyordu.
  * __PP_CREATE_PDF_BLOB_V5__ ve window.html2pdf hazır olana kadar bekler, sonra üretir.
@@ -73,7 +80,7 @@ const EXPORT_PDF_INJECT = `
 (function(){
   var ran = false;
   var attempts = 0;
-  var maxAttempts = 160;
+  var maxAttempts = ${PDF_LIBRARY_MAX_ATTEMPTS};
   function sendErr(msg) {
     try {
       window.ReactNativeWebView.postMessage(JSON.stringify({type:'pdf_error', message: String(msg)}));
@@ -87,7 +94,7 @@ const EXPORT_PDF_INJECT = `
     if (!ready()) {
       attempts++;
       if (attempts <= maxAttempts) {
-        setTimeout(waitThenGenerate, 400);
+        setTimeout(waitThenGenerate, ${PDF_LIBRARY_POLL_MS});
         return;
       }
       sendErr('PDF kütüphanesi yüklenemedi. Ağınızı kontrol edip tekrar deneyin.');
@@ -210,19 +217,52 @@ const MOBILE_VIEWPORT_FIT_JS = `
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'mobile_report_ready' }));
     } catch(e) {}
   }
-  function rootLooksReady(){
-    var root = document.getElementById('report-root');
-    if (!root) return false;
-    return (root.scrollHeight || 0) > 140 || (root.children && root.children.length > 0);
+  function isPlaceholderText(t){
+    var s = String(t || '').trim();
+    return !s || s === '—' || s === '-' || s === '...' || s === '…';
+  }
+  /** API verisi + sayfa render + konum alanları dolu; grid katmanları beklenir */
+  function reportFullyReady(){
+    try {
+      if (!window.__REPORT_V4_DATA__) return false;
+      try {
+        if (window.__REPORT_QUARTER_SALES_GRID_READY === false) return false;
+      } catch(e) {}
+      var root = document.getElementById('report-root');
+      if (!root) return false;
+      var pages = root.querySelectorAll('.report');
+      if (!pages || pages.length < 1) return false;
+      var tallPage = false;
+      for (var i = 0; i < pages.length; i++) {
+        if ((pages[i].scrollHeight || 0) > 220) { tallPage = true; break; }
+      }
+      if (!tallPage) return false;
+      var placeEl = root.querySelector('[data-pp-role="loc-place"]');
+      if (placeEl && isPlaceholderText(placeEl.textContent)) return false;
+      var adaEl = root.querySelector('[data-pp-role="loc-ada-parsel-alan"]');
+      if (adaEl && isPlaceholderText(adaEl.textContent)) return false;
+      var typeEl = root.querySelector('[data-pp-role="loc-property-type"]');
+      if (typeEl && isPlaceholderText(typeEl.textContent)) return false;
+      return true;
+    } catch(e) { return false; }
   }
   var ticks = 0;
+  var maxTicks = ${REPORT_READY_MAX_TICKS};
   var poll = setInterval(function(){
     ticks++;
-    if (rootLooksReady() || ticks >= 90) {
+    if (reportFullyReady()) {
       clearInterval(poll);
-      notifyOnce();
+      setTimeout(notifyOnce, 700);
+    } else if (ticks >= maxTicks) {
+      clearInterval(poll);
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'mobile_report_timeout',
+          message: 'Rapor hazırlanırken zaman aşımı oluştu.'
+        }));
+      } catch(e) {}
     }
-  }, 160);
+  }, ${REPORT_READY_POLL_MS});
   window.addEventListener('orientationchange', function(){
     setTimeout(applyFit, 280);
   });
@@ -248,6 +288,7 @@ export default function PortalV5ReportWebViewScreen() {
   );
 
   const webRef = useRef<WebView>(null);
+  const autoShareTriggeredRef = useRef(false);
   const [loading, setLoading] = useState(true);
   /** null = auth yükleniyor; boş string = hata (olmamalı); dolu = JWT */
   const [token, setToken] = useState<string | null>(null);
@@ -299,18 +340,31 @@ export default function PortalV5ReportWebViewScreen() {
 
   const fetchInject = useMemo(() => buildFetchInject(token ?? ''), [token]);
 
-  /** Rapor yüklenmezse bile takılı kalmamak için */
+  /** RN tarafı yedek zaman aşımı (WebView mesajı gelmezse) */
   useEffect(() => {
     if (!snapshotId || !token || authFailed) return;
     const t = setTimeout(() => {
-      setLoading((prev) => {
-        if (!prev) return prev;
-        setContentReady(true);
-        return false;
-      });
-    }, 18000);
+      if (!contentReady && !exporting) {
+        setLoading(false);
+        Alert.alert(
+          'Rapor yüklenemedi',
+          'Rapor hazırlanırken zaman aşımı oluştu. Lütfen tekrar deneyin.',
+          [{ text: 'Tamam', onPress: () => router.back() }],
+        );
+      }
+    }, MOBILE_PDF_TIMEOUT_MS);
     return () => clearTimeout(t);
-  }, [snapshotId, token, authFailed]);
+  }, [snapshotId, token, authFailed, contentReady, exporting, router]);
+
+  /** PDF üretimi sırasında RN yedek zaman aşımı */
+  useEffect(() => {
+    if (!exporting) return;
+    const t = setTimeout(() => {
+      setExporting(false);
+      Alert.alert('PDF', 'PDF oluşturulurken zaman aşımı oluştu. Lütfen tekrar deneyin.');
+    }, MOBILE_PDF_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [exporting]);
 
   const onMessage = useCallback(
     async (e: { nativeEvent: { data: string } }) => {
@@ -321,6 +375,13 @@ export default function PortalV5ReportWebViewScreen() {
         if (msg.type === 'mobile_report_ready') {
           setContentReady(true);
           setLoading(false);
+          return;
+        }
+        if (msg.type === 'mobile_report_timeout') {
+          setLoading(false);
+          Alert.alert('Rapor yüklenemedi', msg.message || 'Rapor hazırlanamadı.', [
+            { text: 'Tamam', onPress: () => router.back() },
+          ]);
           return;
         }
         if (msg.type === 'pdf_base64' && msg.data) {
@@ -382,6 +443,14 @@ export default function PortalV5ReportWebViewScreen() {
       webRef.current?.injectJavaScript(EXPORT_PDF_INJECT);
     }, 120);
   }, [sharePdf, exporting, contentReady]);
+
+  /** PDF Paylaş menüsünden gelince önizleme yerine veri hazır olunca otomatik PDF üret */
+  useEffect(() => {
+    if (!sharePdf || !contentReady || exporting || autoShareTriggeredRef.current) return;
+    autoShareTriggeredRef.current = true;
+    const t = setTimeout(() => handleSharePdfPress(), 500);
+    return () => clearTimeout(t);
+  }, [sharePdf, contentReady, exporting, handleSharePdfPress]);
 
   if (!snapshotId) {
     return (
@@ -457,23 +526,23 @@ export default function PortalV5ReportWebViewScreen() {
         </View>
       </View>
       <View style={styles.webWrap}>
-        {loading && (
-          <View style={styles.loaderWrap} pointerEvents="none">
+        {(loading || exporting) && (
+          <View style={styles.loaderWrap} pointerEvents="auto">
             <ActivityIndicator size="large" color="#38bdf8" />
-            <Text style={styles.loaderHint}>Rapor yükleniyor…</Text>
-          </View>
-        )}
-        {exporting && (
-          <View style={styles.pdfProgressBar} pointerEvents="none">
-            <ActivityIndicator size="small" color="#38bdf8" />
-            <Text style={styles.pdfProgressText}>PDF hazırlanıyor (web ile aynı şablon)…</Text>
+            <Text style={styles.loaderHint}>
+              {exporting
+                ? 'PDF oluşturuluyor (web ile aynı şablon)…'
+                : sharePdf
+                  ? 'Rapor hazırlanıyor, paylaşım için bekleyin…'
+                  : 'Rapor yükleniyor…'}
+            </Text>
           </View>
         )}
         <WebView
           ref={webRef}
           key={`${snapshotId}-${token.slice(0, 12)}`}
           source={{ uri }}
-          style={styles.web}
+          style={[styles.web, (loading || exporting) && styles.webHidden]}
           injectedJavaScriptBeforeContentLoaded={fetchInject}
           injectedJavaScript={MOBILE_VIEWPORT_FIT_JS}
           onMessage={onMessage}
@@ -511,31 +580,16 @@ const styles = StyleSheet.create({
   headerRightSpacer: { minWidth: 40 },
   webWrap: { flex: 1, position: 'relative' },
   web: { flex: 1, backgroundColor: '#0f172a' },
+  webHidden: { opacity: 0 },
   loaderWrap: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 2,
-    backgroundColor: 'rgba(15,23,42,0.5)',
+    zIndex: 10,
+    backgroundColor: '#0f172a',
     gap: 12,
   },
-  loaderHint: { color: '#94a3b8', fontSize: 13, marginTop: 8, paddingHorizontal: 24, textAlign: 'center' },
-  pdfProgressBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 3,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(15,23,42,0.92)',
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-  },
-  pdfProgressText: { color: '#94a3b8', fontSize: 13, flex: 1, textAlign: 'center', marginLeft: 8 },
+  loaderHint: { color: '#94a3b8', fontSize: 14, marginTop: 8, paddingHorizontal: 28, textAlign: 'center' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   errText: { color: '#94a3b8', fontSize: 15 },
 });

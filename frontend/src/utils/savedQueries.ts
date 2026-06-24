@@ -1,6 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNFS from 'react-native-fs';
 import type { DfaRow } from '../types/reportPayload';
+import {
+  buildBackfilledLocationHeader,
+  mergeLocationHeader,
+  resolveLocationForSavedQueryItem,
+} from './resolveSavedQueryLocation';
 
 export type PriceSnapshot = {
   unit_price: number | null;
@@ -142,10 +147,27 @@ export async function writeSavedQueries(list: SavedQuery[]): Promise<void> {
   await setItem(STORAGE_KEY, JSON.stringify(safe));
 }
 
+export function findSavedQueryInList(
+  list: SavedQuery[],
+  tkgm_value: number,
+  ada: string,
+  parsel: string,
+): SavedQuery | null {
+  const key = makeSavedQueryKey({ tkgm_value, ada, parsel });
+  return list.find((x) => makeSavedQueryKey(x) === key) ?? null;
+}
+
 export async function upsertSavedQuery(input: Omit<SavedQuery, 'id' | 'createdAt'> & { id?: string; createdAt?: string }): Promise<SavedQuery[]> {
   const list = await loadSavedQueries();
 
   const nowIso = new Date().toISOString();
+  const draftKey = makeSavedQueryKey({
+    tkgm_value: Number(input.tkgm_value),
+    ada: normalizeStr(input.ada),
+    parsel: normalizeStr(input.parsel),
+  });
+  const existing = list.find((x) => makeSavedQueryKey(x) === draftKey);
+
   const next: SavedQuery = {
     id: input.id ? String(input.id) : String(Date.now()),
     createdAt: input.createdAt ? String(input.createdAt) : nowIso,
@@ -155,12 +177,11 @@ export async function upsertSavedQuery(input: Omit<SavedQuery, 'id' | 'createdAt
     parsel: normalizeStr(input.parsel),
     price_snapshot: input.price_snapshot ?? { unit_price: null, total_price: null },
     dfaRows: Array.isArray(input.dfaRows) ? input.dfaRows : undefined,
-    location_header: input.location_header ?? undefined,
-    mode: input.mode,
+    location_header: mergeLocationHeader(existing?.location_header, input.location_header),
+    mode: input.mode ?? existing?.mode ?? "simple",
   };
 
   const key = makeSavedQueryKey(next);
-  const existing = list.find((x) => makeSavedQueryKey(x) === key);
   if (!next.mode) {
     next.mode = input.mode ?? existing?.mode ?? "simple";
   }
@@ -178,7 +199,56 @@ export async function removeSavedQuery(id: string): Promise<SavedQuery[]> {
   return next;
 }
 
+export async function findSavedQueryByKey(
+  tkgm_value: number,
+  ada: string,
+  parsel: string,
+): Promise<SavedQuery | null> {
+  const list = await loadSavedQueries();
+  const key = makeSavedQueryKey({ tkgm_value, ada, parsel });
+  return list.find((x) => makeSavedQueryKey(x) === key) ?? null;
+}
+
+export async function removeSavedQueryByKey(
+  tkgm_value: number,
+  ada: string,
+  parsel: string,
+): Promise<SavedQuery[]> {
+  const list = await loadSavedQueries();
+  const key = makeSavedQueryKey({ tkgm_value, ada, parsel });
+  const next = list.filter((x) => makeSavedQueryKey(x) !== key);
+  await writeSavedQueries(next);
+  return next;
+}
+
 export async function clearSavedQueries(): Promise<void> {
   await removeItem(STORAGE_KEY);
+}
+
+/** Eksik il/ilçe location_header alanlarını locations.json ile sessiz doldur */
+export async function backfillLocalSavedQueryLocationHeaders(
+  list: SavedQuery[],
+): Promise<SavedQuery[]> {
+  let changed = false;
+  const next = list.map((sq) => {
+    const lh = sq.location_header;
+    const needsIlIlce = !normalizeStr(lh?.ilAd) || !normalizeStr(lh?.ilceAd);
+    if (!needsIlIlce) return sq;
+
+    const resolved = resolveLocationForSavedQueryItem(sq);
+    const patch = buildBackfilledLocationHeader(sq, resolved);
+    if (!patch) return sq;
+
+    changed = true;
+    return {
+      ...sq,
+      location_header: mergeLocationHeader(sq.location_header, patch),
+    };
+  });
+
+  if (changed) {
+    await writeSavedQueries(next);
+  }
+  return next;
 }
 

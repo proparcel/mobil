@@ -9,8 +9,9 @@ import { TextBoxMapMarker } from '@/src/maps/drawing/TextBoxMapMarker';
 import { MapPinMarker } from '@/src/maps/drawing/MapPinMarker';
 import { MapCaptureVectorOverlay } from '@/src/maps/drawing/MapCaptureVectorOverlay';
 import type { MapOverlayCapturePayload } from '@/src/utils/mapOverlayCaptureProjection';
+import type { MapCropNorm } from '@/src/utils/mapViewShotCapture';
 import {
-  computeCoverTransform,
+  computeCaptureOverlayTransform,
   transformCapturePoint,
 } from '@/src/utils/mapCaptureOverlayTransform';
 
@@ -20,14 +21,22 @@ type Props = {
   height: number;
   /** Projeksiyon viewport'u (snap / ekran harita alanı) */
   sourceViewport?: { width: number; height: number } | null;
+  /** Önizleme çerçevesi kırpması — MapCaptureClippedImage ile aynı dönüşüm */
+  mapCropNorm?: MapCropNorm | null;
 };
 
-export function MapCaptureOverlayOnMap({ overlay, width, height, sourceViewport }: Props) {
+export function MapCaptureOverlayOnMap({
+  overlay,
+  width,
+  height,
+  sourceViewport,
+  mapCropNorm,
+}: Props) {
   const cover = useMemo(() => {
     const srcW = sourceViewport?.width && sourceViewport.width > 1 ? sourceViewport.width : width;
     const srcH = sourceViewport?.height && sourceViewport.height > 1 ? sourceViewport.height : height;
-    return computeCoverTransform(srcW, srcH, width, height);
-  }, [sourceViewport?.width, sourceViewport?.height, width, height]);
+    return computeCaptureOverlayTransform(srcW, srcH, width, height, mapCropNorm);
+  }, [sourceViewport?.width, sourceViewport?.height, width, height, mapCropNorm]);
 
   if (!overlay || !width || !height) return null;
 

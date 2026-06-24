@@ -36,10 +36,19 @@ import type {
 } from "../src/types/badges";
 import { normalizeAuthUser } from "../src/utils/membership";
 
-function persistAuthUser(raw: User): User {
+async function persistAuthUser(raw: User): Promise<User> {
   const user = normalizeAuthUser(raw as unknown as Record<string, unknown>);
-  void storageService.setUser(user);
+  await storageService.setUser(user);
   return user;
+}
+
+function hasValidLoginPayload(
+  data: LoginResponse["data"] | undefined,
+): data is NonNullable<LoginResponse["data"]> {
+  if (!data) return false;
+  const access = String(data.access || "").trim();
+  const refresh = String(data.refresh || "").trim();
+  return Boolean(access && refresh && data.user);
 }
 
 /**
@@ -130,12 +139,12 @@ async function registerVerifyMultipart(
       ? await response.json()
       : { success: false, message: "Kayıt doğrulaması başarısız." };
 
-    if (payload.success && payload.data?.access) {
+    if (payload.success && hasValidLoginPayload(payload.data)) {
       await storageService.setTokens({
         access: payload.data.access,
         refresh: payload.data.refresh,
       });
-      persistAuthUser(payload.data.user);
+      await persistAuthUser(payload.data.user);
     }
 
     return payload as LoginResponse;
@@ -175,6 +184,8 @@ const AUTH_ENDPOINTS = {
   NOTIFICATION_READ: (id: number) => `/api/notifications/${id}/read/`,
   AVATAR: "/api/profile/avatar/",
   SUBSCRIPTION: "/api/subscription/",
+  DISMISS_WELCOME: "/api/auth/dismiss-welcome/",
+  DISMISS_APP_TOUR: "/api/auth/dismiss-app-tour/",
 } as const;
 
 function normalizeRegistrationCompanies(raw: unknown): RegistrationCompanyItem[] {
@@ -254,8 +265,10 @@ async function authFetch<T>(
 
   const doRequest = async (token: string | null) => {
     const headers: Record<string, string> = { ...baseHeaders };
-    const t = normalizeToken(token);
-    if (t) headers.Authorization = `Bearer ${t}`;
+    if (requiresAuth) {
+      const t = normalizeToken(token);
+      if (t) headers.Authorization = `Bearer ${t}`;
+    }
     return fetch(url, { ...options, headers });
   };
 
@@ -357,8 +370,8 @@ async function authFetch<T>(
         // Ignore parse errors
       }
 
-      // If still unauthorized, expire session so UI can redirect
-      if (response.status === 401) {
+      // Oturum gerektiren uçlarda 401 → çıkış; giriş/kayıt denemelerinde storage'ı silme.
+      if (response.status === 401 && requiresAuth) {
         await storageService.clearAll();
         notifySessionExpired();
         errorMessage = "Oturum süreniz doldu. Lütfen tekrar giriş yapın.";
@@ -441,14 +454,14 @@ class AuthService {
       }
     );
 
-    if (response.success && response.data) {
+    if (response.success && hasValidLoginPayload(response.data)) {
       // Token ve user'ı kaydet (sadece verify_otp adımında)
-      if (data.step === 'verify_otp' && response.data.access) {
+      if (data.step === 'verify_otp') {
         await storageService.setTokens({
           access: response.data.access,
           refresh: response.data.refresh,
         });
-        persistAuthUser(response.data.user);
+        await persistAuthUser(response.data.user);
       }
     }
 
@@ -575,13 +588,20 @@ class AuthService {
       }
     );
 
-    if (response.success && response.data) {
-      // Token ve user'ı kaydet
+    if (response.success && hasValidLoginPayload(response.data)) {
       await storageService.setTokens({
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      persistAuthUser(response.data.user);
+      await persistAuthUser(response.data.user);
+      return response as LoginResponse;
+    }
+
+    if (response.success) {
+      return {
+        success: false,
+        message: "Giriş yanıtı eksik. Lütfen tekrar deneyin.",
+      };
     }
 
     return response as LoginResponse;
@@ -699,12 +719,20 @@ class AuthService {
       }
     );
 
-    if (response.success && response.data) {
+    if (response.success && hasValidLoginPayload(response.data)) {
       await storageService.setTokens({
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      persistAuthUser(response.data.user);
+      await persistAuthUser(response.data.user);
+      return response as LoginResponse;
+    }
+
+    if (response.success) {
+      return {
+        success: false,
+        message: "Giriş yanıtı eksik. Lütfen tekrar deneyin.",
+      };
     }
 
     return response as LoginResponse;
@@ -1057,6 +1085,26 @@ class AuthService {
   }
 
   /**
+   * İlk üyelik hoşgeldin modalını kapat (sunucuda has_seen_welcome = true)
+   */
+  async dismissWelcome(): Promise<ApiResponse> {
+    return authFetch(AUTH_ENDPOINTS.DISMISS_WELCOME, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  /**
+   * İlk giriş tour overlay'ini kapat (sunucuda has_seen_app_tour = true)
+   */
+  async dismissAppTour(): Promise<ApiResponse> {
+    return authFetch(AUTH_ENDPOINTS.DISMISS_APP_TOUR, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  /**
    * Abonelik bilgisi getir
    */
   async getSubscription(): Promise<ApiResponse<{
@@ -1080,12 +1128,20 @@ class AuthService {
       }
     );
 
-    if (response.success && response.data) {
+    if (response.success && hasValidLoginPayload(response.data)) {
       await storageService.setTokens({
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      persistAuthUser(response.data.user);
+      await persistAuthUser(response.data.user);
+      return response as LoginResponse;
+    }
+
+    if (response.success) {
+      return {
+        success: false,
+        message: "Giriş yanıtı eksik. Lütfen tekrar deneyin.",
+      };
     }
 
     return response as LoginResponse;
@@ -1106,12 +1162,20 @@ class AuthService {
       }
     );
 
-    if (response.success && response.data) {
+    if (response.success && hasValidLoginPayload(response.data)) {
       await storageService.setTokens({
         access: response.data.access,
         refresh: response.data.refresh,
       });
-      persistAuthUser(response.data.user);
+      await persistAuthUser(response.data.user);
+      return response as LoginResponse;
+    }
+
+    if (response.success) {
+      return {
+        success: false,
+        message: "Giriş yanıtı eksik. Lütfen tekrar deneyin.",
+      };
     }
 
     return response as LoginResponse;

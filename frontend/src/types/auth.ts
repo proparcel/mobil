@@ -255,7 +255,7 @@ export interface RegisterRequest {
   company_vergi_no?: string;
   emlak_yetki_belge_no?: string;
   consultant_license_no?: string;
-  company_name?: string; // kurumsal için zorunlu
+  company_name?: string; // kurumsal için opsiyonel; boşsa ad+soyad kullanılır
   corporate_type?: CorporateType; // Emlak Firması, SPK Lisanslı Değerleme Firması veya Lihkab Büro
   company_license_no?: string; // kurumsal için zorunlu; emlak: 7 haneli TTBS yetki belge no
   city_id?: number; // opsiyonel; kurumsal emlak TTBS sorgusunda il_id
@@ -385,7 +385,7 @@ export interface AuthContextValue extends AuthState {
   login: (identifier: string, password: string) => Promise<LoginResult>; // identifier: email veya phone
   loginWithOTP: (phone_number: string, otp: string) => Promise<boolean>;
   register: (data: RegisterRequest) => Promise<boolean>;
-  syncSessionFromLoginResponse: (data: NonNullable<LoginResponse["data"]>) => void;
+  syncSessionFromLoginResponse: (data: NonNullable<LoginResponse["data"]>) => void | Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
   sendOTP: (phone_number: string) => Promise<boolean>;

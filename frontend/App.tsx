@@ -6,6 +6,10 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { NativeModules, Platform, View, ActivityIndicator } from "react-native";
+import { checkAppUpdate, type AppUpdateCheckResult } from './services/appUpdateService';
+import { setDismissedOptionalUpdateVersion } from './src/utils/appUpdateStorage';
+import { ForceUpdateScreen } from './components/app/ForceUpdateScreen';
+import { OptionalUpdateModal } from './components/app/OptionalUpdateModal';
 import { NavigationContainer, DarkTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -38,6 +42,7 @@ import AiDroneSimpleEditorScreen from './screens/routes/ai-drone-simple-editor';
 import AiDroneVideoInfoScreen from './screens/routes/ai-drone-video-info';
 import AiDroneJobsScreen from './screens/routes/ai-drone-jobs';
 import AiDroneJobDetailScreen from './screens/routes/ai-drone-job-detail';
+import AiDroneMyVideosScreen from './screens/routes/ai-drone-my-videos';
 import AiDroneEditorChatScreen from './screens/routes/ai-drone-editor-chat';
 import RequestCenterScreen from './screens/routes/expert-requests';
 import ExpertRequestReportScreen from './screens/routes/expert-request-report';
@@ -80,9 +85,14 @@ import AranacaklarScreen from './screens/routes/aranacaklar';
 import AranacaklarPickerScreen from './screens/routes/aranacaklar-picker';
 import AranacaklarDetailScreen from './screens/routes/aranacaklar-detail';
 import AranacaklarStatsScreen from './screens/routes/aranacaklar-stats';
-import { registerVrParcelRoute } from './modules/vrParcel';
+import { initDroneRunwayJobTracker, teardownDroneRunwayJobTracker } from './services/droneRunwayJobTracker';
+import {
+  initDronePortraitExportJobTracker,
+  teardownDronePortraitExportJobTracker,
+} from './services/dronePortraitExportJobTracker';
 import { registerParcelTerrain3dRoute } from './modules/parcelTerrain3d';
 import { registerUnitySmokeTestRoute, UNITY_SMOKE_TEST_ENABLED } from './modules/unitySmokeTest';
+import { maybePreloadPhonebookOnFirstLaunch } from './services/phonebookCacheService';
 
 const Stack = createNativeStackNavigator();
 
@@ -99,7 +109,17 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
   const getNavigation = useCallback(() => navigationRef.current, [navigationRef]);
   useDeepLinkNavigation(getNavigation, navReady);
 
-  // Android deferred referral (Branch'siz): Google Play Install Referrer
+  useEffect(() => {
+    initDroneRunwayJobTracker();
+    initDronePortraitExportJobTracker();
+    void maybePreloadPhonebookOnFirstLaunch();
+    return () => {
+      teardownDroneRunwayJobTracker();
+      teardownDronePortraitExportJobTracker();
+    };
+  }, []);
+
+  // Android deferred referral
   useEffect(() => {
     if (Platform.OS !== "android") return;
     let cancelled = false;
@@ -182,6 +202,8 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           screenOptions={{
             headerShown: false,
             animation: 'slide_from_right',
+            /** Arka plandaki ekranları dondur — özellikle index (Mapbox) diğer sayfaları yavaşlatmasın */
+            freezeOnBlur: true,
           }}
         >
           <Stack.Screen name="landing" component={LandingScreen} />
@@ -205,6 +227,7 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="ai-drone-video-info" component={AiDroneVideoInfoScreen} />
           <Stack.Screen name="ai-drone-jobs" component={AiDroneJobsScreen} />
           <Stack.Screen name="ai-drone-job-detail" component={AiDroneJobDetailScreen} />
+          <Stack.Screen name="ai-drone-my-videos" component={AiDroneMyVideosScreen} />
           <Stack.Screen name="ai-drone-editor-chat" component={AiDroneEditorChatScreen} />
           <Stack.Screen name="report_mobil_viewver" component={ReportMobilViewverScreen} />
           <Stack.Screen name="report-expert-request" component={ReportExpertRequestScreen} />
@@ -245,7 +268,6 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="aranacaklar-picker" component={AranacaklarPickerScreen} />
           <Stack.Screen name="aranacaklar-detail" component={AranacaklarDetailScreen} />
           <Stack.Screen name="aranacaklar-stats" component={AranacaklarStatsScreen} />
-          {registerVrParcelRoute(Stack)}
           {registerParcelTerrain3dRoute(Stack)}
           {registerUnitySmokeTestRoute(Stack)}
         </Stack.Navigator>
@@ -258,16 +280,26 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
 export default function App() {
   const [navReady, setNavReady] = useState(false);
   const [initialRoute, setInitialRoute] = useState<'landing' | 'index' | 'unity-smoke-test'>('index');
+  const [updateCheck, setUpdateCheck] = useState<AppUpdateCheckResult>({ kind: 'none' });
+  const [optionalDismissed, setOptionalDismissed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        const updateResult = await checkAppUpdate();
+        if (cancelled) return;
+        if (updateResult.kind === 'force') {
+          setUpdateCheck(updateResult);
+          setNavReady(true);
+          return;
+        }
+        if (updateResult.kind === 'optional') {
+          setUpdateCheck(updateResult);
+        }
+
         if (__DEV__) {
-          if (!cancelled) {
-            setInitialRoute(UNITY_SMOKE_TEST_ENABLED ? 'unity-smoke-test' : 'index');
-            setNavReady(true);
-          }
+          setInitialRoute(UNITY_SMOKE_TEST_ENABLED ? 'unity-smoke-test' : 'index');
           return;
         }
         const skip = await storageService.getSkipLandingIntro();
@@ -282,6 +314,13 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  const handleOptionalLater = useCallback(() => {
+    if (updateCheck.kind === 'optional') {
+      setDismissedOptionalUpdateVersion(updateCheck.latestVersion).catch(() => {});
+    }
+    setOptionalDismissed(true);
+  }, [updateCheck]);
 
   if (!navReady) {
     return (
@@ -299,6 +338,23 @@ export default function App() {
     );
   }
 
+  if (updateCheck.kind === 'force') {
+    return (
+      <ErrorBoundary>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <SafeAreaProvider>
+            <AppChromeScaffold>
+              <ForceUpdateScreen message={updateCheck.message} />
+            </AppChromeScaffold>
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </ErrorBoundary>
+    );
+  }
+
+  const showOptionalUpdate =
+    updateCheck.kind === 'optional' && !optionalDismissed;
+
   return (
     <ErrorBoundary>
       <AuthProvider>
@@ -311,6 +367,11 @@ export default function App() {
                     <AppWithShield initialRouteName={initialRoute} />
                   </ScreenShieldProvider>
                 </BottomSheetModalProvider>
+                <OptionalUpdateModal
+                  visible={showOptionalUpdate}
+                  message={updateCheck.kind === 'optional' ? updateCheck.message : ''}
+                  onLater={handleOptionalLater}
+                />
               </AppChromeScaffold>
             </SafeAreaProvider>
           </GestureHandlerRootView>

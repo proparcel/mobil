@@ -19,7 +19,7 @@ namespace ProParcel.Terrain3d
             Debug.Log("[Terrain3d] SceneBootstrap.AfterSceneLoad scene=" + scene.name +
                 " path=" + scene.path);
 
-            var bridge = Object.FindObjectOfType<ParcelTerrain3dBridge>();
+            var bridge = Object.FindAnyObjectByType<ParcelTerrain3dBridge>();
             Debug.Log("[Terrain3d] SceneBootstrap bridgeFound=" + (bridge != null) +
                 (bridge != null ? " name=" + bridge.gameObject.name + " active=" + bridge.gameObject.activeInHierarchy : ""));
 

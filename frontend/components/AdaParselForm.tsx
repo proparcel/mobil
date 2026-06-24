@@ -22,7 +22,7 @@ import {
   useScrollInputIntoView,
 } from '../src/keyboard';
 import type { LocationHierarchySelection } from '../src/utils/locationHierarchyMap';
-import { resolveSidebarSavedQueryLocations } from '../src/utils/resolveSidebarSavedQueryLocations';
+import { resolveSidebarSavedQueryLocations, resolveSidebarSavedQueryCityTown } from '../src/utils/resolveSidebarSavedQueryLocations';
 import type { SidebarSavedQuery } from '../src/utils/sidebarSavedQueries';
 import { landingColors, landingRadii } from './landing/landingTheme';
 
@@ -161,9 +161,39 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
       lastAppliedSeedRef.current = null;
       return;
     }
-    const seedKey = String(formSeed.id || `${formSeed.mahalle_tkgm_value}|${formSeed.ada}|${formSeed.parsel}`);
+    const seedKey = String(
+      formSeed.id ||
+        (formSeed.partialMahalle
+          ? `${formSeed.il_id}|${formSeed.ilce_id}|${formSeed.ada}|${formSeed.parsel}`
+          : `${formSeed.mahalle_tkgm_value}|${formSeed.ada}|${formSeed.parsel}`),
+    );
     if (lastAppliedSeedRef.current === seedKey) return;
     lastAppliedSeedRef.current = seedKey;
+
+    if (formSeed.partialMahalle) {
+      const cityTown = resolveSidebarSavedQueryCityTown(formSeed);
+      if (!cityTown) {
+        alert('İl ve ilçe bilgisi forma aktarılamadı.');
+        onFormSeedConsumed?.();
+        return;
+      }
+
+      const { city, town } = cityTown;
+      setSelectedCity(city);
+      setSelectedTown(town);
+      setSelectedQuarter(null);
+      setAda(String(formSeed.ada || '').trim());
+      setParsel(String(formSeed.parsel || '').trim());
+
+      onHierarchySelect?.({
+        level: 'town',
+        cityId: city.Id,
+        townId: town.Id,
+      });
+
+      onFormSeedConsumed?.();
+      return;
+    }
 
     const resolved = resolveSidebarSavedQueryLocations(formSeed);
     if (!resolved) {
@@ -187,7 +217,7 @@ const AdaParselForm: React.FC<AdaParselFormProps> = ({
       proparcelValue: Number.isFinite(pv) ? pv : undefined,
     });
 
-    if (autoSubmitAfterSeed && onSubmit) {
+    if (autoSubmitAfterSeed && !formSeed.partialMahalle && onSubmit) {
       const payload: AdaParselSubmitPayload = {
         mahalleTkgmValue: Number(quarter.Tkgm_value),
         mahalle: quarter.Proparcel_text || quarter.Tkgm_text || formSeed.mahalle || '',

@@ -1,3 +1,4 @@
+import * as Location from "expo-location";
 import {
   Alert,
   InteractionManager,
@@ -43,8 +44,18 @@ function getPositionProvider(): {
   return getGeolocationModule();
 }
 
+async function hasIosLocationPermission(): Promise<boolean> {
+  if (Platform.OS !== "ios") return true;
+  try {
+    const { status } = await Location.getForegroundPermissionsAsync();
+    return status === Location.PermissionStatus.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
 export async function hasAppLocationPermission(): Promise<boolean> {
-  if (Platform.OS === "ios") return true;
+  if (Platform.OS === "ios") return hasIosLocationPermission();
   return hasAndroidLocationPermission();
 }
 
@@ -152,6 +163,11 @@ export async function getCurrentCoordinates(): Promise<{
       return Promise.reject(new Error("Konum izni yok"));
     }
     await waitForUiSettled(500);
+  } else if (Platform.OS === "ios") {
+    const allowed = await hasIosLocationPermission();
+    if (!allowed) {
+      return Promise.reject({ code: 1, message: "Location permission denied" });
+    }
   }
 
   const options: Record<string, unknown> = {

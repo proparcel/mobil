@@ -4,9 +4,18 @@ import { describe, it } from 'node:test';
 import type { PortalQueryDetail } from '../types/portal';
 import {
   buildParcelInfoRows,
+  buildPriceInfoRows,
   buildStructureInfoRows,
   isStructurePortalQueryType,
+  mergeSupplementalIntoParcelRows,
 } from './portalDetailCardContract';
+import {
+  buildPhysicalSupplementalRows,
+  resolveImportantFrontageM,
+  resolveLongestFrontageM,
+  resolveRoadFrontageFaceCount,
+  resolveRoadFrontageTotalLengthM,
+} from './portalInsightHelpers';
 
 function baseDetail(overrides: Partial<PortalQueryDetail> = {}): PortalQueryDetail {
   return {
@@ -144,5 +153,94 @@ describe('buildStructureInfoRows', () => {
 
   it('returns empty rows for tarla', () => {
     assert.deepEqual(buildStructureInfoRows(baseDetail({ query_type: 'tarla' })), []);
+  });
+});
+
+describe('RoadV2 frontage contract readers', () => {
+  const roadV2Detail = baseDetail({
+    query_type: 'arsa',
+    road_v2: true,
+    road_v2_frontage: {
+      face_count: 4,
+      edge_labels: ['a', 'b', 'c', 'd'],
+      total_length_m: 253.13,
+    },
+    road_frontage_values: {
+      road_v2: true,
+      total_road_frontage_edge_length_m: 100,
+      frontage_count: 1,
+    },
+    edge_measure_data: {
+      total_road_frontage_edge_length_m: 50,
+    },
+  });
+
+  it('prefers road_v2_frontage face_count and total_length_m', () => {
+    assert.equal(resolveRoadFrontageFaceCount(roadV2Detail), 4);
+    assert.equal(resolveRoadFrontageTotalLengthM(roadV2Detail), 253.13);
+  });
+
+  it('buildParcelInfoRows does not inline road frontage (supplemental merge)', () => {
+    const rows = buildParcelInfoRows(roadV2Detail, { queryTypeLabel: 'Arsa' });
+    const labels = rows.map(([l]) => l);
+    assert.ok(!labels.some((l) => /yola cephe|yol cephesi/i.test(l)));
+    assert.ok(!labels.includes('Toplam Yol Cephesi'));
+  });
+
+  it('mergeSupplementalIntoParcelRows inserts frontage rows after Ada/Parsel', () => {
+    const core = buildParcelInfoRows(roadV2Detail, { queryTypeLabel: 'Arsa' });
+    const supplemental = buildPhysicalSupplementalRows({
+      summary: roadV2Detail,
+      analysis: null,
+      slopePct: null,
+    });
+    const merged = mergeSupplementalIntoParcelRows(core, supplemental);
+    const labels = merged.map(([l]) => l);
+    const adaIdx = labels.findIndex((l) => /ada.*parsel/i.test(l));
+    assert.ok(adaIdx >= 0);
+    assert.equal(labels[adaIdx + 1], 'Önemli Cephe');
+    assert.equal(labels[adaIdx + 2], 'Uzun Cephe');
+    assert.equal(labels[adaIdx + 3], 'Toplam Yol Cephesi');
+    assert.equal(labels[adaIdx + 4], 'Cephe Sayısı');
+    const map = Object.fromEntries(merged);
+    assert.equal(map['Toplam Yol Cephesi'], '253 m');
+  });
+
+  it('falls back to legacy fields when RoadV2 is absent', () => {
+    const legacy = baseDetail({
+      query_type: 'arsa',
+      road_frontage_values: {
+        total_road_frontage_edge_length_m: 88.5,
+        frontage_count: 2,
+      },
+    });
+    assert.equal(resolveRoadFrontageTotalLengthM(legacy), 88.5);
+    assert.equal(resolveRoadFrontageFaceCount(legacy), 2);
+  });
+
+  it('buildPriceInfoRows uses valuation_layers_summary for structure queries', () => {
+    const detail = baseDetail({
+      query_type: 'villa',
+      viewer_can_see_structure_cost_breakdown: true,
+      bina_maliyeti: 2168150,
+      arsa_fiyati: 12000000,
+      total_price: 6602085,
+      valuation_layers_summary: {
+        land: { total_tl: 6168455 },
+        structure: { structure_share_tl: 433630, cost_tl: 2168150 },
+        delivery: { total_tl: 6602085 },
+      },
+    });
+    const rows = buildPriceInfoRows(detail);
+    const labels = rows.map(([label]) => label);
+    assert.ok(labels.includes('Arazi maliyeti'));
+    assert.ok(labels.includes('Yapı payı'));
+    assert.equal(labels.includes('Villa maliyeti'), false);
+    const landRow = rows.find(([label]) => label === 'Arazi maliyeti');
+    const shareRow = rows.find(([label]) => label === 'Yapı payı');
+    const totalRow = rows.find(([label]) => label === 'Toplam fiyat (TL)');
+    assert.match(String(landRow?.[1]), /6\.168\.455/);
+    assert.match(String(shareRow?.[1]), /433\.630/);
+    assert.match(String(totalRow?.[1]), /6\.602\.085/);
   });
 });

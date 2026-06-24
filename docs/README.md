@@ -11,7 +11,7 @@ Kanonik mobil doküman kökü: **`mobil.git`** → `docs/`
 | [guides/](guides/) | Kurulum, klavye, operasyon rehberleri |
 | [build/](build/) | APK/AAB/iOS build |
 | [components/](components/) | UI bileşenleri |
-| [modules/](modules/) | VR, terrain, portal vb. modüller |
+| [modules/](modules/) | VR, Akıllı Ses, terrain, portal vb. modüller |
 | [api/](api/) | API / konum endpoint notları |
 | [changes/](changes/) | Tarihli değişiklik ve fix kayıtları |
 | [utils/](utils/) | Yardımcı modül notları |

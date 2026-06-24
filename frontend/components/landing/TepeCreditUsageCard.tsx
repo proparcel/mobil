@@ -14,11 +14,15 @@ type Props = {
 
 export function TepeCreditUsageCard({ item }: Props) {
   const iconName = ionIconForReward(item);
+  const tryPriced =
+    Boolean(item.is_try_priced) && typeof item.price_try === "number" && item.price_try > 0;
 
   return (
     <LandingGlassCard style={styles.card}>
       <Ionicons name={iconName as any} size={22} color={tepeCreditColors.cyan} style={styles.icon} />
-      <Text style={styles.credits}>{item.credits}</Text>
+      <Text style={styles.credits}>
+        {tryPriced ? item.price_try!.toLocaleString("tr-TR") : item.credits}
+      </Text>
       <Text style={styles.name} numberOfLines={2}>
         {item.display_name}
       </Text>
@@ -27,7 +31,7 @@ export function TepeCreditUsageCard({ item }: Props) {
           {item.description}
         </Text>
       ) : null}
-      <Text style={styles.unit}>Tepe Kredi</Text>
+      <Text style={styles.unit}>{tryPriced ? "TL" : "Tepe Kredi"}</Text>
     </LandingGlassCard>
   );
 }

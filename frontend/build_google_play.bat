@@ -41,8 +41,18 @@ if errorlevel 1 (
 )
 echo.
 
-REM 4) AAB derle
-echo [4/5] AAB derleniyor (bundleRelease)...
+REM 4) Manifest merge: READ_MEDIA block (tools:node=remove)
+echo [4/6] Android manifest izin duzeltmesi...
+node .\scripts\apply-android-native-fix.js
+if errorlevel 1 (
+    echo HATA: apply-android-native-fix basarisiz.
+    pause
+    exit /b 1
+)
+echo.
+
+REM 5) AAB derle
+echo [5/6] AAB derleniyor (bundleRelease)...
 cd android
 call gradlew.bat bundleRelease
 set GRADLE_EXIT=%errorlevel%

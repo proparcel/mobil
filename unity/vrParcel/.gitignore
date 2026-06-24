@@ -2,6 +2,7 @@ Library/
 Temp/
 Logs/
 UserSettings/
+proparcel/
 builds/ios/UnityFramework.framework/
 builds/ios/Data/
 builds/android/unityLibrary/

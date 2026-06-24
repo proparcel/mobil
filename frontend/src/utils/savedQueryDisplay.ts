@@ -1,5 +1,6 @@
 import type { SavedQueryItem } from "../../components/app/MyQueriesModal";
 import { makeSavedQueryKey, type SavedQuery } from "./savedQueries";
+import { resolveLocationForSavedQueryItem } from "./resolveSavedQueryLocation";
 
 export type SavedQueryDisplayRow = {
   id: string;
@@ -52,15 +53,11 @@ function extractRawArea(q: SavedQueryItem): unknown {
 export function getSavedQueryDisplayRow(q: SavedQueryItem): SavedQueryDisplayRow {
   const local = pickLocal(q);
   const lh = local?.location_header;
-  const apiTitle = "title" in q && q.title ? String(q.title).trim() : "";
-  let mahalle = lh?.mahalleAd?.trim() || "";
-  if (!mahalle && apiTitle.includes(" - ")) {
-    mahalle = apiTitle.split(" - ")[0]?.trim() || "";
-  }
-  if (!mahalle && apiTitle) mahalle = apiTitle;
+  const resolved = resolveLocationForSavedQueryItem(q);
 
-  const il = lh?.ilAd?.trim() || "-";
-  const ilce = lh?.ilceAd?.trim() || "-";
+  const il = resolved.il || "-";
+  const ilce = resolved.ilce || "-";
+  const mahalle = resolved.mahalle || lh?.mahalleAd?.trim() || "";
   const ada = String(q.ada || lh?.adaNo || "-").trim() || "-";
   const parsel = String(q.parsel || lh?.parselNo || "-").trim() || "-";
   const alan = formatQueryArea(extractRawArea(q));

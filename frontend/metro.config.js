@@ -36,17 +36,30 @@ const portalEntry = path.resolve(
   __dirname,
   'node_modules/@gorhom/portal/lib/commonjs/index.js',
 );
+const rniapEntry = path.resolve(__dirname, 'node_modules/react-native-iap/lib/module/index.js');
+const nitroModulesEntry = path.resolve(
+  __dirname,
+  'node_modules/react-native-nitro-modules/lib/module/index.js',
+);
 
 config.resolver.alias = {
   ...(config.resolver.alias || {}),
   "@": path.resolve(__dirname),
   "@gorhom/portal": portalEntry,
+  "react-native-iap": rniapEntry,
+  "react-native-nitro-modules": nitroModulesEntry,
 };
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === '@gorhom/portal') {
     return { type: 'sourceFile', filePath: portalEntry };
+  }
+  if (moduleName === 'react-native-iap') {
+    return { type: 'sourceFile', filePath: rniapEntry };
+  }
+  if (moduleName === 'react-native-nitro-modules') {
+    return { type: 'sourceFile', filePath: nitroModulesEntry };
   }
   if (defaultResolveRequest) {
     return defaultResolveRequest(context, moduleName, platform);

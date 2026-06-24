@@ -9,9 +9,13 @@ export type DroneProductionStepId =
   | "narration"
   | "prep"
   | "ref_upload"
+  | "payment"
   | "production"
   | "polling"
   | "ready";
+
+/** Mobil basit drone editör — backend OpenAI preflight atlar, doğrudan Runway */
+export const MOBILE_DRONE_RUNWAY_CLIENT_SOURCE = "mobile_drone_simple_editor";
 
 export type DroneProductionStepDef = {
   id: DroneProductionStepId;
@@ -21,94 +25,130 @@ export type DroneProductionStepDef = {
   method?: "GET" | "POST";
 };
 
-/** Video Oluştur akışı (sıralı) */
+/** Video Oluştur akışı (sıralı) — yalnızca kullanıcıya gösterilen başlıklar */
 export const DRONE_VIDEO_PRODUCTION_STEPS: DroneProductionStepDef[] = [
   {
     id: "tkgm",
-    title: "Parsel sorgusu (TKGM)",
-    api: "cbsapi.tkgm.gov.tr (doğrudan)",
-    method: "GET",
+    title: "Parsel sorgusu",
+    api: "",
   },
   {
     id: "context",
-    title: "İl / ilçe / nüfus / mesafe",
-    api: "/api/drone-video-context/",
-    method: "GET",
+    title: "Konum bilgileri",
+    api: "",
   },
   {
     id: "map_capture",
-    title: "Haritadan referans kareleri",
+    title: "Referans görselleri",
     api: "",
   },
   {
     id: "narration",
     title: "Anlatım metni",
-    api: "/api/drone-runway-narration/",
-    method: "POST",
+    api: "",
   },
   {
     id: "prep",
-    title: "Runway hazırlık (job)",
-    api: "/api/drone-recording-runway/prep/",
-    method: "POST",
+    title: "Video hazırlığı",
+    api: "",
   },
   {
     id: "ref_upload",
-    title: "Referans görselleri yükleme",
-    api: "/api/drone-recording-runway/prep/{job_id}/ref/{slot}/",
-    method: "POST",
+    title: "Görseller yükleniyor",
+    api: "",
+  },
+  {
+    id: "payment",
+    title: "Ödeme",
+    api: "",
   },
   {
     id: "production",
-    title: "AI video üretimi başlat",
-    api: "/api/drone-recording-runway/",
-    method: "POST",
+    title: "Video üretimi",
+    api: "",
   },
   {
     id: "polling",
-    title: "Üretim durumu",
-    api: "/api/drone-recording-runway/status/?job_id=…",
-    method: "GET",
+    title: "Video oluşturuluyor",
+    api: "",
   },
   {
     id: "ready",
-    title: "Önizleme videosu",
-    api: "/api/drone-recording-runway/file/{job_id}/",
-    method: "GET",
+    title: "Önizleme hazır",
+    api: "",
   },
 ];
 
-/** Dışa aktar (header indirme) — isteğe bağlı ikinci akış */
+/** Sunucu / geliştirici metinlerini kullanıcıya göstermeden süzgeç */
+const TECH_DETAIL_PATTERN =
+  /runway|openai|opencv|gpt|\/api\/|mapbox|tkgm|megsis|cbsapi|job_id|webhook|ffmpeg|remotion|frame\s*öncesi|resim\s*canlandırma/i;
+
+const FRAME_PROGRESS_PATTERN = /frame\s*hazır[^\d]*(\d+)\s*\/\s*(\d+)/i;
+
+export function userFacingPipelineDetail(
+  raw: string | undefined | null,
+  fallback = "İşleniyor…",
+): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return fallback;
+  const frameMatch = s.match(FRAME_PROGRESS_PATTERN);
+  if (frameMatch) {
+    return `Video karesi hazırlanıyor (${frameMatch[1]}/${frameMatch[2]})…`;
+  }
+  if (TECH_DETAIL_PATTERN.test(s)) {
+    if (/frame\s*hazır|video\s*kare/i.test(s)) return "Video karesi hazırlanıyor…";
+    return fallback;
+  }
+  return s;
+}
+
+/** Poll yanıtındaki step + label → kullanıcı metni (eski backend openai_refs dahil) */
+export function userFacingRunwayProgressMessage(
+  progress: { step?: string; label?: string } | null | undefined,
+  fallback = "Video oluşturuluyor…",
+): string {
+  const step = String(progress?.step || "").trim().toLowerCase();
+  if (step === "openai_refs" || step === "openai_ready") {
+    return "Video karesi hazırlanıyor…";
+  }
+  if (step === "runway") {
+    return userFacingPipelineDetail(progress?.label, "Video karesi hazırlanıyor…");
+  }
+  if (step === "merge" || step === "voice") {
+    return userFacingPipelineDetail(progress?.label, "Video birleştiriliyor…");
+  }
+  if (step === "done" || step === "ready") {
+    return "Video hazır";
+  }
+  return userFacingPipelineDetail(progress?.label, fallback);
+}
+
+/** Dışa aktar — kullanıcıya gösterilen adımlar */
 export const DRONE_PORTRAIT_EXPORT_STEPS: DroneProductionStepDef[] = [
   {
     id: "context",
     title: "Altyazı ayarları",
-    api: "/api/drone-editor/subtitle-settings/",
-    method: "POST",
+    api: "",
   },
   {
     id: "tkgm",
-    title: "Kullanıcı kartı (profil)",
-    api: "/api/profile/context/?sections=base",
-    method: "GET",
+    title: "Profil bilgileri",
+    api: "",
   },
   {
     id: "narration",
-    title: "Kart annotasyonu",
-    api: "/api/drone-editor/annotations/create/",
-    method: "POST",
+    title: "Kart bilgileri",
+    api: "",
   },
   {
     id: "prep",
-    title: "Dikey dışa aktar",
-    api: "/api/drone-editor/export/",
-    method: "POST",
+    title: "Dışa aktarma",
+    api: "",
   },
   {
     id: "polling",
     title: "Dışa aktarma durumu",
-    api: "/api/drone-editor/export/status/?job_id=…&orientation=portrait",
-    method: "GET",
+    api: "",
   },
 ];
 

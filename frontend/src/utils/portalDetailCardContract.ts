@@ -4,6 +4,7 @@
 import type { PortalQueryDetail, PortalStructurePriceSummary } from '../types/portal';
 import { formatTotalAppliedPercent } from './portalDfaHelpers';
 import { formatListingAttributeValueTr, listingAttributeLabelTr } from './listingAttributeLabels';
+import { resolveRoadFrontageTotalLengthM, type PhysicalSupplementalRow } from './portalInsightHelpers';
 
 export const STRUCTURE_PORTAL_QUERY_TYPES = new Set([
   'bina',
@@ -110,6 +111,31 @@ const BP_SKIP_ALWAYS = new Set(['bina yaşı', 'inşaat alanı (m²)']);
 export type PortalDetailRow = [string, string];
 /** [label, value, prominent?, sublineLabel?, sublineValue?] */
 export type PortalDetailPriceRow = [string, string, boolean?, string?, string?];
+
+const PHYSICAL_ROW_LABELS_SKIP = new Set(['parsel şekli', 'parsel sekli']);
+
+/** Ada/parsel satırından sonra fiziksel ek satırları birleştirir (web parity). */
+export function mergeSupplementalIntoParcelRows(
+  coreRows: PortalDetailRow[],
+  supplementalRows: PhysicalSupplementalRow[],
+): PortalDetailRow[] {
+  if (!supplementalRows.length) return coreRows;
+  const existing = new Set(coreRows.map(([label]) => normLabelKey(label)));
+  const toInsert: PortalDetailRow[] = [];
+  for (const row of supplementalRows) {
+    const key = normLabelKey(row.label);
+    if (PHYSICAL_ROW_LABELS_SKIP.has(key) || existing.has(key)) continue;
+    existing.add(key);
+    toInsert.push([row.label, row.value]);
+  }
+  if (!toInsert.length) return coreRows;
+  const adaIdx = coreRows.findIndex(([label]) => {
+    const lbl = normLabelKey(label);
+    return lbl.includes('ada') && lbl.includes('parsel');
+  });
+  const insertAt = adaIdx >= 0 ? adaIdx + 1 : coreRows.length;
+  return [...coreRows.slice(0, insertAt), ...toInsert, ...coreRows.slice(insertAt)];
+}
 
 export interface BuildPortalDetailRowsOptions {
   queryTypeLabel?: string;
@@ -308,15 +334,7 @@ function appendListingAttrRows(
 }
 
 function resolveRoadFrontageM(data: PortalQueryDetail, override?: number | null): number | null {
-  if (override != null && Number.isFinite(Number(override))) return Number(override);
-  const rf = data.road_frontage_values?.total_road_frontage_edge_length_m;
-  if (rf != null && Number.isFinite(Number(rf))) return Number(rf);
-  const em = data.edge_measure_data;
-  if (em && typeof em === 'object') {
-    const t = (em as { total_road_frontage_edge_length_m?: unknown }).total_road_frontage_edge_length_m;
-    if (t != null && Number.isFinite(Number(t))) return Number(t);
-  }
-  return null;
+  return resolveRoadFrontageTotalLengthM(data, override);
 }
 
 /** Web getPortalValuationDisplay — canonical birim/toplam/alan */
@@ -417,11 +435,6 @@ export function buildParcelInfoRows(
 
   rows.push(['Arazi Alanı', formatArea(data.arazi_m2 ?? data.area_m2)]);
 
-  const roadFrontage = resolveRoadFrontageM(data, options.totalRoadFrontageLength);
-  if (roadFrontage != null && !data.listing_id) {
-    rows.push(['Toplam Yola Cephe', formatMeters(roadFrontage)]);
-  }
-
   appendListingAttrRows(rows, data, LISTING_ATTR_KEYS_PARCEL_CARD);
 
   const bp = data.building_params;
@@ -505,8 +518,36 @@ export function buildPriceInfoRows(
   const isStructure = isStructurePortalQueryType(queryType);
   const canSeeStructureCost =
     !isStructure || data.viewer_can_see_structure_cost_breakdown === true;
+  const layers = data.valuation_layers_summary;
 
   rows.push(['Uygulanan Toplam % Oran', formatTotalAppliedPercent(data)]);
+
+  if (isStructure && layers && typeof layers === 'object') {
+    const landTotal = numOrNull(layers.land?.total_tl);
+    let structureShare = numOrNull(layers.structure?.structure_share_tl);
+    const deliveryTotal =
+      numOrNull(layers.delivery?.total_tl) ?? getPortalValuationDisplay(data).total;
+    if (structureShare == null && deliveryTotal != null && landTotal != null) {
+      structureShare = deliveryTotal - landTotal;
+    }
+
+    if (landTotal != null) {
+      rows.push(['Arazi maliyeti', formatPrice(landTotal)]);
+    }
+    if (canSeeStructureCost && structureShare != null && structureShare > 0) {
+      rows.push(['Yapı payı', formatPrice(structureShare)]);
+    }
+
+    const landUnit = getAraziLandUnitSubline(data);
+    rows.push([
+      'Toplam fiyat (TL)',
+      formatPrice(deliveryTotal ?? data.total_price),
+      true,
+      landUnit?.label,
+      landUnit?.value,
+    ]);
+    return rows;
+  }
 
   const structureCostTl = resolveStructureCostTl(data);
   if (isStructure && canSeeStructureCost && structureCostTl != null) {

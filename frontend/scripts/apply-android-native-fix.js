@@ -411,6 +411,62 @@ function ensureManifestRuntimePermissions() {
   return true;
 }
 
+const BLOCKED_BROAD_MEDIA_PERMISSIONS = [
+  "android.permission.READ_MEDIA_IMAGES",
+  "android.permission.READ_MEDIA_VIDEO",
+  "android.permission.READ_MEDIA_AUDIO",
+  "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+  "android.permission.READ_EXTERNAL_STORAGE",
+];
+
+function blockedMediaPermissionRemoveLine(permission) {
+  return `<uses-permission android:name="${permission}" tools:node="remove"/>`;
+}
+
+/**
+ * Gradle manifest merge: bagimlilikler (expo-media-library vb.) READ_MEDIA_* ekleyebilir.
+ * blockedPermissions ile gelen tools:node="remove" satirlari merge sirasinda bunlari dusurur.
+ * Eski surum bu satirlari tamamen siliyordu — AAB'de izinler geri geliyordu.
+ */
+function ensureManifestBlockedMediaPermissions() {
+  if (!fs.existsSync(manifestPath)) return true;
+  let text = fs.readFileSync(manifestPath, "utf8");
+  const before = text;
+
+  if (!text.includes('xmlns:tools="http://schemas.android.com/tools"')) {
+    text = text.replace(
+      /<manifest\b([^>]*)>/,
+      '<manifest$1 xmlns:tools="http://schemas.android.com/tools">'
+    );
+  }
+
+  let changed = text !== before;
+  for (const permission of BLOCKED_BROAD_MEDIA_PERMISSIONS) {
+    const removeLine = blockedMediaPermissionRemoveLine(permission);
+    if (text.includes(removeLine)) continue;
+
+    const escaped = permission.replace(/\./g, "\\.");
+    const anyLineRe = new RegExp(
+      `\\s*<uses-permission[^>]*android:name="${escaped}"[^/]*/>\\s*\\n?`,
+      "g"
+    );
+    if (anyLineRe.test(text)) {
+      text = text.replace(anyLineRe, `\n  ${removeLine}\n`);
+    } else {
+      text = text.replace(/(<manifest[^>]*>\s*)/, `$1  ${removeLine}\n`);
+    }
+    changed = true;
+  }
+
+  if (changed) {
+    fs.writeFileSync(manifestPath, text);
+    console.warn(
+      "[android-native-fix] AndroidManifest READ_MEDIA block (tools:node=remove) uygulandi"
+    );
+  }
+  return true;
+}
+
 function ensureManifestNoExpoDevScheme() {
   if (!fs.existsSync(manifestPath)) return true;
   let text = fs.readFileSync(manifestPath, "utf8");
@@ -480,6 +536,25 @@ if (generatedAssetPacks.exists()) {
   text = `${text.trimEnd()}\n${block}\n`;
   fs.writeFileSync(settingsGradlePath, text);
   console.warn("[android-native-fix] settings.gradle asset pack include eklendi");
+  return true;
+}
+
+function ensureAppVersionFromConfig() {
+  if (!fs.existsSync(appBuildGradlePath)) return true;
+  const versionCode = appConfig.expo?.android?.versionCode;
+  const versionName = appConfig.expo?.version || appConfig.version;
+  if (!versionCode || !versionName) return true;
+
+  let text = fs.readFileSync(appBuildGradlePath, "utf8");
+  const before = text;
+  text = text.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
+  text = text.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
+  if (text !== before) {
+    fs.writeFileSync(appBuildGradlePath, text);
+    console.warn(
+      `[android-native-fix] versionCode=${versionCode}, versionName=${versionName} (app.config.js)`
+    );
+  }
   return true;
 }
 
@@ -610,6 +685,26 @@ function ensureUnityLibraryLinked() {
 
 // TerrainUnityActivity drawable kaynaklari (R.drawable.terrain_*). expo prebuild --clean
 // android/ klasorunu sildigi icin bu kaynaklar her prebuild sonrasi tekrar konur.
+function ensureOptionalHardwareFeatures() {
+  try {
+    const {
+      patchAppManifestOptionalHardware,
+      patchUnityLibraryManifestOptionalHardware,
+    } = require("../plugins/androidOptionalHardware.js");
+    const { resolveUnityLibraryRoot } = require("../plugins/withUnityLibraryEmbed.js");
+    patchAppManifestOptionalHardware(manifestPath);
+    const libraryRoot = resolveUnityLibraryRoot(root);
+    if (fs.existsSync(path.join(libraryRoot, "src", "main", "AndroidManifest.xml"))) {
+      patchUnityLibraryManifestOptionalHardware(libraryRoot);
+    }
+    console.log("[android-native-fix] optional hardware features (AR/VR/camera/mic) applied");
+    return true;
+  } catch (err) {
+    console.warn("[android-native-fix] optional hardware patch failed:", err.message);
+    return true;
+  }
+}
+
 function ensureTerrainDrawables() {
   try {
     const src = path.join(root, "modules", "parcelTerrain3d", "native", "androidRes");
@@ -649,9 +744,12 @@ const ok =
   ensureRnCliNativeEntry() &&
   ensureManifestNoExpoDevScheme() &&
   ensureManifestRuntimePermissions() &&
+  ensureManifestBlockedMediaPermissions() &&
+  ensureOptionalHardwareFeatures() &&
   ensureAndroidAppLinkIntentFilters() &&
   ensureSettingsIncludesAssetPacks() &&
   ensureAppBuildGradlePlayRelease() &&
+  ensureAppVersionFromConfig() &&
   ensureAndroidLocalProperties() &&
   ensureUnityLibraryLinked() &&
   ensureTerrainDrawables() &&

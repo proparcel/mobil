@@ -18,6 +18,50 @@ export function getModelsCacheDirPath(): string | null {
   return d ? d.replace(/\/+$/, "") : null;
 }
 
+/** Aynı model için eşzamanlı indirmeleri tek işte birleştirir (.tmp çakışmasını önler). */
+const inflightDownloads = new Map<string, Promise<string>>();
+
+const DISK_HEADROOM_BYTES = 64 * 1024 * 1024; // 64 MB güvenlik payı
+
+async function getDeviceFreeBytes(): Promise<number | null> {
+  try {
+    const info = await RNFS.getFSInfo();
+    return typeof info?.freeSpace === "number" && info.freeSpace > 0 ? info.freeSpace : null;
+  } catch {
+    return null;
+  }
+}
+
+async function assertEnoughDiskSpace(requiredBytes: number): Promise<void> {
+  if (!Number.isFinite(requiredBytes) || requiredBytes <= 0) return;
+  const free = await getDeviceFreeBytes();
+  if (free === null) return;
+  const need = requiredBytes + DISK_HEADROOM_BYTES;
+  if (free < need) {
+    const needMb = Math.ceil(need / (1024 * 1024));
+    const freeMb = Math.ceil(free / (1024 * 1024));
+    throw new Error(`Yetersiz depolama alanı (gerekli ~${needMb} MB, boş ~${freeMb} MB)`);
+  }
+}
+
+function makeUniqueTmpPath(finalPath: string): string {
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return `${finalPath}.dl_${stamp}.tmp`;
+}
+
+function parentDirOf(filePath: string): string {
+  const idx = filePath.lastIndexOf("/");
+  return idx > 0 ? filePath.slice(0, idx) : filePath;
+}
+
+async function unlinkIfExists(path: string): Promise<void> {
+  try {
+    if (await RNFS.exists(path)) await RNFS.unlink(path);
+  } catch {
+    // ignore
+  }
+}
+
 type ModelsManifestEntry = {
   urlHash: string;
   expectedSize?: number; // bytes
@@ -142,45 +186,90 @@ function toFsPath(uriOrPath: string): string {
 
 /**
  * İndirilen .tmp dosyasını kalıcı cache yoluna taşır.
- * Android'de moveFile bazen EXDEV ile düşer; o zaman copyFile + unlink kullanılır.
+ * Önce .part dosyasına kopyalar (hedef kilitliyse moveFile doğrudan düşebilir).
  */
 async function promoteTmpToFinal(fromPath: string, toPath: string): Promise<boolean> {
-  try {
-    const destExists = await RNFS.exists(toPath);
-    if (destExists) await RNFS.unlink(toPath);
-  } catch {
-    // ignore
-  }
-
-  try {
-    await RNFS.moveFile(fromPath, toPath);
-    return true;
-  } catch (moveErr) {
-    console.warn("[modelsCache] moveFile başarısız, copyFile deneniyor:", {
-      from: fromPath.substring(Math.max(0, fromPath.length - 60)),
-      to: toPath.substring(Math.max(0, toPath.length - 60)),
-      error: String((moveErr as any)?.message || moveErr),
-    });
-  }
-
-  try {
-    await RNFS.copyFile(fromPath, toPath);
-    const ok = await RNFS.exists(toPath);
-    if (!ok) return false;
-    try {
-      await RNFS.unlink(fromPath);
-    } catch {
-      // tmp kalabilir; final dosya hazır
-    }
-    return true;
-  } catch (copyErr) {
-    console.error("[modelsCache] copyFile fallback başarısız:", {
-      from: fromPath.substring(Math.max(0, fromPath.length - 60)),
-      to: toPath.substring(Math.max(0, toPath.length - 60)),
-      error: String((copyErr as any)?.message || copyErr),
-    });
+  const fromExists = await RNFS.exists(fromPath);
+  if (!fromExists) {
+    console.error("[modelsCache] promoteTmpToFinal: kaynak dosya yok", { fromPath });
     return false;
   }
+
+  let fromSize = 0;
+  try {
+    const st = await RNFS.stat(fromPath);
+    fromSize = st && typeof st.size === "number" ? st.size : 0;
+  } catch {
+    fromSize = 0;
+  }
+  if (fromSize <= 0) {
+    console.error("[modelsCache] promoteTmpToFinal: kaynak dosya boş", { fromPath, fromSize });
+    return false;
+  }
+
+  const parent = parentDirOf(toPath);
+  if (parent) {
+    try {
+      await RNFS.mkdir(parent);
+    } catch {
+      // klasör zaten var
+    }
+  }
+
+  const partPath = `${toPath}.part`;
+  await unlinkIfExists(partPath);
+
+  try {
+    await RNFS.copyFile(fromPath, partPath);
+  } catch (copyToPartErr) {
+    console.warn("[modelsCache] copyFile(.part) başarısız, moveFile deneniyor:", {
+      from: fromPath,
+      to: toPath,
+      error: String((copyToPartErr as any)?.message || copyToPartErr),
+    });
+    try {
+      await unlinkIfExists(toPath);
+      await RNFS.moveFile(fromPath, toPath);
+      return true;
+    } catch (moveErr) {
+      console.error("[modelsCache] moveFile doğrudan da başarısız:", {
+        from: fromPath,
+        to: toPath,
+        error: String((moveErr as any)?.message || moveErr),
+      });
+      return false;
+    }
+  }
+
+  await unlinkIfExists(toPath);
+
+  try {
+    await RNFS.moveFile(partPath, toPath);
+  } catch (movePartErr) {
+    console.warn("[modelsCache] .part → final move başarısız, copyFile deneniyor:", {
+      error: String((movePartErr as any)?.message || movePartErr),
+    });
+    try {
+      await RNFS.copyFile(partPath, toPath);
+      await unlinkIfExists(partPath);
+    } catch (copyFinalErr) {
+      console.error("[modelsCache] copyFile(.part → final) başarısız:", {
+        from: partPath,
+        to: toPath,
+        error: String((copyFinalErr as any)?.message || copyFinalErr),
+      });
+      await unlinkIfExists(partPath);
+      return false;
+    }
+  }
+
+  await unlinkIfExists(fromPath);
+
+  const ok = await RNFS.exists(toPath);
+  if (!ok) {
+    console.error("[modelsCache] promoteTmpToFinal: hedef dosya oluşmadı", { toPath });
+  }
+  return ok;
 }
 
 function isRemoteHttpUrl(url: string): boolean {
@@ -562,7 +651,14 @@ export async function ensureCachedModelUri(params: {
       localUri: localUri.substring(0, 80),
     });
   }
-  // URL değiştiyse veya dosya invalid ise: temizle
+
+  const inflight = inflightDownloads.get(manifestKey);
+  if (inflight) {
+    console.log("[modelsCache] Paralel indirme birleştiriliyor:", { manifestKey });
+    return inflight;
+  }
+
+  const downloadTask = (async (): Promise<string> => {
   try {
     const localPath = localUri.replace("file://", "");
     const exists = await RNFS.exists(localPath);
@@ -617,15 +713,15 @@ export async function ensureCachedModelUri(params: {
 
   const headers: Record<string, string> = { "ngrok-skip-browser-warning": "true" };
   let lastPercent = -1;
-  const tmpUri = `${localUri}.tmp`;
-  const tmpPath = toFsPath(tmpUri);
+  const finalPath = toFsPath(localUri);
+  let tmpPath = makeUniqueTmpPath(finalPath);
+  let uri = localUri.startsWith("file://") ? `file://${tmpPath}` : tmpPath;
 
   function delay(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
   }
 
   let lastTotalBytesExpected: number | null = null;
-  let uri = tmpUri;
   // RNFS.downloadFile() { jobId, promise } döndürür; stop için stopDownload(jobId) kullanılır.
   let downloadJob: { jobId: number; promise: Promise<any> } | null = null;
   let lastError: Error | null = null;
@@ -633,13 +729,10 @@ export async function ensureCachedModelUri(params: {
   for (let attempt = 1; attempt <= MAX_DOWNLOAD_RETRIES; attempt++) {
     lastTotalBytesExpected = null;
     lastPercent = -1;
-    // Önceki yarım tmp kalmışsa temizle
-    try {
-      const exists = await RNFS.exists(tmpPath);
-      if (exists) await RNFS.unlink(tmpPath);
-    } catch {
-      /* ignore */
-    }
+    tmpPath = makeUniqueTmpPath(finalPath);
+    uri = localUri.startsWith("file://") ? `file://${tmpPath}` : tmpPath;
+    // Önceki yarım tmp kalmışsa temizle (yalnızca bu indirmenin dosyası)
+    await unlinkIfExists(tmpPath);
 
     try {
       if (attempt > 1) {
@@ -702,8 +795,11 @@ export async function ensureCachedModelUri(params: {
           : `İndirme başarısız: dosya oluşmadı - ${url.substring(0, 60)}`;
         throw new Error(errorMsg);
       }
+
+      if (tmpSize > 0) {
+        await assertEnoughDiskSpace(tmpSize);
+      }
       
-      uri = tmpUri;
       break; // başarılı, döngüden çık
     } catch (e) {
       lastError = e as Error;
@@ -934,6 +1030,14 @@ export async function ensureCachedModelUri(params: {
   });
 
   return localUri;
+  })();
+
+  inflightDownloads.set(manifestKey, downloadTask);
+  try {
+    return await downloadTask;
+  } finally {
+    inflightDownloads.delete(manifestKey);
+  }
 }
 
 export async function isCachedModelUri(uri: string): Promise<boolean> {

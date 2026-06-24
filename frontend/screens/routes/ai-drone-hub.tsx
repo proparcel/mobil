@@ -3,25 +3,18 @@
  */
 
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View, StatusBar } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 
-import { useRouter } from "../../src/hooks/useNavigation";
+import { MobileAiScreenShell } from "../../components/app/MobileAiScreenHeader";
 import { AI_DRONE_EDITOR_THEME } from "../../src/constants/aiDroneEditorTheme";
-import {
-  MobileAiScreenHeader,
-  MOBILE_AI_HEADER_COLORS,
-} from "../../components/app/MobileAiScreenHeader";
+import { useRouter } from "../../src/hooks/useNavigation";
 
 export default function AiDroneHubScreen() {
   const router = useRouter();
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor={MOBILE_AI_HEADER_COLORS.statusBar} />
-      <MobileAiScreenHeader title="AI Drone Video" onBack={() => router.back()} />
-
+    <MobileAiScreenShell title="AI Drone Video" onBack={() => router.back()} pageBackgroundColor="#f8fafc">
       <View style={styles.body}>
         <Text style={styles.lead}>
           Parsel tanıtım videosu için yöntem seçin. Basit modda kendiniz düzenlersiniz; ProParcel modunda uzman editör üretir.
@@ -36,7 +29,7 @@ export default function AiDroneHubScreen() {
             <Ionicons name="phone-portrait-outline" size={28} color={AI_DRONE_EDITOR_THEME.primaryBright} />
           </View>
           <View style={styles.cardText}>
-            <Text style={styles.cardTitle}>Basit Video</Text>
+            <Text style={styles.cardTitle}>Pratik Video</Text>
             <Text style={styles.cardDesc}>
               Dikey video, seslendirme ve müzik. Parsel sorgusu ile haritadan kareler, hızlı üretim.
             </Text>
@@ -61,12 +54,11 @@ export default function AiDroneHubScreen() {
           <Ionicons name="chevron-forward" size={22} color={AI_DRONE_EDITOR_THEME.muted} />
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </MobileAiScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#f8fafc" },
   body: { flex: 1, padding: 20, gap: 16 },
   lead: {
     fontSize: 14,

@@ -71,6 +71,7 @@ async function invokeMapboxSnap(
   map: unknown,
   mode: 'sized' | 'boolean',
   dimensions: { mapWidth: number; mapHeight: number },
+  format: 'png' | 'jpeg' = 'png',
 ): Promise<string | null> {
   try {
     const res =
@@ -79,8 +80,8 @@ async function invokeMapboxSnap(
         : await fn.call(map, {
             width: dimensions.mapWidth,
             height: dimensions.mapHeight,
-            format: 'png',
-            quality: 1,
+            format,
+            quality: format === 'jpeg' ? 0.92 : 1,
             writeToDisk: true,
           });
     return extractSnapUri(res);
@@ -91,8 +92,10 @@ async function invokeMapboxSnap(
 
 export const tryMapboxSnap = async (
   mapRef: React.RefObject<any>,
-  dimensions: { mapWidth: number; mapHeight: number }
+  dimensions: { mapWidth: number; mapHeight: number },
+  options?: { format?: 'png' | 'jpeg' },
 ): Promise<string | null> => {
+  const snapFormat = options?.format ?? 'png';
   const map = mapRef.current;
   if (!map) {
     console.warn('[mapboxSnapshot] MapView ref yok');
@@ -112,7 +115,7 @@ export const tryMapboxSnap = async (
   await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
 
   for (const mode of snapModeOrder()) {
-    const uri = await invokeMapboxSnap(fn, map, mode, dimensions);
+    const uri = await invokeMapboxSnap(fn, map, mode, dimensions, snapFormat);
     if (uri && (await isCaptureImageUriUsable(uri))) {
       preferredSnapMode = mode;
       if (__DEV__) console.log('[mapboxSnapshot] snapshot OK:', mode, uri);
@@ -126,3 +129,48 @@ export const tryMapboxSnap = async (
   console.warn('[mapboxSnapshot] snapshot başarısız veya boş');
   return null;
 };
+
+/**
+ * MapView'da görünen piksel kadrajını yakalar (boyut zorlaması yok — önizleme WYSIWYG).
+ * takeSnap(true) öncelikli; şablon en-boy oranına zorlanmış snap kadrajı kaydırır.
+ */
+export async function tryMapboxSnapLiveView(
+  mapRef: React.RefObject<any>,
+  options?: { format?: 'png' | 'jpeg' },
+): Promise<string | null> {
+  const snapFormat = options?.format ?? 'png';
+  const map = mapRef.current;
+  if (!map) {
+    console.warn('[mapboxSnapshot] MapView ref yok (live)');
+    return null;
+  }
+
+  const fn =
+    (typeof map.takeSnap === 'function' && map.takeSnap) ||
+    (typeof map.takeSnapshot === 'function' && map.takeSnapshot) ||
+    null;
+
+  if (!fn) {
+    console.warn('[mapboxSnapshot] takeSnap/takeSnapshot yok (live)');
+    return null;
+  }
+
+  await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+
+  try {
+    const res =
+      snapFormat === 'jpeg'
+        ? await fn.call(map, { writeToDisk: true, format: 'jpeg', quality: 0.92 })
+        : await fn.call(map, true);
+    const uri = extractSnapUri(res);
+    if (uri && (await isCaptureImageUriUsable(uri))) {
+      if (__DEV__) console.log('[mapboxSnapshot] live snapshot OK:', uri);
+      return uri;
+    }
+  } catch {
+    /* sized yedek aşağıda */
+  }
+
+  console.warn('[mapboxSnapshot] live snapshot başarısız');
+  return null;
+}

@@ -176,13 +176,13 @@ export default function ProfileCompanySubUsersSection({
         <Text style={styles.cardTitle}>Alt kullanıcılar</Text>
       </View>
       <Text style={styles.cardHint}>
-        Bağlı kullanıcılara aylık Tepe Coin payı tanımlayın. Web firma sekmesi ile aynı API kullanılır.
+        Bağlı kullanıcılara aylık Tepe Kredi payı tanımlayın. Web firma sekmesi ile aynı API kullanılır.
       </Text>
 
       <View style={styles.poolPill}>
         <Text style={styles.poolLabel}>Firma havuzu</Text>
         <Text style={styles.poolValue}>
-          {Number(allocations.company_balance || 0).toLocaleString('tr-TR')} Tepe Coin
+          {Number(allocations.company_balance || 0).toLocaleString('tr-TR')} Tepe Kredi
         </Text>
       </View>
 

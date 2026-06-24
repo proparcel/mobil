@@ -1,20 +1,20 @@
 import { Alert } from 'react-native';
-import type { CustomerFeatureFlags, User } from '../types/auth';
+import type { User } from '../types/auth';
 
-import { canUseSmartQueryFromMembership } from './membership';
+export { parseCustomerFeatureFlags } from './customerFeatureFlags';
 
 export const SMART_QUERY_UPGRADE_MESSAGE =
   'Bu özellik abonelik paketine dahildir. Paketinizi yükselterek metin, ses ve görsel ile Akıllı Sorgu kullanabilirsiniz.';
 
-export function canUseSmartQuery(user: User | null | undefined): boolean {
-  return canUseSmartQueryFromMembership(user);
+function lower(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
 }
 
-export function parseCustomerFeatureFlags(raw: unknown): CustomerFeatureFlags | undefined {
-  if (!raw || typeof raw !== 'object') return undefined;
-  const obj = raw as Record<string, unknown>;
-  if (typeof obj.smart_query !== 'boolean') return undefined;
-  return { smart_query: obj.smart_query };
+export function canUseSmartQuery(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.features?.smart_query === true) return true;
+  const ct = lower(user.customer_type || 'basic');
+  return ['business', 'silver', 'gold', 'premium', 'vip', 'vip_limited'].includes(ct);
 }
 
 export function promptSmartQueryUpgrade(onViewPricing?: () => void): void {
@@ -23,6 +23,13 @@ export function promptSmartQueryUpgrade(onViewPricing?: () => void): void {
     ...(onViewPricing
       ? [{ text: 'Paketleri İncele', onPress: onViewPricing }]
       : []),
+  ]);
+}
+
+export function promptSmartQueryLogin(onLogin?: () => void): void {
+  Alert.alert('Giriş gerekli', 'Sesli sorgu için giriş yapın.', [
+    { text: 'İptal', style: 'cancel' },
+    ...(onLogin ? [{ text: 'Giriş Yap', onPress: onLogin }] : []),
   ]);
 }
 

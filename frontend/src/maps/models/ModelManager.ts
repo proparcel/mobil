@@ -3,14 +3,14 @@
  * Mapbox ModelLayer instance yönetimi (ekle/temizle/seçim)
  */
 import { useCallback, useMemo, useState } from "react";
-import type { ModelType } from "./modelCatalog";
-
 /** Kategoriye göre varsayılan scale (gerçek ölçülerde çizim: 1 = 1 birim). */
-export const CATEGORY_SCALE: Record<ModelType, [number, number, number]> = {
+export const CATEGORY_SCALE: Record<string, [number, number, number]> = {
   car: [1, 1, 1],
   house: [1, 1, 1],
   tree: [1, 1, 1],
   grass: [1, 1, 1],
+  gardenseating: [1, 1, 1],
+  ground: [1, 1, 1],
 };
 
 export const MIN_MODEL_SCALE = 0.05;

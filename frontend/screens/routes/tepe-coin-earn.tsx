@@ -53,7 +53,7 @@ export default function TepeCoinEarnScreen() {
         <TouchableOpacity style={styles.headerBtn} onPress={() => router.back()} accessibilityLabel="Geri">
           <Ionicons name="arrow-back" size={18} color="#f8fafc" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Tepe Coin Kazan</Text>
+        <Text style={styles.headerTitle}>Tepe Kredi Kazan</Text>
         <View style={styles.headerRight} />
       </View>
 
@@ -63,7 +63,7 @@ export default function TepeCoinEarnScreen() {
             <Image source={TepeCoinIcon} style={styles.cardIcon} />
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Bizi Öner</Text>
-              <Text style={styles.cardSubtitle}>Arkadaşın linkinle kayıt olursa 5 coin.</Text>
+              <Text style={styles.cardSubtitle}>Arkadaşın linkinle kayıt olursa 5 kredi.</Text>
             </View>
           </View>
           {!isAuthenticated ? (
@@ -95,7 +95,7 @@ export default function TepeCoinEarnScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Ekran Görüntüsü Paylaş</Text>
-          <Text style={styles.cardSubtitle}>Paylaşım tamamlanınca 1 coin.</Text>
+          <Text style={styles.cardSubtitle}>Paylaşım tamamlanınca 1 kredi.</Text>
           <TouchableOpacity
             style={styles.linkBtn}
             onPress={() => {
@@ -110,17 +110,17 @@ export default function TepeCoinEarnScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Değerlendirme Yap</Text>
-          <Text style={styles.cardSubtitle}>Yakında (10 coin).</Text>
+          <Text style={styles.cardSubtitle}>Yakında (10 kredi).</Text>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Rapor İçin 3 Güncel Fotoğraf Yükle</Text>
-          <Text style={styles.cardSubtitle}>Yakında (20 coin).</Text>
+          <Text style={styles.cardSubtitle}>Yakında (20 kredi).</Text>
         </View>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Satış Bilgisi Gir</Text>
-          <Text style={styles.cardSubtitle}>Dekont onaylanınca 30 coin.</Text>
+          <Text style={styles.cardSubtitle}>Dekont onaylanınca 30 kredi.</Text>
           <TouchableOpacity style={styles.linkBtn} onPress={() => router.push("sales-report")}>
             <Text style={styles.linkBtnText}>Formu aç</Text>
             <Ionicons name="chevron-forward" size={18} color="#3b82f6" />

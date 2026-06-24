@@ -1,5 +1,6 @@
 import type { CustomerType, ProfilePublic, User, UserProfile } from '../types/auth';
-import { parseCustomerFeatureFlags } from './customerFeatureGates';
+import { parseCustomerFeatureFlags } from './customerFeatureFlags';
+import { canUseSmartQuery } from './customerFeatureGates';
 
 export type MemberType = 'individual' | 'consultant' | 'corporate' | 'admin' | 'expert';
 export type CorporateType = 'emlak' | 'lihkab' | 'spk' | 'editor' | 'none';
@@ -88,7 +89,7 @@ export function isCorporateMember(profile?: UserProfile | null, user?: User | nu
   return memberType === 'corporate' || memberType === 'expert';
 }
 
-/** Danışman veya kurumsal üye — ProSorgu / sandık erişimi (is_expert ile karıştırma) */
+/** Danışman veya kurumsal üye — sandık erişimi (is_expert ile karıştırma) */
 export function isExpertMember(user?: User | null, profile?: UserProfile | null): boolean {
   return isConsultantMember(profile, user) || isCorporateMember(profile, user);
 }
@@ -125,17 +126,17 @@ export function effectiveCorporateType(profile?: UserProfile | null): CorporateT
 
 export function canAccessProSorgu(
   user?: User | null,
-  profile?: UserProfile | null,
+  _profile?: UserProfile | null,
   apiFlag?: boolean | null,
 ): boolean {
   if (apiFlag === true) return true;
   if (apiFlag === false) return false;
-  if (!user) return true;
+  if (!user) return false;
   if (isPlatformAdmin(user)) return true;
   if (user.can_access_prosorgu === true) return true;
   if (user.can_access_prosorgu === false) return false;
-  if (isIndividualMember(user, profile)) return false;
-  return true;
+  const customerType = lower(user.customer_type) || 'basic';
+  return customerType !== 'basic';
 }
 
 export function membershipDisplayLabel(
@@ -151,10 +152,7 @@ export function membershipDisplayLabel(
 }
 
 export function canUseSmartQueryFromMembership(user?: User | null): boolean {
-  if (!user) return false;
-  if (user.features?.smart_query === true) return true;
-  const ct = lower(user.customer_type || 'basic');
-  return ['business', 'silver', 'gold', 'premium', 'vip', 'vip_limited'].includes(ct);
+  return canUseSmartQuery(user);
 }
 
 export function canViewExpertScore(user?: User | null, profile?: UserProfile | null): boolean {

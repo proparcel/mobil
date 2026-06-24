@@ -94,6 +94,8 @@ export function parseProParcelDeepLink(rawUrl: string): DeepLinkNavigationTarget
   if (path === '/go') {
     const ul = params.get('ul');
     if (ul) return parseProParcelDeepLink(ul);
+    const dl = params.get('dl');
+    if (dl) return parseProParcelDeepLink(dl);
     return null;
   }
 

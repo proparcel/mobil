@@ -76,17 +76,33 @@ function ensureAndroidVrNative(projectRoot, androidRoot) {
   const manifestPath = path.join(androidRoot, "app", "src", "main", "AndroidManifest.xml");
   if (fs.existsSync(manifestPath)) {
     let manifest = fs.readFileSync(manifestPath, "utf8");
-    const arCoreMeta =
-      '<meta-data android:name="com.google.ar.core" android:value="required" tools:replace="android:value"/>';
-    if (manifest.includes('android:name="com.google.ar.core"')) {
+    const { unityExportReady } = require("./withUnityLibraryEmbed.js");
+    if (unityExportReady(projectRoot)) {
+      const arCoreMeta =
+        '<meta-data android:name="com.google.ar.core" android:value="optional" tools:replace="android:value"/>';
+      const arCoreMinApk =
+        '<meta-data android:name="com.google.ar.core.min_apk_version" android:value="190805000" tools:replace="android:value"/>';
+      if (manifest.includes('android:name="com.google.ar.core"')) {
+        manifest = manifest.replace(
+          /<meta-data android:name="com\.google\.ar\.core" android:value="[^"]*"[^/]*\/>/,
+          arCoreMeta,
+        );
+      } else {
+        manifest = manifest.replace(/<application([^>]*)>/, `<application$1>\n    ${arCoreMeta}`);
+      }
+      if (!manifest.includes('android:name="com.google.ar.core.min_apk_version"')) {
+        manifest = manifest.replace(
+          /(<meta-data android:name="com\.google\.ar\.core"[^/]*\/>)/,
+          `$1\n    ${arCoreMinApk}`,
+        );
+      }
+    } else if (manifest.includes('android:name="com.google.ar.core"')) {
+      manifest = manifest.replace(/\n?\s*<meta-data android:name="com\.google\.ar\.core[^/]*\/>\n?/g, "\n");
       manifest = manifest.replace(
-        /<meta-data android:name="com\.google\.ar\.core" android:value="[^"]*"[^/]*\/>/,
-        arCoreMeta,
+        /\n?\s*<meta-data android:name="com\.google\.ar\.core\.min_apk_version[^/]*\/>\n?/g,
+        "\n",
       );
-    } else {
-      manifest = manifest.replace(/<application([^>]*)>/, `<application$1>\n    ${arCoreMeta}`);
     }
-    // min_apk_version: Unity arcore_client ile cakismasin diye app modulune ayri com.google.ar:core eklenmez.
     fs.writeFileSync(manifestPath, manifest);
   }
 }

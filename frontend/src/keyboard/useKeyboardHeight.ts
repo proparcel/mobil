@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Keyboard, Platform } from 'react-native';
+import {
+  resolveKeyboardMetrics,
+  type KeyboardMetrics,
+} from './resolveKeyboardMetrics';
+
+const EMPTY_KEYBOARD_METRICS: KeyboardMetrics = { height: 0, screenY: 0 };
 
 /**
  * Klavye yüksekliği (px). Picker modal padding ve scroll-into-view için.
@@ -12,9 +18,8 @@ export function useKeyboardHeight(): number {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
-    const onShow = (e: { endCoordinates?: { height?: number } }) => {
-      const h = e.endCoordinates?.height;
-      if (typeof h === 'number') setHeight(h);
+    const onShow = (e: { endCoordinates?: { height?: number; screenY?: number } }) => {
+      setHeight(resolveKeyboardMetrics(e.endCoordinates).height);
     };
     const onHide = () => setHeight(0);
 
@@ -29,19 +34,19 @@ export function useKeyboardHeight(): number {
   return height;
 }
 
-/** Imperatif scroll-into-view için ref tabanlı yükseklik */
+/** Imperatif scroll-into-view için ref tabanlı klavye metrikleri */
 export function useKeyboardHeightRef() {
-  const heightRef = useRef(0);
+  const metricsRef = useRef<KeyboardMetrics>(EMPTY_KEYBOARD_METRICS);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
     const showSub = Keyboard.addListener(showEvent, (e) => {
-      heightRef.current = e.endCoordinates?.height ?? 0;
+      metricsRef.current = resolveKeyboardMetrics(e.endCoordinates);
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
-      heightRef.current = 0;
+      metricsRef.current = EMPTY_KEYBOARD_METRICS;
     });
     return () => {
       showSub.remove();
@@ -49,5 +54,5 @@ export function useKeyboardHeightRef() {
     };
   }, []);
 
-  return heightRef;
+  return metricsRef;
 }

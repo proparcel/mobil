@@ -35,8 +35,12 @@ import {
   setStoredHomeMapCityId,
   fetchProfileCityIdAndStore,
 } from "../../src/utils/homeMapPreferredCity";
-import { parseCustomerFeatureFlags } from "../../src/utils/customerFeatureGates";
+import { parseCustomerFeatureFlags } from "../../src/utils/customerFeatureFlags";
 import { normalizeAuthUser } from "../../src/utils/membership";
+import {
+  clearDeviceSavedQueriesOnLogout,
+  ensureDeviceSavedQueriesOwner,
+} from "../../src/utils/savedQueriesOwner";
 
 // Default context value
 const defaultContextValue: AuthContextValue = {
@@ -90,12 +94,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
         ]);
 
         if (tokens && user) {
+          const access = String(tokens.access || "").trim();
+          const refresh = String(tokens.refresh || "").trim();
+          const hasValidTokens =
+            Boolean(access && refresh) &&
+            access !== "null" &&
+            access !== "undefined" &&
+            refresh !== "null" &&
+            refresh !== "undefined";
+
+          if (!hasValidTokens) {
+            await storageService.clearAll();
+            setState({
+              user: null,
+              tokens: null,
+              isLoading: false,
+              isAuthenticated: false,
+            });
+            return;
+          }
+
           setState({
             user: normalizeAuthUser(user as unknown as Record<string, unknown>),
-            tokens,
+            tokens: { access, refresh },
             isLoading: false,
             isAuthenticated: true,
           });
+          void ensureDeviceSavedQueriesOwner(
+            normalizeAuthUser(user as unknown as Record<string, unknown>).id,
+          );
         } else {
           setState({
             user: null,
@@ -259,6 +286,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     setOnSessionExpired(() => {
       void clearStoredHomeMapCityId();
+      void clearDeviceSavedQueriesOnLogout();
       setState({
         user: null,
         tokens: null,
@@ -286,10 +314,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const response = await authService.login({ identifier, password });
 
-    if (response.success && response.data) {
+    if (response.success && response.data?.access && response.data?.refresh && response.data?.user) {
+      const normalized = normalizeAuthUser(response.data.user as unknown as Record<string, unknown>);
       void persistHomeMapCityAfterAuth(response.data.user);
+      void ensureDeviceSavedQueriesOwner(normalized.id);
       setState({
-        user: normalizeAuthUser(response.data.user as unknown as Record<string, unknown>),
+        user: normalized,
         tokens: { access: response.data.access, refresh: response.data.refresh },
         isLoading: false,
         isAuthenticated: true,
@@ -313,9 +343,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const response = await authService.loginWithOTP({ phone_number, otp });
 
     if (response.success && response.data) {
+      const normalized = normalizeAuthUser(response.data.user as unknown as Record<string, unknown>);
       void persistHomeMapCityAfterAuth(response.data.user);
+      void ensureDeviceSavedQueriesOwner(normalized.id);
       setState({
-        user: normalizeAuthUser(response.data.user as unknown as Record<string, unknown>),
+        user: normalized,
         tokens: { access: response.data.access, refresh: response.data.refresh },
         isLoading: false,
         isAuthenticated: true,
@@ -336,9 +368,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const response = await authService.register(data);
 
     if (response.success && response.data) {
+      const normalized = normalizeAuthUser(response.data.user as unknown as Record<string, unknown>);
       void persistHomeMapCityAfterAuth(response.data.user);
+      void ensureDeviceSavedQueriesOwner(normalized.id);
       setState({
-        user: normalizeAuthUser(response.data.user as unknown as Record<string, unknown>),
+        user: normalized,
         tokens: { access: response.data.access, refresh: response.data.refresh },
         isLoading: false,
         isAuthenticated: true,
@@ -350,10 +384,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return false;
   }, [persistHomeMapCityAfterAuth]);
 
-  const syncSessionFromLoginResponse = useCallback((data: NonNullable<LoginResponse["data"]>) => {
+  const syncSessionFromLoginResponse = useCallback(async (data: NonNullable<LoginResponse["data"]>) => {
+    const normalized = normalizeAuthUser(data.user as unknown as Record<string, unknown>);
+    await storageService.setTokens({
+      access: data.access,
+      refresh: data.refresh,
+    });
+    await storageService.setUser(normalized);
     void persistHomeMapCityAfterAuth(data.user);
+    void ensureDeviceSavedQueriesOwner(normalized.id);
     setState({
-      user: normalizeAuthUser(data.user as unknown as Record<string, unknown>),
+      user: normalized,
       tokens: { access: data.access, refresh: data.refresh },
       isLoading: false,
       isAuthenticated: true,
@@ -368,6 +409,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     
     await authService.logout();
     await clearStoredHomeMapCityId();
+    await clearDeviceSavedQueriesOnLogout();
 
     setState({
       user: null,

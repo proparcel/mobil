@@ -19,6 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useRouter, useLocalSearchParams } from "../../../src/hooks/useNavigation";
 import { useAuth } from "../../contexts/AuthContext";
+import { authService } from "../../../services/authService";
 import { parsePortalDetailLoginReturn } from "../../../src/utils/portalDetailAuth";
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 import { LandingLegalFooter } from "../../../components/landing/LandingLegalFooter";
@@ -67,7 +68,19 @@ export default function LoginScreen() {
 
   useEffect(() => {
     if (isLoading || !isAuthenticated) return;
-    goAfterLogin();
+
+    let cancelled = false;
+    (async () => {
+      const response = await authService.getProfile();
+      if (cancelled) return;
+      if (response.success) {
+        goAfterLogin();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isLoading, isAuthenticated, goAfterLogin]);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);

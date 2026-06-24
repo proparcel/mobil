@@ -3,10 +3,19 @@
  * authJsonFetch ile aynı mantık: geliştirmede AUTH_API_URL (8000) tercih edilir.
  */
 import { AUTH_API_URL, API_URL, FALLBACK_API_URL } from "./api";
+import { webUrlToAppDeepLink } from "../src/utils/deepLinkRouter";
+
+/** WhatsApp / paylaşım — her zaman production domain (API_URL yerel IP olabilir). */
+export const SHARE_PORTAL_BASE = "https://www.proparcel.com";
 
 export function getPortalSiteBaseUrl(): string {
   const raw = AUTH_API_URL || API_URL || FALLBACK_API_URL || "";
   return raw.replace(/\/$/, "");
+}
+
+function sharePortalPageUrl(path: string): string {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return withMobileViewQuery(`${SHARE_PORTAL_BASE}${p}`);
 }
 
 /** Mobil uygulama / paylaşım — Django portal sayfalarında mobil şablon. */
@@ -42,40 +51,54 @@ export function portalDetailShareUrl(options: {
     sidRaw != null && String(sidRaw).trim() !== "" ? String(sidRaw).trim() : "";
 
   if (options.preferListing !== false && lid) {
-    return portalPageUrl(`/portal/recent-queries/listing/${encodeURIComponent(lid)}/`);
+    return sharePortalPageUrl(`/portal/recent-queries/listing/${encodeURIComponent(lid)}/`);
   }
   if (sid) {
-    return portalPageUrl(`/portal/recent-queries/${encodeURIComponent(sid)}/`);
+    return sharePortalPageUrl(`/portal/recent-queries/${encodeURIComponent(sid)}/`);
   }
   if (lid) {
-    return portalPageUrl(`/portal/recent-queries/listing/${encodeURIComponent(lid)}/`);
+    return sharePortalPageUrl(`/portal/recent-queries/listing/${encodeURIComponent(lid)}/`);
   }
   return "";
 }
 
 /**
- * Mobil Share.share için doğrudan https portal URL (Universal / App Link hedefi).
- * /go/ sarmalayıcı WhatsApp iç tarayıcısında uygulamayı açmaz; doğrudan portal linki gerekir.
+ * Mobil paylaşım linki — /go/ open-or-install (uygulama yoksa mağaza).
+ * ul= portal hedefi, dl= proparcel:// deep link.
  */
 export function portalDetailShareMessageUrl(options: {
   listingId?: string | number | null;
   snapshotId?: string | number | null;
   preferListing?: boolean;
 }): string {
-  return portalDetailShareUrl(options);
+  return portalDetailShareGoUrl(options);
 }
 
-/** Tarayıcıda uygulama yoksa mağaza — web banner veya manuel /go/ için. */
+/** Tarayıcıda uygulama yoksa mağaza — /go/ open-or-install sarmalayıcı. */
 export function portalDetailShareGoUrl(options: {
   listingId?: string | number | null;
   snapshotId?: string | number | null;
   preferListing?: boolean;
 }): string {
   const ul = portalDetailShareUrl(options);
-  if (!ul) return portalPageUrl("/go/");
+  if (!ul) return sharePortalPageUrl("/go/");
   const params = new URLSearchParams();
   params.set("ul", ul);
-  return portalPageUrl(`/go/?${params.toString()}`);
+  const dl = webUrlToAppDeepLink(ul);
+  if (dl) params.set("dl", dl);
+  return `${SHARE_PORTAL_BASE}/go/?${params.toString()}`;
+}
+
+/** Paylaşım — yalnızca snapshot (query) id ile /go/ linki. */
+export function buildSnapshotShareGoUrl(snapshotId: number | string): string {
+  const sid = String(snapshotId).trim();
+  if (!sid) return sharePortalPageUrl("/go/");
+  const ul = sharePortalPageUrl(`/portal/recent-queries/${encodeURIComponent(sid)}/`);
+  const dl = `proparcel://portal/recent-queries/${sid}`;
+  const params = new URLSearchParams();
+  params.set("ul", ul);
+  params.set("dl", dl);
+  return `${SHARE_PORTAL_BASE}/go/?${params.toString()}`;
 }
 
 /** Web ProMahalle — `quarter_info_v2` URL sözleşmesi ile uyumlu (`readQuarterIdsFromUrl`). */

@@ -14,8 +14,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { AppStatusBar } from "../../components/app/AppStatusBar";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { MobileAiScreenShell } from "../../components/app/MobileAiScreenHeader";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { launchImageLibrary } from "react-native-image-picker";
 
@@ -23,7 +23,11 @@ import { useRouter, useLocalSearchParams } from "../../src/hooks/useNavigation";
 import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
 import { storageService } from "../../services/storageService";
 import {
+  IMAGE_ANIMATION_PACKAGE_UNITS,
+  DEFAULT_IMAGE_ANIMATION_TITLE,
+  downloadImageAnimationResults,
   getImageAnimationCreditCosts,
+  getImageAnimationPackageStatus,
   imageAnimationResultUrl,
   runwayPrepPushRef,
   runwayPrepStart,
@@ -31,6 +35,8 @@ import {
   waitForImageAnimationReady,
   type MobileUploadImage,
 } from "../../services/imageAnimationService";
+import { AiImageAnimationExtraPurchaseModal } from "../../components/ai-image-animation/AiImageAnimationExtraPurchaseModal";
+import { saveImageUrisToPhotoLibrary } from "../../src/utils/saveToDeviceGallery";
 
 const DE = {
   shell: "#0b1220",
@@ -71,17 +77,41 @@ export default function AiImageAnimationEditorScreen() {
     license_ref?: string;
   }>();
 
-  const animationTitle = String(params.image_animation_title || "AI Resim Canlandırma").trim();
-  const licenseRef = String(params.license_ref || "").trim();
+  const animationTitle =
+    String(params.image_animation_title || DEFAULT_IMAGE_ANIMATION_TITLE).trim() ||
+    DEFAULT_IMAGE_ANIMATION_TITLE;
+  const [licenseRef, setLicenseRef] = useState(String(params.license_ref || "").trim());
 
   const [prompt, setPrompt] = useState("");
   const [slots, setSlots] = useState<SlotState[]>(emptySlots);
   const [activeSlot, setActiveSlot] = useState(0);
   const [message, setMessage] = useState("Görsel yükleyin, prompt yazıp Canlandır'a basın.");
   const [busy, setBusy] = useState(false);
-  const [licenseConsumed, setLicenseConsumed] = useState(false);
+  const [packageRemaining, setPackageRemaining] = useState(0);
+  const [packageUnitsTotal, setPackageUnitsTotal] = useState(IMAGE_ANIMATION_PACKAGE_UNITS);
   const [extraCoinCost, setExtraCoinCost] = useState(1);
   const [authHeader, setAuthHeader] = useState<Record<string, string> | undefined>(undefined);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const [extraPurchaseVisible, setExtraPurchaseVisible] = useState(false);
+  const [pendingAnimateCount, setPendingAnimateCount] = useState(0);
+
+  useEffect(() => {
+    const ref = String(params.license_ref || "").trim();
+    const title = String(params.image_animation_title || "").trim();
+    if (!ref || !title) {
+      router.replace("ai-image-animation-purchase");
+    }
+  }, [params.image_animation_title, params.license_ref, router]);
+
+  const refreshPackageStatus = useCallback(async (activeRef?: string) => {
+    const res = await getImageAnimationPackageStatus(activeRef || licenseRef || undefined);
+    if (!res.ok) return;
+    setPackageRemaining(res.status.remainingUses);
+    setPackageUnitsTotal(res.status.packageUnitsTotal);
+    if (res.status.licenseRef) {
+      setLicenseRef(res.status.licenseRef);
+    }
+  }, [licenseRef]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,11 +120,18 @@ export default function AiImageAnimationEditorScreen() {
       if (!cancelled && token) {
         setAuthHeader({ Authorization: `Bearer ${token}` });
       }
+      const costs = await getImageAnimationCreditCosts();
+      if (!cancelled && costs.ok) {
+        setExtraCoinCost(costs.costs.image_animation);
+      }
+      if (!cancelled) {
+        await refreshPackageStatus();
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshPackageStatus]);
 
   const imageSource = useCallback(
     (uri: string | null | undefined) => {
@@ -115,7 +152,27 @@ export default function AiImageAnimationEditorScreen() {
   }, [activeSlot, slots]);
   const previewSource = useMemo(() => imageSource(previewUrl), [imageSource, previewUrl]);
 
-  const showUsageRight = !licenseConsumed && filledCount > 0;
+  const hasPackageRights = packageRemaining > 0;
+  const packageDepleted = packageRemaining === 0 && Boolean(licenseRef);
+  const animateCoinCost = extraCoinCost;
+
+  const selectedForAnimate = useMemo(
+    () =>
+      slots
+        .map((slot, index) => ({ slot, index }))
+        .filter(({ slot }) => slot.checked && slot.image),
+    [slots],
+  );
+
+  const selectedResults = useMemo(
+    () =>
+      slots
+        .map((slot, index) => ({ slot, index }))
+        .filter(({ slot }) => slot.checked && slot.resultUrl),
+    [slots],
+  );
+
+  const canDownload = selectedResults.length > 0 && !downloadBusy && !busy;
 
   const pickImage = useCallback(async (slotIndex: number) => {
     const result = await launchImageLibrary({
@@ -151,21 +208,50 @@ export default function AiImageAnimationEditorScreen() {
   const toggleSlotChecked = useCallback((slotIndex: number) => {
     setSlots((prev) => {
       const next = [...prev];
-      if (!next[slotIndex]?.image) return prev;
+      if (!next[slotIndex]?.image && !next[slotIndex]?.resultUrl) return prev;
       next[slotIndex] = { ...next[slotIndex], checked: !next[slotIndex].checked };
       return next;
     });
   }, []);
 
-  const onAnimate = useCallback(async () => {
+  const onDownloadSelected = useCallback(async () => {
+    if (!selectedResults.length) {
+      Alert.alert("Seçim", "İndirmek için canlandırılmış ve seçili en az bir kare işaretleyin.");
+      return;
+    }
+    setDownloadBusy(true);
+    setMessage("Görseller indiriliyor…");
+    try {
+      const urls = selectedResults.map(({ slot }) => slot.resultUrl!).filter(Boolean);
+      const downloaded = await downloadImageAnimationResults(urls);
+      if (!downloaded.ok) throw new Error(downloaded.error);
+
+      const saved = await saveImageUrisToPhotoLibrary(downloaded.paths);
+      if (!saved.ok) throw new Error(saved.error || "Galeriye kaydedilemedi.");
+
+      setMessage(`${saved.savedCount} görsel galeriye kaydedildi.`);
+      Alert.alert("İndirildi", `${saved.savedCount} görsel fotoğraf galerinize kaydedildi.`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Görseller indirilemedi.";
+      setMessage(msg);
+      Alert.alert("Hata", msg);
+    } finally {
+      setDownloadBusy(false);
+    }
+  }, [selectedResults]);
+
+  const executeAnimate = useCallback(async (activeLicenseRef?: string) => {
+    const resolvedLicenseRef = String(activeLicenseRef || licenseRef || "").trim();
+    if (!resolvedLicenseRef) {
+      Alert.alert("Lisans", "Canlandırma lisansı bulunamadı.");
+      return;
+    }
     const promptText = prompt.trim();
     if (!promptText) {
       Alert.alert("Eksik", "Canlandırma promptu yazın.");
       return;
     }
-    const selected = slots
-      .map((slot, index) => ({ slot, index }))
-      .filter(({ slot }) => slot.checked && slot.image);
+    const selected = selectedForAnimate;
     if (!selected.length) {
       Alert.alert("Eksik", "Canlandırmak için en az bir görsel seçin.");
       return;
@@ -180,7 +266,7 @@ export default function AiImageAnimationEditorScreen() {
       const prep = await runwayPrepStart({
         refFrameCount: selected.length,
         title: animationTitle,
-        licenseRef,
+        licenseRef: resolvedLicenseRef,
         promptText,
       });
       if (!prep.ok) throw new Error(prep.error);
@@ -244,6 +330,7 @@ export default function AiImageAnimationEditorScreen() {
                 ...next[srcIndex],
                 resultUrl,
                 busy: false,
+                checked: true,
               };
               return next;
             });
@@ -265,7 +352,7 @@ export default function AiImageAnimationEditorScreen() {
       }
 
       if (completed > 0) {
-        setLicenseConsumed(true);
+        await refreshPackageStatus(resolvedLicenseRef);
         setActiveSlot(selected[0]!.index);
       }
 
@@ -276,7 +363,7 @@ export default function AiImageAnimationEditorScreen() {
         );
         setMessage(`${completed}/${selected.length} kare canlandırıldı.`);
       } else {
-        setMessage("Tüm kareler canlandırıldı. Sonuçları kartlardan görebilirsiniz.");
+        setMessage("Tüm kareler canlandırıldı. Seçili kareleri üst menüden indirebilirsiniz.");
       }
     } catch (e: unknown) {
       setMessage(e instanceof Error ? e.message : "Resim canlandırılamadı.");
@@ -284,24 +371,77 @@ export default function AiImageAnimationEditorScreen() {
     } finally {
       setBusy(false);
     }
-  }, [animationTitle, licenseRef, prompt, slots]);
+  }, [animationTitle, licenseRef, prompt, refreshPackageStatus, selectedForAnimate]);
+
+  const onAnimate = useCallback(() => {
+    const promptText = prompt.trim();
+    if (!promptText) {
+      Alert.alert("Eksik", "Canlandırma promptu yazın.");
+      return;
+    }
+    if (!selectedForAnimate.length) {
+      Alert.alert("Eksik", "Canlandırmak için en az bir görsel seçin.");
+      return;
+    }
+    if (hasPackageRights) {
+      if (selectedForAnimate.length > packageRemaining) {
+        Alert.alert(
+          "Hak yetersiz",
+          `Paketinizde ${packageRemaining} canlandırma hakkı kaldı. En fazla ${packageRemaining} kare seçin veya paket bittikten sonra ek kredi ile devam edin.`,
+        );
+        return;
+      }
+      void executeAnimate();
+      return;
+    }
+    if (packageDepleted) {
+      setPendingAnimateCount(selectedForAnimate.length);
+      setExtraPurchaseVisible(true);
+      return;
+    }
+    Alert.alert(
+      "Paket gerekli",
+      "Canlandırma hakkınız yok. Paket tanımlama sayfasından yeni paket satın alın veya mevcut paketinize devam edin.",
+      [
+        { text: "İptal", style: "cancel" },
+        { text: "Paketler", onPress: () => router.replace("ai-image-animation-purchase") },
+      ],
+    );
+  }, [
+    executeAnimate,
+    hasPackageRights,
+    packageDepleted,
+    packageRemaining,
+    prompt,
+    router,
+    selectedForAnimate.length,
+  ]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <AppStatusBar />
-      <View style={styles.toolbar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.toolbarBtn} accessibilityLabel="Geri">
-          <Ionicons name="arrow-back" size={18} color={DE.text} />
+    <MobileAiScreenShell
+      title={animationTitle}
+      subtitle="AI Resim Canlandırma"
+      onBack={() => router.back()}
+      pageBackgroundColor={DE.shell}
+      right={
+        <TouchableOpacity
+          onPress={() => void onDownloadSelected()}
+          disabled={!canDownload}
+          style={[styles.headerBtn, !canDownload && styles.headerBtnDisabled]}
+          accessibilityLabel="Seçili görselleri indir"
+        >
+          {downloadBusy ? (
+            <ActivityIndicator color="#f8fafc" size="small" />
+          ) : (
+            <Ionicons
+              name="download-outline"
+              size={18}
+              color={canDownload ? "#f8fafc" : "rgba(248,250,252,0.35)"}
+            />
+          )}
         </TouchableOpacity>
-        <View style={styles.toolbarCenter}>
-          <Text style={styles.toolbarTitle} numberOfLines={1}>
-            {animationTitle}
-          </Text>
-          <Text style={styles.toolbarSub}>AI Resim Canlandırma</Text>
-        </View>
-        <View style={styles.toolbarBtn} />
-      </View>
-
+      }
+    >
       <KeyboardAwareScrollScreen
         headerHeight={63}
         backgroundColor={DE.shell}
@@ -369,7 +509,7 @@ export default function AiImageAnimationEditorScreen() {
                       <Text style={styles.slotBadgeText}>Canlandırılmış</Text>
                     </View>
                   ) : null}
-                  {slot.image ? (
+                  {slot.image || slot.resultUrl ? (
                     <TouchableOpacity
                       style={styles.slotCheck}
                       onPress={() => toggleSlotChecked(index)}
@@ -384,10 +524,10 @@ export default function AiImageAnimationEditorScreen() {
                   ) : null}
                   <Text style={styles.slotCaption}>
                     Kare {index + 1}
-                    {slot.image && showUsageRight && index === 0 ? (
-                      <Text style={styles.rightBadge}> · 1 hak</Text>
-                    ) : slot.image && licenseConsumed ? (
-                      <Text style={styles.coinBadge}> · +{extraCoinCost} coin</Text>
+                    {slot.image && hasPackageRights ? (
+                      <Text style={styles.rightBadge}> · paket</Text>
+                    ) : slot.image && filledCount > 0 && packageDepleted ? (
+                      <Text style={styles.coinBadge}> · +{animateCoinCost} kredi</Text>
                     ) : null}
                   </Text>
                 </TouchableOpacity>
@@ -419,51 +559,38 @@ export default function AiImageAnimationEditorScreen() {
               <>
                 <Ionicons name="sparkles" size={18} color="#0f172a" />
                 <Text style={styles.primaryBtnText}>Canlandır</Text>
-                {showUsageRight ? (
-                  <Text style={styles.primaryBadge}>1 hak</Text>
-                ) : filledCount > 0 ? (
-                  <Text style={styles.primaryCoin}>+{extraCoinCost} coin</Text>
+                {hasPackageRights ? (
+                  <Text style={styles.primaryBadge}>{packageRemaining} hak</Text>
+                ) : packageDepleted && filledCount > 0 ? (
+                  <Text style={styles.primaryCoin}>+{animateCoinCost} kredi</Text>
                 ) : null}
               </>
             )}
           </TouchableOpacity>
 
           <Text style={styles.note}>
-            {licenseConsumed
-              ? `Paket hakkı kullanıldı; yeniden canlandırma +${extraCoinCost} coin.`
-              : "Yalnızca canlandırma promptu kullanılır; paket hakkı ilk başarılı canlandırmada tüketilir."}
+            {hasPackageRights
+              ? `“${animationTitle}” paketinde ${packageRemaining}/${packageUnitsTotal} canlandırma hakkı kaldı.`
+              : packageDepleted
+                ? `Paket hakkınız bitti. Yeniden canlandırma +${extraCoinCost} kredi / kare. Canlandır ile onay modalı açılır.`
+                : "Canlandırma hakkınız yok. Paket tanımlama sayfasına dönün."}
           </Text>
         </View>
       </KeyboardAwareScrollScreen>
-    </SafeAreaView>
+
+      <AiImageAnimationExtraPurchaseModal
+        visible={extraPurchaseVisible}
+        onClose={() => setExtraPurchaseVisible(false)}
+        animationTitle={animationTitle}
+        licenseRef={licenseRef}
+        selectedCount={pendingAnimateCount}
+        onPurchaseSuccess={() => executeAnimate()}
+      />
+    </MobileAiScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#1e293b" },
-  toolbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#1e293b",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 3,
-    borderBottomColor: "#3b82f6",
-  },
-  toolbarBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  toolbarCenter: { flex: 1, alignItems: "center", paddingHorizontal: 8 },
-  toolbarTitle: { fontSize: 18, fontWeight: "bold", color: "#fff" },
-  toolbarSub: { fontSize: 11, color: DE.muted, marginTop: 2 },
   body: { flex: 1, backgroundColor: DE.shell },
   bodyContent: { padding: 12, gap: 10 },
   previewWrap: {
@@ -599,4 +726,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   note: { color: DE.muted, fontSize: 11, lineHeight: 16 },
+  headerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  headerBtnDisabled: { opacity: 0.45 },
 });

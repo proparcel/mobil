@@ -2,7 +2,7 @@
   "expo": {
     "name": "frontend",
     "slug": "frontend",
-    "version": "2.0.6",
+    "version": "2.0.10",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "proparcel",
@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "buildNumber": "26"
+      "buildNumber": "33"
     },
     "androidStatusBar": {
       "backgroundColor": "#000000"
@@ -21,6 +21,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.proparcel.mobile"
     },
     "web": {

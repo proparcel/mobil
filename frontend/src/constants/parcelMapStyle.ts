@@ -37,27 +37,48 @@ export const parcelMapStyle = {
 
 } as const;
 
+export type StaticMapRenderPurpose = 'thumbnail' | 'fullCapture';
+
 /** Static API / liste thumbnail — @2x PNG küçük kartlarda kenar okunaklı kalsın */
-export const parcelStaticCaptureStroke = {
+export const parcelStaticThumbnailStroke = {
   min: 24,
   default: 32,
   customMultiplier: 5,
 } as const;
 
+/** Static API yedek tam boy capture — canlı harita lineWidth (~3.5px) ile uyumlu @2x */
+export const parcelStaticFullCaptureStroke = {
+  min: 4,
+  max: 12,
+  default: 7,
+  customMultiplier: 2,
+} as const;
+
+/** @deprecated parcelStaticThumbnailStroke kullanın */
+export const parcelStaticCaptureStroke = parcelStaticThumbnailStroke;
+
 export function resolveStaticCaptureStrokeWidth(
   custom?: ParcelPolygonDesignConfig | null,
   selected = true,
+  purpose: StaticMapRenderPurpose = 'thumbnail',
 ): number {
+  if (purpose === 'fullCapture') {
+    const cfg = parcelStaticFullCaptureStroke;
+    if (custom) {
+      const base = selected ? custom.strokeWidth + 1 : custom.strokeWidth;
+      return Math.max(cfg.min, Math.min(cfg.max, Math.round(base * cfg.customMultiplier)));
+    }
+    return cfg.default;
+  }
+
+  const cfg = parcelStaticThumbnailStroke;
   if (custom) {
     const base = selected ? custom.strokeWidth + 1 : custom.strokeWidth;
-    return Math.max(
-      parcelStaticCaptureStroke.min,
-      Math.round(base * parcelStaticCaptureStroke.customMultiplier),
-    );
+    return Math.max(cfg.min, Math.round(base * cfg.customMultiplier));
   }
   return selected
-    ? parcelStaticCaptureStroke.default
-    : Math.max(parcelStaticCaptureStroke.min, Math.round(parcelStaticCaptureStroke.default * 0.85));
+    ? cfg.default
+    : Math.max(cfg.min, Math.round(cfg.default * 0.85));
 }
 
 /** Mapbox FillLayer + LineLayer */
@@ -90,9 +111,10 @@ export function getParcelMapLayerStyle(
 
 export function getParcelStaticMapFeatureProps(
   selected = true,
-  custom?: ParcelPolygonDesignConfig | null
+  custom?: ParcelPolygonDesignConfig | null,
+  purpose: StaticMapRenderPurpose = 'thumbnail',
 ) {
-  const strokeWidth = resolveStaticCaptureStrokeWidth(custom, selected);
+  const strokeWidth = resolveStaticCaptureStrokeWidth(custom, selected, purpose);
 
   if (custom) {
     return {

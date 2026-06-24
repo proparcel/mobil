@@ -281,7 +281,7 @@ const PropertyTypeSelectionModal: React.FC<PropertyTypeSelectionModalProps> = ({
               autoComplete="off"
               maxLength={10}
             />
-            <Text style={styles.hisseHint}>Sadece rakam girilebilir. Boş bırakılırsa TKGM alanı kullanılacaktır.</Text>
+            <Text style={styles.hisseHint}>Sadece rakam girilebilir. Boş bırakılırsa parseldeki kayıtlı alan kullanılacaktır.</Text>
           </View>
 
           <View style={styles.hisseContainer}>

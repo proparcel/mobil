@@ -7,7 +7,12 @@ import { authService } from './authService';
 import { storageService } from './storageService';
 import type { ApiResult } from './apiClient';
 import type { SmartQueryExtractResult } from '../src/types/smartQuery';
-import { appendVoiceQueryDebugLog } from '../src/utils/voiceQueryDebugLog';
+import type { SmartQueryDebugChannel } from '../src/utils/smartQueryDebugLog';
+import {
+  logSmartQueryApiRequest,
+  logSmartQueryApiResponse,
+  appendSmartQueryDebugLog,
+} from '../src/utils/smartQueryDebugLog';
 import {
   isSmartQueryFeatureLockedError,
   smartQueryFeatureLockedMessage,
@@ -20,21 +25,72 @@ type FeatureLockedBody = {
   feature?: string;
   message?: string;
   ok?: boolean;
+  auth_required?: boolean;
 };
 
-async function getAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
-  let accessToken = await storageService.getAccessToken();
-  if (!accessToken) {
+const SMART_QUERY_AUTH_ERROR_MESSAGE =
+  'Oturum doğrulanamadı. Lütfen çıkış yapıp tekrar giriş yapın.';
+
+function normalizeToken(token: string | null | undefined): string | null {
+  if (!token) return null;
+  if (token === 'null' || token === 'undefined') return null;
+  return token;
+}
+
+async function resolveAccessToken(): Promise<string | null> {
+  let accessToken = normalizeToken(await storageService.getAccessToken());
+  const refreshToken = normalizeToken(await storageService.getRefreshToken());
+
+  if (!accessToken && refreshToken) {
     const refreshed = await authService.refreshToken();
-    accessToken = refreshed ? await storageService.getAccessToken() : null;
+    accessToken = normalizeToken(
+      refreshed?.access ?? (await storageService.getAccessToken())
+    );
   }
+
+  return accessToken;
+}
+
+function buildAuthHeaders(
+  accessToken: string | null,
+  extra?: Record<string, string>
+): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'ngrok-skip-browser-warning': 'true',
     ...(extra || {}),
   };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
   return headers;
+}
+
+function resolveSmartQueryApiError(
+  status: number,
+  parsed: FeatureLockedBody | null | undefined
+): string {
+  if (isSmartQueryFeatureLockedError(status, parsed)) {
+    return smartQueryFeatureLockedMessage(parsed);
+  }
+
+  const raw = String(parsed?.error || parsed?.message || '').trim();
+  const isAuthError =
+    status === 401 ||
+    parsed?.auth_required === true ||
+    /giri[sş]\s*yap/i.test(raw);
+
+  if (isAuthError) {
+    return SMART_QUERY_AUTH_ERROR_MESSAGE;
+  }
+
+  return raw || `HTTP ${status}`;
+}
+
+function endpointChannel(endpoint: string): SmartQueryDebugChannel {
+  if (endpoint.includes('speech')) return 'speech';
+  if (endpoint.includes('image')) return 'image';
+  return 'text';
 }
 
 async function postSmartQueryExtract(
@@ -42,32 +98,59 @@ async function postSmartQueryExtract(
   body: Record<string, unknown>
 ): Promise<ApiResult<SmartQueryExtractResponse>> {
   const url = `${DJANGO_API_URL}${endpoint}`;
+  const channel = endpointChannel(endpoint);
   const audioLen =
     typeof body.audio === 'string'
       ? body.audio.length
       : undefined;
+  const textLen =
+    typeof body.text === 'string'
+      ? body.text.length
+      : undefined;
 
-  await appendVoiceQueryDebugLog('api_request', 'api', {
+  const refreshToken = normalizeToken(await storageService.getRefreshToken());
+  let accessToken = await resolveAccessToken();
+  const startedAt = Date.now();
+
+  await logSmartQueryApiRequest(channel, {
     endpoint,
-    url,
-    mimeType: body.mimeType ?? body.mime_type,
+    mimeType: (body.mimeType ?? body.mime_type) as string | undefined,
     audioBase64Length: audioLen,
-    bodyKeys: Object.keys(body),
+    textLength: textLen,
+    hasAccessToken: Boolean(accessToken),
+    hasRefreshToken: Boolean(refreshToken),
   });
 
+  if (!accessToken && !refreshToken) {
+    await logSmartQueryApiResponse(channel, {
+      endpoint,
+      httpStatus: 401,
+      durationMs: Date.now() - startedAt,
+      result: null,
+      error: 'missing_tokens',
+    });
+    return {
+      ok: false,
+      status: 401,
+      error: 'Oturum bulunamadı. Lütfen giriş yapın.',
+    };
+  }
+
   try {
-    let headers = await getAuthHeaders();
+    let headers = buildAuthHeaders(accessToken);
     let res = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
     });
 
-    if (res.status === 401 && endpoint !== '/api/auth/token/refresh/') {
+    if (res.status === 401 && endpoint !== '/api/auth/token/refresh/' && refreshToken) {
       const refreshed = await authService.refreshToken();
-      const token = refreshed ? await storageService.getAccessToken() : null;
-      if (token) {
-        headers = { ...headers, Authorization: `Bearer ${token}` };
+      accessToken = normalizeToken(
+        refreshed?.access ?? (await storageService.getAccessToken())
+      );
+      if (accessToken) {
+        headers = buildAuthHeaders(accessToken);
         res = await fetch(url, {
           method: 'POST',
           headers,
@@ -89,54 +172,45 @@ async function postSmartQueryExtract(
     }
 
     if (!res.ok) {
-      const locked = isSmartQueryFeatureLockedError(res.status, parsed);
       const result = {
         ok: false as const,
         status: res.status,
-        error: locked
-          ? smartQueryFeatureLockedMessage(parsed)
-          : parsed?.error || parsed?.message || `HTTP ${res.status}`,
+        error: resolveSmartQueryApiError(res.status, parsed),
       };
-      await appendVoiceQueryDebugLog('api_response', 'api', {
+      await logSmartQueryApiResponse(channel, {
         endpoint,
         httpStatus: res.status,
-        ok: false,
+        durationMs: Date.now() - startedAt,
+        result: parsed,
         error: result.error,
-        featureLocked: locked,
-        engine: parsed?.engine,
         responsePreview: text.slice(0, 500),
       });
       return result;
     }
 
     if (!parsed) {
-      await appendVoiceQueryDebugLog('api_response', 'api', {
+      await logSmartQueryApiResponse(channel, {
         endpoint,
         httpStatus: res.status,
-        ok: false,
+        durationMs: Date.now() - startedAt,
+        result: null,
         error: 'Sunucu yanıtı boş.',
       });
       return { ok: false, error: 'Sunucu yanıtı boş.' };
     }
 
-    await appendVoiceQueryDebugLog('api_response', 'api', {
+    await logSmartQueryApiResponse(channel, {
       endpoint,
       httpStatus: res.status,
-      ok: true,
-      dataOk: parsed.ok,
-      engine: parsed.engine,
-      error: parsed.error,
-      city_id: parsed.city_id,
-      town_id: parsed.town_id,
-      quarter_id: parsed.quarter_id,
-      tkgm_value: parsed.tkgm_value,
-      transcribedTextLength: parsed.transcribed_text?.length ?? 0,
+      durationMs: Date.now() - startedAt,
+      result: parsed,
     });
 
     return { ok: true, data: parsed };
   } catch (error: any) {
     const message = error?.message || 'Ağ hatası';
-    await appendVoiceQueryDebugLog('api_network_error', 'api', {
+    await appendSmartQueryDebugLog('api_network_error', 'api', {
+      channel,
       endpoint,
       message,
     });

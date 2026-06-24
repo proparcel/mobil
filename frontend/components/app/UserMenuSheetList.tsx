@@ -1,7 +1,7 @@
 /**
  * Ana sayfa ile aynı menü listesi (sıra, alt menüler, rozetler).
  */
-import React from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, TouchableOpacity } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import Ionicons from "react-native-vector-icons/Ionicons";
@@ -27,6 +27,7 @@ export type UserMenuSheetListProps = {
   user: User | null;
   userProfile: UserProfile | null;
   footerInsetBottom: number;
+  sheetVisible?: boolean;
 };
 
 export default function UserMenuSheetList({
@@ -43,7 +44,34 @@ export default function UserMenuSheetList({
   user,
   userProfile,
   footerInsetBottom,
+  sheetVisible = true,
 }: UserMenuSheetListProps) {
+  const [disabledFeedbackId, setDisabledFeedbackId] = useState<string | null>(null);
+  const disabledFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showDisabledFeedback = useCallback((id: string) => {
+    if (disabledFeedbackTimerRef.current) clearTimeout(disabledFeedbackTimerRef.current);
+    setDisabledFeedbackId(id);
+    disabledFeedbackTimerRef.current = setTimeout(() => {
+      setDisabledFeedbackId(null);
+      disabledFeedbackTimerRef.current = null;
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    if (!sheetVisible) {
+      if (disabledFeedbackTimerRef.current) clearTimeout(disabledFeedbackTimerRef.current);
+      disabledFeedbackTimerRef.current = null;
+      setDisabledFeedbackId(null);
+    }
+  }, [sheetVisible]);
+
+  useEffect(() => {
+    return () => {
+      if (disabledFeedbackTimerRef.current) clearTimeout(disabledFeedbackTimerRef.current);
+    };
+  }, []);
+
   const mainIconColor = (disabled: boolean, id: string, highlight?: boolean) => {
     if (disabled) return variant === "dark" ? "#64748b" : "#94a3b8";
     if (id === "cikis") return variant === "dark" ? "#f87171" : "#ef4444";
@@ -65,9 +93,12 @@ export default function UserMenuSheetList({
         <React.Fragment key={item.id}>
           <TouchableOpacity
             style={[st.item, item.disabled && st.itemDisabled]}
-            disabled={item.disabled}
             onPress={() => {
-              if (!item.disabled) onItemPress(item.id);
+              if (item.disabled) {
+                if (item.disabledPressTitle) showDisabledFeedback(item.id);
+                return;
+              }
+              onItemPress(item.id);
             }}
           >
             <View style={st.iconWrap}>
@@ -97,7 +128,9 @@ export default function UserMenuSheetList({
                 (item.highlight || item.id === "admin-panel") && { color: "#f59e0b", fontWeight: "700" },
               ]}
             >
-              {item.title}
+              {disabledFeedbackId === item.id && item.disabledPressTitle
+                ? item.disabledPressTitle
+                : item.title}
             </Text>
             {item.id === "bildirimler" && notificationsUnread > 0 && (
               <View style={st.unreadBadge}>
@@ -113,7 +146,7 @@ export default function UserMenuSheetList({
               />
             ) : null}
           </TouchableOpacity>
-          {item.id === "ai-video" && submenuOpenId === "ai-video" && (
+          {item.id === "ai-video" && !item.disabled && submenuOpenId === "ai-video" && (
             <>
               <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-video-studio")}>
                 <View style={st.iconWrap}>
@@ -133,6 +166,12 @@ export default function UserMenuSheetList({
                 </View>
                 <Text style={st.itemText}>AI Drone Video</Text>
               </TouchableOpacity>
+              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-drone-my-videos")}>
+                <View style={st.iconWrap}>
+                  <Ionicons name="videocam-outline" size={20} color={subIconColor} />
+                </View>
+                <Text style={st.itemText}>Videolarım</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-drone-jobs")}>
                 <View style={st.iconWrap}>
                   <Ionicons name="briefcase-outline" size={20} color={subIconColor} />
@@ -143,11 +182,16 @@ export default function UserMenuSheetList({
           )}
           {item.id === "ilan-islemleri" && submenuOpenId === "ilan-islemleri" && (
             <>
-              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ilan-ver")}>
+              <TouchableOpacity
+                style={[st.item, st.itemSub, st.itemDisabled]}
+                onPress={() => showDisabledFeedback("ilan-ver")}
+              >
                 <View style={st.iconWrap}>
-                  <Ionicons name="add-circle-outline" size={20} color={subIconColor} />
+                  <Ionicons name="add-circle-outline" size={20} color={variant === "dark" ? "#64748b" : "#94a3b8"} />
                 </View>
-                <Text style={st.itemText}>İlan ver</Text>
+                <Text style={[st.itemText, st.itemTextDisabled]}>
+                  {disabledFeedbackId === "ilan-ver" ? "Çok yakında" : "İlan ver"}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ilanlarim")}>
                 <View style={st.iconWrap}>

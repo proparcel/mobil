@@ -4,8 +4,6 @@
  * Parsel bilgilerinden deep link ve universal link URL'leri oluşturur
  */
 
-import { buildParcelShareMessageUrlSync } from './parcelShareLink';
-
 export interface ParselData {
   properties?: Record<string, any>;
   geometry?: {
@@ -164,31 +162,16 @@ export function generateUniversalLink(parcelData: ParselData): string | null {
     return null;
   }
 
-  // Domain: default olarak API_URL base kullan (örn: http://78.189.238.18:8000)
-  // Böylece /go ve /query aynı aktif sunucuya gider.
-  // Not: Bu domain sadece paylaşım linki içindir; API çağrıları zaten API_URL ile yapılır.
-  let domain = 'https://proparcel.com';
-  try {
-    // Lazy import to avoid circular deps in utils
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cfg = require('../../config/api');
-    const apiUrl: string | undefined = cfg?.API_URL;
-    if (apiUrl && typeof apiUrl === 'string') {
-      domain = apiUrl.replace(/\/$/, '');
-    }
-  } catch (_) {}
+  // Paylaşım linkleri her zaman herkese açık production domain — API_URL (yerel IP) kullanılmaz.
+  const domain = 'https://www.proparcel.com';
   params.append('mobile_view', '1');
+  // WhatsApp /go/?ul=...&dl=... iç içe URL'leri bozuyor; doğrudan /query kullan.
   return `${domain}/query?${params.toString()}`;
 }
 
 /**
- * Paylaşım linki — portal detay (tercih) veya /query yedek.
- * Async snapshot çözümü için `resolveParcelShareMessageUrl` kullanın.
+ * Ana sayfa paylaşım linki — ada/parsel doğrudan /query?mobile_view=1.
  */
 export function generateShareLink(parcelData: ParselData): string | null {
-  const portal = buildParcelShareMessageUrlSync(parcelData);
-  if (portal) return portal;
-  const universalLink = generateUniversalLink(parcelData);
-  if (universalLink) return universalLink;
-  return generateDeepLink(parcelData);
+  return generateUniversalLink(parcelData);
 }

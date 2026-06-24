@@ -429,9 +429,6 @@ export async function runProParcelQuery(requestBody: Record<string, unknown>): P
   return data;
 }
 
-/**
- * Web resolveSnapshotId ile aynı: yanıtta yoksa /api/dfa-snapshot/ ile poll.
- */
 export async function resolveDfaSnapshotId(
   data: any,
   ids?: ProQueryIdentifiers,
@@ -488,4 +485,11 @@ export async function resolveDfaSnapshotId(
 
   console.warn('[proQueryApi] dfa_snapshot_id çözülemedi', idents);
   return null;
+}
+
+/** Pro sorgu yanıtından snapshot kimliğini çöz (doğrudan alan + poll). */
+export async function resolveProQuerySnapshotId(data: any): Promise<number | null> {
+  const direct = extractSnapshotIdFromPayload(data);
+  if (direct) return direct;
+  return resolveDfaSnapshotId(data, extractProQueryIdentifiers(data));
 }

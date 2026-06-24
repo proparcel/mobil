@@ -7,13 +7,20 @@ import {
   Modal,
   TextInput,
   FlatList,
-  KeyboardAvoidingView,
   ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import { getKeyboardAvoidingBehavior, useKeyboardHeight } from "../../src/keyboard";
+import { SCROLL_VIEW_KEYBOARD_PROPS, useKeyboardHeight } from "../../src/keyboard";
+import { sheetScrollBottomPadding } from "../../src/utils/sheetSafeArea";
+import { normalizeTr } from "../../src/utils/voiceLocationResolve";
 import locationsJson from "../../src/data/locations.json";
+import VoiceExpertiseLocationModal from "./VoiceExpertiseLocationModal";
+import type { RegistrationCompanyItem } from "../../src/types/auth";
+import type {
+  VoiceRegistrationCorporateType,
+  VoiceRegistrationMemberType,
+} from "../../src/types/voiceRegistration";
 
 type QuarterItem = {
   Id: number;
@@ -41,9 +48,22 @@ type Props = {
   onContinue: () => void;
   onSkip: () => void;
   busy?: boolean;
+  voiceMemberType?: VoiceRegistrationMemberType;
+  voiceCorporateType?: VoiceRegistrationCorporateType | null;
+  voiceSelectedCompany?: RegistrationCompanyItem | null;
 };
 
-export function RegistrationExpertiseStep({ mode, value, onChange, onContinue, onSkip, busy }: Props) {
+export function RegistrationExpertiseStep({
+  mode,
+  value,
+  onChange,
+  onContinue,
+  onSkip,
+  busy,
+  voiceMemberType,
+  voiceCorporateType,
+  voiceSelectedCompany,
+}: Props) {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight();
   const [pickerMode, setPickerMode] = useState<"city" | "town" | "quarter" | null>(null);
@@ -52,30 +72,34 @@ export function RegistrationExpertiseStep({ mode, value, onChange, onContinue, o
   const [expCityName, setExpCityName] = useState("");
   const [expTownId, setExpTownId] = useState<number | null>(null);
   const [expTownName, setExpTownName] = useState("");
+  const [voiceModalVisible, setVoiceModalVisible] = useState(false);
 
   const selectedCount = mode === "cities" ? value.cities.length : value.quarters.length;
+  const voiceEnabled = voiceMemberType != null;
 
   const pickerListData = useMemo(() => {
-    const q = (pickerSearch || "").trim().toLowerCase();
+    const q = normalizeTr(pickerSearch || "");
     if (mode === "cities" && pickerMode === "city") {
       const list = locationsData?.cities ?? [];
-      return q ? list.filter((c) => (c.Proparcel_text || "").toLowerCase().includes(q)) : list;
+      return q ? list.filter((c) => normalizeTr(c.Proparcel_text || "").includes(q)) : list;
     }
     if (mode === "quarters") {
       if (pickerMode === "city") {
         const list = locationsData?.cities ?? [];
-        return q ? list.filter((c) => (c.Proparcel_text || "").toLowerCase().includes(q)) : list;
+        return q ? list.filter((c) => normalizeTr(c.Proparcel_text || "").includes(q)) : list;
       }
       const currentCity = locationsData?.cities?.find((c) => c.Id === expCityId);
       if (pickerMode === "town") {
         const list = currentCity?.Towns ?? [];
-        return q ? list.filter((t) => (t.Proparcel_text || "").toLowerCase().includes(q)) : list;
+        return q ? list.filter((t) => normalizeTr(t.Proparcel_text || "").includes(q)) : list;
       }
       if (pickerMode === "quarter") {
         const currentTown = currentCity?.Towns?.find((t) => t.Id === expTownId);
         const list = currentTown?.Quarters ?? [];
         return q
-          ? list.filter((qu) => ((qu.Proparcel_text || qu.Tkgm_text) || "").toLowerCase().includes(q))
+          ? list.filter((qu) =>
+              normalizeTr((qu.Proparcel_text || qu.Tkgm_text) || "").includes(q),
+            )
           : list;
       }
     }
@@ -126,11 +150,28 @@ export function RegistrationExpertiseStep({ mode, value, onChange, onContinue, o
           : "Uzmanlık mahallelerinizi seçin (en fazla 5). Bu adım isteğe bağlıdır."}
       </Text>
 
+      {voiceEnabled && selectedCount < 5 ? (
+        <TouchableOpacity
+          style={styles.voiceBtn}
+          onPress={() => setVoiceModalVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Sesli Komut ile Bölge Ekle"
+        >
+          <Ionicons name="mic-outline" size={20} color="#1d4ed8" />
+          <Text style={styles.voiceBtnText}>Sesli Komut ile Bölge Ekle</Text>
+        </TouchableOpacity>
+      ) : null}
+
       {mode === "cities" ? (
         <>
           <TouchableOpacity
             style={[styles.dropdown, selectedCount >= 5 && styles.dropdownDisabled]}
-            onPress={() => selectedCount < 5 && setPickerMode("city")}
+            onPress={() => {
+              if (selectedCount < 5) {
+                setPickerSearch("");
+                setPickerMode("city");
+              }
+            }}
             disabled={selectedCount >= 5}
           >
             <Text style={[styles.dropdownText, styles.placeholder]}>İl ekle</Text>
@@ -152,7 +193,13 @@ export function RegistrationExpertiseStep({ mode, value, onChange, onContinue, o
       ) : (
         <>
           <View style={styles.row}>
-            <TouchableOpacity style={styles.dropdown} onPress={() => setPickerMode("city")}>
+            <TouchableOpacity
+              style={styles.dropdown}
+              onPress={() => {
+                setPickerSearch("");
+                setPickerMode("city");
+              }}
+            >
               <Text style={[styles.dropdownText, !expCityName && styles.placeholder]}>
                 {expCityName || "İl"}
               </Text>
@@ -162,7 +209,12 @@ export function RegistrationExpertiseStep({ mode, value, onChange, onContinue, o
           <View style={styles.row}>
             <TouchableOpacity
               style={[styles.dropdown, !expCityId && styles.dropdownDisabled]}
-              onPress={() => expCityId && setPickerMode("town")}
+              onPress={() => {
+                if (expCityId) {
+                  setPickerSearch("");
+                  setPickerMode("town");
+                }
+              }}
               disabled={!expCityId}
             >
               <Text style={[styles.dropdownText, !expTownName && styles.placeholder]}>
@@ -174,7 +226,12 @@ export function RegistrationExpertiseStep({ mode, value, onChange, onContinue, o
           <View style={styles.row}>
             <TouchableOpacity
               style={[styles.dropdown, (!expTownId || selectedCount >= 5) && styles.dropdownDisabled]}
-              onPress={() => expTownId && selectedCount < 5 && setPickerMode("quarter")}
+              onPress={() => {
+                if (expTownId && selectedCount < 5) {
+                  setPickerSearch("");
+                  setPickerMode("quarter");
+                }
+              }}
               disabled={!expTownId || selectedCount >= 5}
             >
               <Text style={[styles.dropdownText, styles.placeholder]}>Mahalle ekle</Text>
@@ -214,73 +271,106 @@ export function RegistrationExpertiseStep({ mode, value, onChange, onContinue, o
         visible={pickerMode !== null}
         transparent
         animationType="slide"
-        onRequestClose={() => setPickerMode(null)}
+        onRequestClose={() => {
+          setPickerSearch("");
+          setPickerMode(null);
+        }}
       >
-        <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView
-            behavior={getKeyboardAvoidingBehavior("modal")}
-            style={[styles.pickerBox, { paddingBottom: 12 + insets.bottom + keyboardHeight }]}
-          >
-            <View style={styles.pickerHeader}>
-              <Text style={styles.modalTitle}>
-                {pickerMode === "city" && "İl seçin"}
-                {pickerMode === "town" && "İlçe seçin"}
-                {pickerMode === "quarter" && "Mahalle seçin"}
-              </Text>
-              <TouchableOpacity onPress={() => setPickerMode(null)}>
-                <Ionicons name="close" size={24} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-            <TextInput
-              style={styles.searchInput}
-              value={pickerSearch}
-              onChangeText={setPickerSearch}
-              placeholder="Ara..."
-              placeholderTextColor="#94a3b8"
-            />
-            <FlatList
-              data={pickerListData}
-              keyExtractor={(item: CityItem | TownItem | QuarterItem) => String(item.Id)}
-              renderItem={({ item }) => {
-                const label =
-                  "Proparcel_text" in item
-                    ? item.Proparcel_text || ("Tkgm_text" in item ? item.Tkgm_text : "")
-                    : "";
-                return (
-                  <TouchableOpacity
-                    style={styles.pickerRow}
-                    onPress={() => {
-                      if (pickerMode === "city") {
-                        const city = item as CityItem;
-                        if (mode === "cities") {
-                          addCity(city);
-                        } else {
-                          setExpCityId(city.Id);
-                          setExpCityName(city.Proparcel_text || "");
-                          setExpTownId(null);
-                          setExpTownName("");
+        <View style={styles.pickerModalOverlay}>
+          <View style={styles.pickerModalWrap}>
+            <View style={[styles.pickerModal, { paddingBottom: sheetScrollBottomPadding(insets.bottom, 12) }]}>
+              <View style={styles.pickerHeader}>
+                <Text style={styles.modalTitle}>
+                  {pickerMode === "city" && "İl seçin"}
+                  {pickerMode === "town" && "İlçe seçin"}
+                  {pickerMode === "quarter" && "Mahalle seçin"}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setPickerSearch("");
+                    setPickerMode(null);
+                  }}
+                >
+                  <Ionicons name="close" size={24} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={styles.searchInput}
+                value={pickerSearch}
+                onChangeText={setPickerSearch}
+                placeholder="Ara..."
+                placeholderTextColor="#94a3b8"
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              <FlatList
+                style={styles.pickerList}
+                contentContainerStyle={
+                  keyboardHeight > 0 ? { paddingBottom: keyboardHeight } : undefined
+                }
+                data={pickerListData}
+                keyExtractor={(item: CityItem | TownItem | QuarterItem) => String(item.Id)}
+                keyboardShouldPersistTaps={SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
+                keyboardDismissMode={SCROLL_VIEW_KEYBOARD_PROPS.keyboardDismissMode}
+                ListEmptyComponent={
+                  pickerSearch.trim() ? (
+                    <Text style={styles.pickerEmptyText}>Sonuç bulunamadı</Text>
+                  ) : null
+                }
+                renderItem={({ item }) => {
+                  const label =
+                    "Proparcel_text" in item
+                      ? item.Proparcel_text || ("Tkgm_text" in item ? item.Tkgm_text : "")
+                      : "";
+                  return (
+                    <TouchableOpacity
+                      style={styles.pickerRow}
+                      onPress={() => {
+                        if (pickerMode === "city") {
+                          const city = item as CityItem;
+                          if (mode === "cities") {
+                            addCity(city);
+                          } else {
+                            setExpCityId(city.Id);
+                            setExpCityName(city.Proparcel_text || "");
+                            setExpTownId(null);
+                            setExpTownName("");
+                          }
+                        } else if (pickerMode === "town") {
+                          const town = item as TownItem;
+                          setExpTownId(town.Id);
+                          setExpTownName(town.Proparcel_text || "");
+                        } else if (pickerMode === "quarter") {
+                          addQuarter(item as QuarterItem);
                         }
-                      } else if (pickerMode === "town") {
-                        const town = item as TownItem;
-                        setExpTownId(town.Id);
-                        setExpTownName(town.Proparcel_text || "");
-                      } else if (pickerMode === "quarter") {
-                        addQuarter(item as QuarterItem);
-                      }
-                      setPickerSearch("");
-                      setPickerMode(null);
-                    }}
-                  >
-                    <Text style={styles.pickerText} numberOfLines={2}>
-                      {label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          </KeyboardAvoidingView>
+                        setPickerSearch("");
+                        setPickerMode(null);
+                      }}
+                    >
+                      <Text style={styles.pickerText} numberOfLines={2}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </View>
+          </View>
         </View>
       </Modal>
+
+      {voiceEnabled && voiceMemberType ? (
+        <VoiceExpertiseLocationModal
+          visible={voiceModalVisible}
+          mode={mode}
+          memberType={voiceMemberType}
+          corporateType={voiceCorporateType ?? null}
+          selectedCompany={voiceSelectedCompany ?? null}
+          currentValue={value}
+          onApply={onChange}
+          onClose={() => setVoiceModalVisible(false)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -296,6 +386,24 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 18, fontWeight: "700", color: "#111827", marginBottom: 8 },
   cardHint: { fontSize: 14, color: "#6b7280", marginBottom: 12, lineHeight: 20 },
+  voiceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+    backgroundColor: "#eff6ff",
+  },
+  voiceBtnText: {
+    color: "#1d4ed8",
+    fontSize: 15,
+    fontWeight: "700",
+  },
   row: { marginTop: 10, flexDirection: "row", alignItems: "center" },
   dropdown: {
     flex: 1,
@@ -344,20 +452,33 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   secondaryButtonText: { color: "#334155", fontSize: 16, fontWeight: "600" },
-  modalOverlay: {
+  pickerModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 16,
+    justifyContent: "flex-end",
   },
-  pickerBox: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 16,
+  pickerModalWrap: {
     width: "100%",
-    maxWidth: 420,
+    height: "75%",
     maxHeight: "85%",
+  },
+  pickerModal: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  pickerList: {
+    flex: 1,
+    minHeight: 0,
+  },
+  pickerEmptyText: {
+    color: "#64748b",
+    fontSize: 14,
+    textAlign: "center",
+    paddingVertical: 24,
   },
   pickerHeader: {
     flexDirection: "row",

@@ -35,3 +35,16 @@ export async function deactivateListing(
     json: { version: Number(version) },
   });
 }
+
+/** POST /api/v1/self/listings/<id>/publish — pasif/taslak ilanı vitrine yayınlar */
+export async function publishListing(
+  listingId: string,
+  version: number,
+): Promise<ApiResult<{ data?: Record<string, unknown> }>> {
+  const id = String(listingId || "").trim();
+  if (!id) return { ok: false, error: "listing_id gerekli" };
+  return authJsonFetch(`/api/v1/self/listings/${encodeURIComponent(id)}/publish`, {
+    method: "POST",
+    json: { version: Number(version), confirm_pro_query: false },
+  });
+}

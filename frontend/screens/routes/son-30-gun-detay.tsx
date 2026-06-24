@@ -30,6 +30,7 @@ import QueryFavoriteMenuMobile from '../../components/app/QueryFavoriteMenuMobil
 import { usePortalDetailScoresData } from '../../components/app/PortalDetailScoresBlock';
 import PortalInsightSummaryCard from '../../components/app/PortalInsightSummaryCard';
 import PortalKmTab from '../../components/app/PortalKmTab';
+import PortalRoadTab from '../../components/app/PortalRoadTab';
 import PortalMulkScoreDetailCard, { PortalAraziScoreDetailCard } from '../../components/app/PortalMulkScoreDetailCard';
 import PortalFruitInvestmentCard from '../../components/app/PortalFruitInvestmentCard';
 import PortalSolarEnergyCard from '../../components/app/PortalSolarEnergyCard';
@@ -40,13 +41,22 @@ import ListingFullscreenVideo from '../../components/app/ListingFullscreenVideo'
 import PortalSlopeTerrainCard from '../../components/app/PortalSlopeTerrainCard';
 import PortalParcelSplitDetailCard from '../../components/app/PortalParcelSplitDetailCard';
 import PortalDfaTableCard from '../../components/app/PortalDfaTableCard';
+import ProQueryCreditNoticeModal from '../../components/app/ProQueryCreditNoticeModal';
+import PortalProQueryCreditNoticeBanner from '../../components/app/PortalProQueryCreditNoticeBanner';
 import PortalProParcelPriceCard from '../../components/app/PortalProParcelPriceCard';
 import { formatListingAttributeValueTr, listingAttributeLabelTr } from '../../src/utils/listingAttributeLabels';
+import {
+  buildPhysicalSupplementalRows,
+  resolveQuarterCenterDistanceM,
+  resolveRoadFrontageTotalLengthM,
+  resolveSlopePercentForInsight,
+} from '../../src/utils/portalInsightHelpers';
 import {
   buildParcelInfoRows,
   buildPriceInfoRows,
   buildStructureInfoRows,
   isStructurePortalQueryType,
+  mergeSupplementalIntoParcelRows,
 } from '../../src/utils/portalDetailCardContract';
 import { getQueryAgeVisualTier } from '../../src/utils/portalQueryAgeTheme';
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
@@ -68,6 +78,7 @@ import {
   deletePortalQueryComment,
   getPortalRecentQueryDetail,
   getPortalRecentQueryEnrichment,
+  getPortalRecentQueryShell,
   getPortalQueryCommentLikes,
   getPortalQueryRatings,
   getPortalQueryRaters,
@@ -101,6 +112,10 @@ import { normalizeParcelShapeLabel } from '../../src/utils/normalizeParcelShapeL
 import { API_URL, FALLBACK_API_URL } from '../../config/api';
 import { portalDetailShareMessageUrl } from '../../config/portalSite';
 import {
+  hasSeenProQueryCreditNoticeModal,
+  markProQueryCreditNoticeModalSeen,
+} from '../../src/utils/proQueryCreditNoticeStorage';
+import {
   buildPortalDetailLoginReturn,
   isPortalAuthRequired,
   isPortalRateLimited,
@@ -130,7 +145,6 @@ import {
   buildQuarterCenterPointGeoJSON,
   fetchQuarterCenterLonLat,
 } from '../../src/utils/quarterCenterMap';
-import { resolveQuarterCenterDistanceM } from '../../src/utils/portalInsightHelpers';
 import { navigateAfterProQuery } from '../../src/utils/proQueryNavigation';
 import {
   buildPortalDetailProQueryContext,
@@ -341,6 +355,7 @@ function buildMobileDetailTabs(d: PortalQueryDetail): DetailMainTabDef[] {
     { id: 'slope', label: 'Parsel Eğimi' },
     { id: 'km', label: 'KM Analizi' },
     { id: 'edge', label: 'Kenar Ölçüleri' },
+    { id: 'road', label: 'Yol' },
   ];
   if (isImarliArsaLandCategory(d) || isImarsizTarimLandCategory(d)) {
     mid.push({ id: 'split', label: 'Bölünebilirlik' });
@@ -599,14 +614,7 @@ function buildListingOzellikRows(
 }
 
 function totalRoadFrontageLengthM(d: PortalQueryDetail): number | null {
-  const rf = d.road_frontage_values?.total_road_frontage_edge_length_m;
-  if (rf != null && Number.isFinite(Number(rf))) return Number(rf);
-  const em = d.edge_measure_data;
-  if (em && typeof em === 'object') {
-    const t = (em as { total_road_frontage_edge_length_m?: unknown }).total_road_frontage_edge_length_m;
-    if (t != null && Number.isFinite(Number(t))) return Number(t);
-  }
-  return null;
+  return resolveRoadFrontageTotalLengthM(d);
 }
 
 /** İlan bilgileri sekmesi — sabit sıralı üst özet + kalan listing_attributes. */
@@ -1178,6 +1186,7 @@ export default function Son30GunDetayScreen() {
   const listingDescSectionRef = useRef<View>(null);
   const listingInfoSectionRef = useRef<View>(null);
   const edgeSectionRef = useRef<View>(null);
+  const roadSectionRef = useRef<View>(null);
 
   const snapshotId = params.snapshotId ? parseInt(params.snapshotId, 10) : NaN;
   const targetCommentId = params.commentId ? parseInt(params.commentId, 10) : null;
@@ -1337,6 +1346,38 @@ export default function Son30GunDetayScreen() {
     () => (data ? buildDetailModeNoticeTitle(data) : ''),
     [data],
   );
+  const showProQueryCreditNotice = useMemo(
+    () =>
+      !isListingDetailView
+      && Boolean(data?.is_own_query)
+      && Boolean(data?.pro_query_credit_notice?.show),
+    [isListingDetailView, data?.is_own_query, data?.pro_query_credit_notice?.show],
+  );
+  const [proQueryCreditNoticeModalVisible, setProQueryCreditNoticeModalVisible] = useState(false);
+
+  useEffect(() => {
+    if (!showProQueryCreditNotice || !Number.isFinite(snapshotId)) {
+      setProQueryCreditNoticeModalVisible(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const seen = await hasSeenProQueryCreditNoticeModal(snapshotId);
+      if (!cancelled && !seen) {
+        setProQueryCreditNoticeModalVisible(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showProQueryCreditNotice, snapshotId]);
+
+  const handleCloseProQueryCreditNoticeModal = useCallback(async () => {
+    setProQueryCreditNoticeModalVisible(false);
+    if (Number.isFinite(snapshotId)) {
+      await markProQueryCreditNoticeModalSeen(snapshotId);
+    }
+  }, [snapshotId]);
 
   // Full-screen image viewer
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
@@ -1471,17 +1512,59 @@ export default function Son30GunDetayScreen() {
     if (!silent) {
       setError(null);
     }
-    const [detailRes, enrichRes] = await Promise.all([
+    const [detailRes, enrichRes, shellRes] = await Promise.all([
       getPortalRecentQueryDetail(snapshotId),
       getPortalRecentQueryEnrichment(snapshotId),
+      getPortalRecentQueryShell(snapshotId),
     ]);
+    if (__DEV__) {
+      if (detailRes.ok) {
+        console.log('[son-30-gun-detay] detail OK', {
+          snapshotId,
+          enrichmentOk: enrichRes.ok,
+          shellOk: shellRes.ok,
+        });
+      } else {
+        console.warn('[son-30-gun-detay] detail FAIL', {
+          snapshotId,
+          status: detailRes.status,
+          error: detailRes.error,
+          code: detailRes.code,
+          payload: detailRes.payload,
+          bodyPreview:
+            detailRes.payload && typeof detailRes.payload.bodyPreview === 'string'
+              ? detailRes.payload.bodyPreview
+              : undefined,
+        });
+      }
+      if (!enrichRes.ok) {
+        console.warn('[son-30-gun-detay] enrichment FAIL', {
+          snapshotId,
+          status: enrichRes.status,
+          error: enrichRes.error,
+          code: enrichRes.code,
+          payload: enrichRes.payload,
+        });
+      }
+      if (!shellRes.ok) {
+        console.warn('[son-30-gun-detay] shell FAIL', {
+          snapshotId,
+          status: shellRes.status,
+          error: shellRes.error,
+          code: shellRes.code,
+          payload: shellRes.payload,
+        });
+      }
+    }
     if (seq !== detailFetchSeqRef.current) {
       return;
     }
     if (detailRes.ok) {
-      const merged: PortalQueryDetail = enrichRes.ok
-        ? { ...detailRes.data, ...enrichRes.data }
-        : detailRes.data;
+      const merged: PortalQueryDetail = {
+        ...detailRes.data,
+        ...(shellRes.ok ? shellRes.data : {}),
+        ...(enrichRes.ok ? enrichRes.data : {}),
+      };
       setData(merged);
       setError(null);
       detailLoadedRef.current = true;
@@ -1499,11 +1582,20 @@ export default function Son30GunDetayScreen() {
         }
         return;
       }
+      const retryableProQueryStatus =
+        params.fromProQuery === '1' &&
+        (detailRes.status === 404 || detailRes.status === 500 || detailRes.status === 503);
+      if (retryableProQueryStatus && !silent) {
+        setTimeout(() => {
+          void loadDetail({ silent: true });
+        }, 1500);
+        return;
+      }
       if (!detailLoadedRef.current) {
         setError(detailRes.error || 'Bir hata oluştu');
       }
     }
-  }, [snapshotId, isAuthenticated]);
+  }, [snapshotId, isAuthenticated, params.fromProQuery]);
 
   useEffect(() => {
     if (isAuthLoading || !isAuthenticated) return;
@@ -2347,7 +2439,7 @@ export default function Son30GunDetayScreen() {
         const coins = res.data?.coin_awarded ?? 5;
         loadDetail({ silent: true });
         loadRatingModalData(data.snapshot_id);
-        Alert.alert('Teşekkürler!', `${coins} Tepe Coin hesabınıza eklendi.`);
+        Alert.alert('Teşekkürler!', `${coins} Tepe Kredi hesabınıza eklendi.`);
       } else if (res.status === 409) {
         setEvalModalVisible(false);
         Alert.alert('Bilgi', 'Bu sorgu daha önce puanlandı.');
@@ -2974,22 +3066,31 @@ export default function Son30GunDetayScreen() {
   const parcelShapeText = parcelShapeRaw
     ? normalizeParcelShapeLabel(parcelShapeRaw) ?? String(parcelShapeRaw)
     : null;
-  const totalRoadFrontageLength =
-    data.road_frontage_values?.total_road_frontage_edge_length_m ??
-    data.edge_measure_data?.total_road_frontage_edge_length_m ??
-    null;
+  const totalRoadFrontageLength = resolveRoadFrontageTotalLengthM(data);
 
   const parcelRowsBase = buildParcelInfoRows(data, {
     queryTypeLabel: typeLabel,
     parcelShapeText,
     totalRoadFrontageLength: totalRoadFrontageLength as number | null,
   });
+  const physicalSupplementalRows = buildPhysicalSupplementalRows({
+    summary: data,
+    analysis: scores.invPayload?.analysis ?? null,
+    slopePct: listingProLocked || listingOnly
+      ? resolveSlopePercentForInsight(null, data.listing_attributes as Record<string, unknown> | null, data)
+      : resolveSlopePercentForInsight(
+          scores.slopeSection,
+          data.listing_attributes as Record<string, unknown> | null,
+          data,
+        ),
+  });
+  const parcelRowsMerged = mergeSupplementalIntoParcelRows(parcelRowsBase, physicalSupplementalRows);
   const structureRows = buildStructureInfoRows(data);
   const priceRows = buildPriceInfoRows(data);
 
   const parcelRows = dedupeDetailRowsFinal(
     mergeParcelAndListingDetailRows(
-      parcelRowsBase.map(([label, value]) => [label, value] as [string, string, boolean?]),
+      parcelRowsMerged.map(([label, value]) => [label, value] as [string, string, boolean?]),
       data,
     ),
   );
@@ -3753,6 +3854,10 @@ export default function Son30GunDetayScreen() {
         ) : null}
       </View>
 
+      {showProQueryCreditNotice && data.pro_query_credit_notice?.message ? (
+        <PortalProQueryCreditNoticeBanner message={data.pro_query_credit_notice.message} />
+      ) : null}
+
       <KeyboardAwareScrollScreen
         ref={scrollRef}
         headerHeight={56}
@@ -3844,7 +3949,7 @@ export default function Son30GunDetayScreen() {
               style={s.heroMediaLikeBtn}
               onPress={() => void openEvalModal()}
               activeOpacity={0.7}
-              accessibilityLabel={`Sorgu sonucunu puanla (Tepe Coin). Toplam begeni ${likeCount}`}
+              accessibilityLabel={`Sorgu sonucunu puanla (Tepe Kredi). Toplam begeni ${likeCount}`}
             >
               <Ionicons name="thumbs-up" size={16} color="#1d4ed8" />
               <Text style={s.heroMediaLikeCount}>{likeCount}</Text>
@@ -4255,15 +4360,6 @@ export default function Son30GunDetayScreen() {
                     quarterCenterMapLoading={quarterCenterMapLoading}
                     quarterCenterMapError={quarterCenterMapError}
                   />
-                  {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info')}
-                  <PortalProParcelPriceCard detail={data} topMargin={12} />
-                  {renderDetailKvCard(
-                    'Yapı bilgileri',
-                    'business-outline',
-                    structureRows.map(([label, value]) => [label, value] as [string, string, boolean?]),
-                    'structure-info',
-                    12,
-                  )}
                 </View>
                 <View ref={dfaSectionRef}>
                   <PortalDfaTableCard
@@ -4274,6 +4370,20 @@ export default function Son30GunDetayScreen() {
                     onOpenRoadModal={() => setRoadReportModalVisible(true)}
                     onOpenElectricModal={() => setElectricOverrideMapVisible(true)}
                     onMahalleOrtSaved={handleMahalleOrtSaved}
+                    viewerIsExpert={Boolean(data?.viewer_is_expert ?? isExpertMember(user))}
+                    middleSlot={
+                      <>
+                        <PortalProParcelPriceCard detail={data} topMargin={0} />
+                        {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info')}
+                        {renderDetailKvCard(
+                          'Yapı bilgileri',
+                          'business-outline',
+                          structureRows.map(([label, value]) => [label, value] as [string, string, boolean?]),
+                          'structure-info',
+                          12,
+                        )}
+                      </>
+                    }
                   />
                 </View>
               </>
@@ -4484,6 +4594,15 @@ export default function Son30GunDetayScreen() {
                 </View>
               </View>
             )}
+
+            {activeDetailTabId === 'road' && data ? (
+              <PortalRoadTab
+                snapshotId={Number(data.snapshot_id ?? snapshotId)}
+                detail={data}
+                listingProLocked={listingProLocked}
+                sectionRef={roadSectionRef}
+              />
+            ) : null}
 
             {activeDetailTabId === 'electric' && (() => {
               if (electricSectionLoading) {
@@ -4912,7 +5031,7 @@ export default function Son30GunDetayScreen() {
             <Ionicons name="star" size={20} color="#f59e0b" />
             <Text style={ev.title}>Sorgu Sonucunu Puanla</Text>
           </View>
-          <Text style={ev.subtitle}>{evalCoinAmount} Tepe Coin Kazan!</Text>
+          <Text style={ev.subtitle}>{evalCoinAmount} Tepe Kredi Kazan!</Text>
 
           {evalStep === 1 ? (
             <>
@@ -5162,7 +5281,7 @@ export default function Son30GunDetayScreen() {
             onPress={() => { setDetailMenuVisible(false); setTimeout(() => openEvalModal(), 350); }}
           >
             <Ionicons name="star" size={20} color="#fbbf24" />
-            <Text style={dm.itemRatingText}>Değerlendir Coin Kazan</Text>
+            <Text style={dm.itemRatingText}>Değerlendir Kredi Kazan</Text>
           </TouchableOpacity>
 
           {(hasExpertResponses || data.is_own_query) && (
@@ -5257,6 +5376,14 @@ export default function Son30GunDetayScreen() {
       />
 
       <ProQueryTypeModalHost controller={proQueryFlow} />
+
+      <ProQueryCreditNoticeModal
+        visible={proQueryCreditNoticeModalVisible}
+        notice={data?.pro_query_credit_notice}
+        onClose={() => {
+          void handleCloseProQueryCreditNoticeModal();
+        }}
+      />
 
     </SafeAreaView>
   );
@@ -5468,27 +5595,27 @@ const s = StyleSheet.create({
     letterSpacing: 0.2,
   },
   /** Satır hafif gri; sekme kutuları beyaz */
-  detailTabScroll: { backgroundColor: '#f1f5f9', borderBottomWidth: 1, borderBottomColor: COLORS.borderSoft },
+  detailTabScroll: { backgroundColor: '#1a273e', borderBottomWidth: 2, borderBottomColor: '#3b82f6' },
   detailTabScrollContent: { flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 8, gap: 6, alignItems: 'stretch' },
   detailTabSquare: {
     minWidth: 88,
     paddingHorizontal: 8,
     paddingVertical: 10,
     borderRadius: 4,
-    borderWidth: 2,
-    borderColor: COLORS.borderSoft,
-    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.45)',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
   detailTabSquareActive: {
-    backgroundColor: '#ffffff',
-    borderColor: COLORS.warningYellow,
+    backgroundColor: 'rgba(59,130,246,0.12)',
+    borderColor: '#f59e0b',
   },
-  detailTabSquareText: { fontSize: 11, fontWeight: '700', color: COLORS.textSecondary, textAlign: 'center' },
-  detailTabSquareTextActive: { color: COLORS.textPrimary },
-  detailTabSquareAux: { borderColor: '#94a3b8', borderWidth: 2, backgroundColor: '#f8fafc' },
-  detailTabSquareAuxText: { color: '#475569', fontSize: 10 },
+  detailTabSquareText: { fontSize: 11, fontWeight: '700', color: '#93c5fd', textAlign: 'center' },
+  detailTabSquareTextActive: { color: '#ffffff' },
+  detailTabSquareAux: { borderColor: 'rgba(59,130,246,0.45)', borderWidth: 1, backgroundColor: 'transparent' },
+  detailTabSquareAuxText: { color: '#bfdbfe', fontSize: 10 },
   detailEmptyTabText: { fontSize: 13, color: COLORS.textSecondary, padding: 12, lineHeight: 20 },
   insightMetricsRow: {
     flexDirection: 'row',

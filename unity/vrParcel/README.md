@@ -1,56 +1,24 @@
-# ProParcel VR Parcel — Unity Project
+# Unity vrParcel — Parsel eğim (Terrain 3D)
 
+**ARCore / saha AR görüntüleme modülü yedeklendi:**  
+`mobile/mobil_github/_backup/vrParcel-ar-viewer/`
 
+Bu proje yalnızca **ParcelTerrain3dScene** (parsel eğim / 3D terrain) için kullanılır.
 
-Unity AR Foundation projesi.
+## Unity Hub
 
+`mobile/mobil_github/unity/vrParcel/`
 
+1. **ProParcel → Terrain3D → Configure Android Build Settings**
+2. **File → Build Settings → Export Project** → `builds/android/`
 
-## Hızlı başlangıç — Android (Windows, önerilen)
+## RN
 
-### Unity Hub'da doğru klasör
+```powershell
+cd mobile/mobil_github/frontend
+npm run validate:unity-export
+npm run fix:android-native
+npm run android
+```
 
-**Açın:** `mobile/mobil_github/unity/vrParcel/`  
-**Açmayın:** `.../vrParcel/proparcel/` (alt klasör — ProParcel menüsü yok)
-
-Hub'da proje yolu şöyle görünmeli:
-`C:\ProParcel\mobile\mobil_github\unity\vrParcel`
-
-1. Unity Hub → **vrParcel** (proparcel değil)
-
-2. **ProParcel → VR → Create VrParcel Scene**
-
-3. **ProParcel → VR → Configure Android Build Settings**
-
-4. XR → Android → ARCore ✓
-
-5. Export → `builds/android/unityLibrary/`
-
-6. `docs/mobile/modules/vr_parcel/android_windows_unity_build.md`
-
-
-
-## iOS (Mac, sonra)
-
-
-
-→ `docs/mobile/modules/vr_parcel/mac_xcode_unity_build.md`
-
-
-
-## Scriptler
-
-
-
-- `VrParcelBridge.cs` — session, calibration, draw
-
-- `ReferencePointCapture.cs` — AR raycast tap
-
-- `ParcelBorderRenderer.cs` — world-space LineRenderer
-
-- `VrParcelNativeCallback.cs` — Unity → RN (Android + iOS)
-
-
-
-Detay: `SCENE_SETUP.md`
-
+Parsel eğim ekranı: portal detay → terrain3d (`modules/parcelTerrain3d`).

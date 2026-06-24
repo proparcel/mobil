@@ -27,14 +27,14 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 import { Linking } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { proparcelFavicon } from '../../components/landing/proparcelBrandAssets';
 import { MapFloatingCreditBadge } from '../../components/app/MapFloatingCreditBadge';
 import { useRouter, useLocalSearchParams } from '../../src/hooks/useNavigation';
 import { useFocusEffect, useRoute, useNavigation, useIsFocused } from '@react-navigation/native';
 import Svg, { Polyline, Rect } from 'react-native-svg';
 import { cleanupTempFiles, getCombinedImageDimensions } from '../../src/utils/screenshotManager';
+import { computeScreenshotPreviewLayout } from '../../src/utils/screenshotPreviewLayout';
 import { mergeParcelDisplayProperties } from '../../src/utils/mergeParcelDisplayProperties';
-import { startPreviewSnapPrewarm } from '../../src/utils/shareCaptureFlow';
+import { waitForMapIdle } from '../../src/utils/mapboxSnapshot';
 import { buildCameraFingerprint, type PreviewSnapCacheEntry } from '../../src/utils/captureSnapCache';
 import { parseTurkishPrice, formatTurkishPrice } from '../../src/utils/priceParser';
 import MyQueriesModal, { type SavedQueryItem } from '../../components/app/MyQueriesModal';
@@ -48,12 +48,13 @@ import {
 } from '../../components/app/UserMenuSheet';
 import UserMenuSheetList from '../../components/app/UserMenuSheetList';
 import { getMenuItems } from '../../components/app/userMenuItems';
-import { syncLastParcelForVr, syncSelectedParcelForVr, VrPillBarButton } from '../../modules/vrParcel';
 import { isAppAdminUser } from '../../src/utils/adminAccess';
-import { canAccessProSorgu, isVipCustomer } from '../../src/utils/membership';
+import { canAccessProSorgu, isExpertUser, isVipCustomer } from '../../src/utils/membership';
+import ExpertHeaderBrandFlip from '../../components/app/ExpertHeaderBrandFlip';
 import { SavedQuery, upsertSavedQuery } from '../../src/utils/savedQueries';
 import { persistTkgmResponseToMyQueries } from '../../src/utils/persistSimpleQuery';
 import {
+  calculateBoundsAndCamera,
   fitParcelInViewIfNeeded,
   normalizeGeometryCoordinates as normalizeParcelGeometry,
   zoomMapToParcelGeometry,
@@ -79,12 +80,12 @@ import {
   saveParcelPolygonDesign,
 } from '../../src/utils/parcelPolygonDesignStorage';
 import { putReportMemory } from '../../src/utils/reportMemory';
+import { useKeyboardHeight } from '../../src/keyboard';
 import { buildDfaRowsFromValuationSteps, parseAreaM2 } from '../../src/utils/dfaRows';
 import type { ReportPayload, ReportLocationHeader } from '../../src/types/reportPayload';
 import { API_URL, FALLBACK_API_URL } from '../../config/api';
-import { createSavedQueryApi } from '../../services/savedQueriesApi';
 import { captureAndUploadProQueryMapImage } from '../../src/utils/proQueryMapCapture';
-import { navigateAfterProQuery } from '../../src/utils/proQueryNavigation';
+import { navigateAfterProQuery, saveProQueryToApi } from '../../src/utils/proQueryNavigation';
 import {
   runProParcelQuery,
   ProQueryLimitError,
@@ -99,7 +100,7 @@ import {
   PORTAL_RECENT_QUERIES_CHANGED,
   type PortalRecentQueriesChangedPayload,
 } from '../../src/constants/portalEvents';
-import { fetchTkgmByCoords, fetchTkgmByIds } from '../../src/utils/tkgmApi';
+import { fetchTkgmByCoords, fetchTkgmByIds, getTkgmUserAlert } from '../../src/utils/tkgmApi';
 import {
   resolveMahalleTkgmForDirectQuery,
 } from '../../src/utils/tkgmParcelQuery';
@@ -126,10 +127,6 @@ const hasNativeVideoView =
 
 import ParcelModal from '../../components/ParcelModal';
 import ParcelSearchModal, { type ParcelSearchTabKey } from '../../components/ParcelSearchModal';
-import {
-  smartQueryPayloadToFormSeed,
-  type SmartQueryParcelPayload,
-} from '../../src/utils/smartQueryResolve';
 import {
   canUseSmartQuery,
   promptSmartQueryUpgrade,
@@ -195,6 +192,7 @@ import { useScreenshotListener } from '../../src/utils/useScreenshotListener';
 import { CombinedScreenshotContainer } from '../../components/app/CombinedScreenshotContainer';
 import { getFirstStreetViewPoint } from '../../src/utils/streetViewHelper';
 import { useAuth } from '../contexts/AuthContext';
+import { authService } from '../../services/authService';
 import { storageService, REDIRECT_TARGET_MODEL_EDITOR } from '../../services/storageService';
 import { mergeParcel3dEntryFields, type Parcel3dEntry } from '../../src/utils/parcel3dPurchasedStorage';
 import { resolveTkgmFor3dDesignOpen } from '../../src/utils/parcel3dOpenResolve';
@@ -257,7 +255,6 @@ const KutlamaVideo = require('../../assets/images/kutlama.mp4');
 const ProModeButtonImg = require('../../assets/images/probutton.png');
 const SimpleModeButtonImg = require('../../assets/images/basitbutton.png');
 import { creditService } from '../../services/creditService';
-import { authService } from '../../services/authService';
 import type { UserProfile } from '../../src/types/auth';
 import { listNotifications } from "../../services/notificationService";
 import { getExpertBadgeCounts } from "../../services/expertRequestService";
@@ -354,6 +351,7 @@ interface SimpleModeParcel extends ParcelData {
 
 export default function Index() {
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
   const isScreenFocused = useIsFocused();
   const router = useRouter();
   const { isAuthenticated, isLoading: isAuthLoading, user, logout } = useAuth();
@@ -391,6 +389,8 @@ export default function Index() {
   
   // Navigation params üzerinden gelen pro query payload'ı (expert-requests sayfasından "Görüntüle" butonu)
   const pendingNavProQueryRef = useRef<{ mahalleTkgmValue: number; ada: string; parsel: string } | null>(null);
+  /** ParcelSearchModal Sorgularım sekmesi — bir sonraki submit basit modda çalışsın */
+  const pendingSavedQuerySimpleRef = useRef(false);
   const route = useRoute();
   const navigation = useNavigation();
 
@@ -533,10 +533,6 @@ export default function Index() {
   const [simpleModeParcels, setSimpleModeParcels] = useState<SimpleModeParcel[]>([]);
   const [selectedParcelForModal, setSelectedParcelForModal] = useState<SimpleModeParcel | null>(null);
 
-  useEffect(() => {
-    syncSelectedParcelForVr(selectedParcelForModal);
-  }, [selectedParcelForModal]);
-  
   // Basit mod için helper fonksiyonlar
   const MAX_SIMPLE_MODE_PARCELS = 30;
   
@@ -561,7 +557,6 @@ export default function Index() {
       return updated;
     });
     setSelectedParcelForModal(newParcel);
-    syncLastParcelForVr(newParcel);
     return newParcel;
   }, []);
   
@@ -575,16 +570,7 @@ export default function Index() {
   const isTransitioningToSubModalRef = useRef(false); // Villa/Fabrika modalına geçiş sırasında pendingTkgmData'yı korumak için
   const proAnalysisLoadingRef = useRef(false); // Tip seçimi sonrası analiz yüklenirken onClose state temizlemesin
   const [proQueryConfirmVisible, setProQueryConfirmVisible] = useState(false);
-  
-  // PropertyTypeModal visible değişikliklerini logla
-  React.useEffect(() => {
-    console.log('[Index] propertyTypeModalVisible değişti:', propertyTypeModalVisible);
-  }, [propertyTypeModalVisible]);
-  
-  // ProQueryConfirmVisible değişikliklerini logla
-  React.useEffect(() => {
-    console.log('[Index] proQueryConfirmVisible değişti:', proQueryConfirmVisible);
-  }, [proQueryConfirmVisible]);
+
   const [propertyTypeModalTitle, setPropertyTypeModalTitle] = useState('');
   const [propertyTypeModalSuggested, setPropertyTypeModalSuggested] = useState<string | null>(null);
   const [pendingTkgmData, setPendingTkgmData] = useState<TkgmViewResponse | null>(null);
@@ -595,8 +581,6 @@ export default function Index() {
   const [isProcessingShare, setIsProcessingShare] = useState(false);
   const [capturedMapUri, setCapturedMapUri] = useState<string | null>(null);
   const previewSnapCacheRef = useRef<PreviewSnapCacheEntry | null>(null);
-  const previewPrewarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previewPrewarmInFlightRef = useRef<Promise<void> | null>(null);
   const screenshotPreviewModeRef = useRef(false);
 
   const applyShareSelectionToRequest = useCallback((
@@ -724,6 +708,7 @@ export default function Index() {
   };
   
   const mapRef = useRef<any>(null);
+  const homeMapContainerRef = useRef<View>(null);
   const homeMapViewportRef = useRef<MapOverlayViewport>(DEFAULT_MAP_OVERLAY_VIEWPORT);
   const suppressNextMapPressRef = useRef(false);
 
@@ -804,43 +789,11 @@ export default function Index() {
     [],
   );
 
-  const runPreviewSnapPrewarm = useCallback(
-    (debounceMs = 0) => {
-      const params = {
-        mapRef,
-        mapReadyRef,
-        dimensions: getCombinedImageDimensions(),
-        mapViewport: drawing.mapOverlayViewport,
-        shapes: drawing.shapes,
-        bumpOverlayLayout: drawing.bumpTextBoxLayoutOnCamera,
-        getCameraFingerprint,
-        previewSnapCacheRef,
-        previewPrewarmInFlightRef,
-      };
-      if (debounceMs <= 0) {
-        startPreviewSnapPrewarm(params);
-        return;
-      }
-      if (previewPrewarmTimerRef.current) clearTimeout(previewPrewarmTimerRef.current);
-      previewPrewarmTimerRef.current = setTimeout(() => {
-        startPreviewSnapPrewarm(params);
-      }, debounceMs);
-    },
-    [
-      drawing.mapOverlayViewport,
-      drawing.shapes,
-      drawing.bumpTextBoxLayoutOnCamera,
-      getCameraFingerprint,
-    ],
-  );
-
-  useEffect(() => {
-    if (!screenshotPreviewMode) return;
-    runPreviewSnapPrewarm(0);
-    return () => {
-      if (previewPrewarmTimerRef.current) clearTimeout(previewPrewarmTimerRef.current);
-    };
-  }, [screenshotPreviewMode, runPreviewSnapPrewarm]);
+  const getScreenshotMapViewport = useCallback((): MapOverlayViewport => {
+    const vp = homeMapViewportRef.current;
+    if (vp.width > 1 && vp.height > 1) return vp;
+    return drawing.mapOverlayViewport;
+  }, [drawing.mapOverlayViewport]);
 
   const locationBootstrapRef = useRef(false);
   const homeLaunchBootstrapRef = useRef(false);
@@ -1059,6 +1012,11 @@ export default function Index() {
     setMenuSheetIndex(0);
   }, []);
 
+  const homeMenuItems = useMemo(
+    () => getMenuItems(isProMode, !!isAuthenticated, isAppAdminUser(user), user, userProfile),
+    [isProMode, isAuthenticated, user, userProfile],
+  );
+
   // Bildirim badge (unread) refresh kontrolü
   const unreadReqIdRef = useRef(0);
 
@@ -1121,15 +1079,19 @@ export default function Index() {
     }, [refreshNotificationsUnread, refreshExpertBadges])
   );
 
-  // "bildirim geldiğinde" daha yakın deneyim için hafif polling
-  useEffect(() => {
-    if (isAuthLoading || !isAuthenticated) return;
-    const id = setInterval(() => {
+  // Yalnızca ana sayfa odaktayken hafif polling (arka planda index mount kalınca diğer ekranları yormasın)
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthLoading || !isAuthenticated) return undefined;
       refreshNotificationsUnread();
       refreshExpertBadges();
-    }, 60_000);
-    return () => clearInterval(id);
-  }, [isAuthenticated, isAuthLoading, refreshNotificationsUnread, refreshExpertBadges]);
+      const id = setInterval(() => {
+        refreshNotificationsUnread();
+        refreshExpertBadges();
+      }, 60_000);
+      return () => clearInterval(id);
+    }, [isAuthenticated, isAuthLoading, refreshNotificationsUnread, refreshExpertBadges]),
+  );
 
   // --- Handlers ---
   const openParcelSearchModal = useCallback((tab: ParcelSearchTabKey = 'parcel') => {
@@ -1138,8 +1100,8 @@ export default function Index() {
   }, []);
 
   const handleHomeVoiceQueryResolved = useCallback(
-    (payload: SmartQueryParcelPayload) => {
-      setIncomingParcelFormSeed(smartQueryPayloadToFormSeed(payload));
+    (seed: SidebarSavedQuery) => {
+      setIncomingParcelFormSeed(seed);
       openParcelSearchModal('parcel');
     },
     [openParcelSearchModal]
@@ -1187,7 +1149,7 @@ export default function Index() {
   }, [isAuthenticated, router]);
 
   const handleMenuItemPress = useCallback((itemId: string) => {
-    console.log('[Index] handleMenuItemPress called with itemId:', itemId);
+    if (__DEV__) console.log('[Index] handleMenuItemPress called with itemId:', itemId);
     if (itemId === 'dosyalarim') {
       setSubmenuOpenId((prev) => {
         const next = prev === 'dosyalarim' ? null : 'dosyalarim';
@@ -1292,6 +1254,11 @@ export default function Index() {
       router.push('login');
     } else if (itemId === 'hukuki-metinler') {
       router.push('legal-hub');
+    } else if (itemId === 'destek') {
+      router.push('portal-webview', {
+        path: '/destek/',
+        title: 'Destek',
+      });
     } else if (itemId === 'ilan-ver') {
       void openIlanVer();
     } else if (itemId === 'ilanlarim') {
@@ -1316,6 +1283,15 @@ export default function Index() {
       router.push('ai-image-animation-purchase');
     } else if (itemId === 'ai-drone-video') {
       router.push('ai-drone-hub');
+    } else if (itemId === 'ai-drone-my-videos') {
+      if (!isAuthenticated) {
+        Alert.alert('Giriş gerekli', 'Videolarınızı görmek için giriş yapın.', [
+          { text: 'İptal', style: 'cancel' },
+          { text: 'Giriş', onPress: () => router.push('login') },
+        ]);
+        return;
+      }
+      router.push('ai-drone-my-videos');
     } else if (itemId === 'ai-drone-jobs') {
       if (!isAuthenticated) {
         Alert.alert('Giriş gerekli', 'İşlerinizi görmek için giriş yapın.', [
@@ -1369,6 +1345,14 @@ export default function Index() {
   }, [activeParcelData]);
 
   const hasActiveParcel = Boolean(activeParcelData?.geometry);
+
+  const getPreviewMapFrameInWindow = useCallback(() => {
+    return computeScreenshotPreviewLayout({
+      hasActiveParcel,
+      insetTop: insets.top || 0,
+      insetBottom: insets.bottom || 0,
+    }).mapFrameScreen;
+  }, [hasActiveParcel, insets.top, insets.bottom]);
 
   const streetViewParcel = useMemo(() => {
     if (isProMode) return parcelData;
@@ -1562,6 +1546,20 @@ export default function Index() {
     return () => clearTimeout(timer);
   }, [isAuthenticated, user]);
 
+  const persistWelcomeDismissed = useCallback(() => {
+    if (!user) return;
+    user.has_seen_welcome = true;
+    void storageService.setUser({ ...user, has_seen_welcome: true });
+    void authService.dismissWelcome().catch(() => {});
+  }, [user]);
+
+  const persistAppTourDismissed = useCallback(() => {
+    if (!user) return;
+    user.has_seen_app_tour = true;
+    void storageService.setUser({ ...user, has_seen_app_tour: true });
+    void authService.dismissAppTour().catch(() => {});
+  }, [user]);
+
   useFocusEffect(
     useCallback(() => {
       if (isAuthLoading) return;
@@ -1643,32 +1641,39 @@ export default function Index() {
     createShareHandler({
       parcelData: screenshotParcelForCapture,
       mapRef,
+      cameraRef,
+      camRef,
       combinedContainerRef,
       mapReadyRef,
       isSharingRef,
+      isProgrammaticMoveRef,
+      programmaticTimerRef,
       setIsProcessingShare,
       setCapturedMapUri,
       setCapturedModalUri,
       setShareModalVisible,
       parcelDesign: homeParcelPolygonDesign,
-      mapViewport: drawing.mapOverlayViewport,
+      mapViewport: getScreenshotMapViewport(),
       shapes: drawing.shapes,
       bumpOverlayLayout: drawing.bumpTextBoxLayoutOnCamera,
       prefetchedShareLinkRef,
       previewSnapCacheRef,
-      previewPrewarmInFlightRef,
       getCameraFingerprint,
       hasActiveParcel,
+      fromScreenshotPreview: true,
+      mapContainerRef: homeMapContainerRef,
+      getPreviewMapFrameInWindow,
     }),
     [
       screenshotParcelForCapture,
       activeParcelData,
       homeParcelPolygonDesign,
-      drawing.mapOverlayViewport,
+      getScreenshotMapViewport,
       drawing.shapes,
       drawing.bumpTextBoxLayoutOnCamera,
       getCameraFingerprint,
       hasActiveParcel,
+      getPreviewMapFrameInWindow,
     ]
   );
 
@@ -1688,8 +1693,14 @@ export default function Index() {
       prefetchedShareLinkRef.current = null;
     }
     setScreenshotPreviewMode(true);
-    runPreviewSnapPrewarm(0);
-  }, [activeParcelData, runPreviewSnapPrewarm]);
+  }, [activeParcelData]);
+
+  const handleParcelModalShare = useCallback(() => {
+    setParcelModalVisible(false);
+    InteractionManager.runAfterInteractions(() => {
+      handleCameraPress();
+    });
+  }, [handleCameraPress]);
 
   const handleConfirmScreenshot = useCallback(async () => {
     // Giriş yapmamış kullanıcılar için Coin Kazan modalı açılmaz, direkt paylaş
@@ -1710,8 +1721,6 @@ export default function Index() {
   }, [isAuthenticated, hasActiveParcel, canOpenPricePanel, screenshotTotalPriceInput, screenshotAreaNum, screenshotMergedProps, saveUserPrintScreenPrice, handleShare]);
 
   const doConfirmScreenshot = useCallback(async (skipCoinBecauseNoPrice: boolean) => {
-    setScreenshotPreviewMode(false);
-
     // Arazi yoksa: fiyat alanları pasif + screenshot sadece harita olacak (container mapOnly)
     if (!hasActiveParcel) {
       shareCoinContextRef.current = { awardCoin: false };
@@ -1722,6 +1731,7 @@ export default function Index() {
       } catch (error) {
         // handleShare zaten alert/log yapıyor
       } finally {
+        setScreenshotPreviewMode(false);
         shareCoinContextRef.current = { awardCoin: true };
         setScreenshotPriceOverride(null);
         setScreenshotTotalPriceInput('');
@@ -1787,6 +1797,7 @@ export default function Index() {
     } catch (error) {
       // handleShare zaten alert/log yapıyor
     } finally {
+      setScreenshotPreviewMode(false);
       shareCoinContextRef.current = { awardCoin: true };
       // Bir sonraki çekimde backend fiyatlarına geri dön
       setScreenshotPriceOverride(null);
@@ -1811,54 +1822,6 @@ export default function Index() {
   useScreenshotListener({ activeScreen, parcelData: activeParcelData, parcelModalVisible, setShareModalVisible });
 
   // Map & Logic Helpers
-  /**
-   * GeoJSON koordinat normalizasyonu: [lat,lon] -> [lon,lat]
-   * Mapbox [lon,lat] bekler. TKGM verisi [lat,lon] gelebilir.
-   * Server (swap_latlon_in_geometry) zaten swap yapiyorsa tekrar swap etmemeli.
-   * TR bbox tespiti ile sadece gerekli olduğunda swap yapar.
-   */
-  const normalizeGeometryCoordinates = (geometry: any): any => {
-    if (!geometry || !geometry.coordinates) return geometry;
-    // İlk koordinat çiftini al
-    let first: [number, number] | null = null;
-    try {
-      if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates?.[0]?.[0])) {
-        first = geometry.coordinates[0][0];
-      } else if (geometry.type === 'MultiPolygon' && Array.isArray(geometry.coordinates?.[0]?.[0]?.[0])) {
-        first = geometry.coordinates[0][0][0];
-      } else if (geometry.type === 'Point' && Array.isArray(geometry.coordinates) && geometry.coordinates.length >= 2) {
-        first = [geometry.coordinates[0], geometry.coordinates[1]];
-      }
-    } catch {}
-    if (!first || typeof first[0] !== 'number' || typeof first[1] !== 'number') return geometry;
-    const x = first[0];
-    const y = first[1];
-    // TR lat aralığı (35-43) ve lon aralığı (25-46):
-    // Eğer x lat aralığında VE y lon aralığında ise → [lat,lon] formatı → swap gerekli
-    // Eğer x lon aralığında (25-46) ve y lat aralığında (35-43) değilse → zaten [lon,lat] → swap gereksiz
-    const looksLikeLatLonTR = Number.isFinite(x) && Number.isFinite(y) && x >= 35 && x <= 43 && y >= 25 && y <= 46;
-    if (!looksLikeLatLonTR) return geometry; // Zaten [lon,lat] formatında, dokunma
-    // Swap gerekli: [lat,lon] -> [lon,lat]
-    const swap = (coords: any): any => {
-      if (!Array.isArray(coords)) return coords;
-      if (coords.length >= 2 && typeof coords[0] === 'number' && typeof coords[1] === 'number') {
-        return [coords[1], coords[0], ...coords.slice(2)];
-      }
-      return coords.map(swap);
-    };
-    return { ...geometry, coordinates: swap(geometry.coordinates) };
-  };
-
-  const calculateBoundsAndCamera = (geometry: any) => {
-    let allCoords: [number, number][] = [];
-    if (geometry.type === 'Polygon') allCoords = geometry.coordinates[0];
-    else if (geometry.type === 'MultiPolygon') geometry.coordinates.forEach((p: any) => allCoords.push(...p[0]));
-    if (!allCoords.length) return null;
-    let minLon = allCoords[0][0], maxLon = allCoords[0][0], minLat = allCoords[0][1], maxLat = allCoords[0][1];
-    allCoords.forEach(([lon, lat]) => { minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon); minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat); });
-    return { center: [(minLon + maxLon) / 2, (minLat + maxLat) / 2] as [number, number], zoom: 16 };
-  };
-
   const maybeFitSimpleQueryParcel = useCallback(
     (geometry: any) => {
       setTimeout(() => {
@@ -1907,7 +1870,7 @@ export default function Index() {
       if (mahalleTkgmValue == null && proparcelValue == null) {
         Alert.alert(
           "Mahalle bilgisi eksik",
-          "Bu parsel için TKGM mahalle kodu bulunamadı. Ana sayfada Ada/Parsel ile parseli yeniden sorgulayıp 3D düzenleme satın alın; böylece kayıt güncellenir.",
+          "Bu parsel için mahalle kodu bulunamadı. Ana sayfada Ada/Parsel ile parseli yeniden sorgulayıp 3D düzenleme satın alın; böylece kayıt güncellenir.",
         );
         return;
       }
@@ -1953,7 +1916,7 @@ export default function Index() {
           );
         }
 
-        const normalizedGeom = normalizeGeometryCoordinates(data.geometry);
+        const normalizedGeom = normalizeParcelGeometry(data.geometry);
         const settings = calculateBoundsAndCamera(normalizedGeom);
         if (isProMode) {
           setParcelData({ geometry: normalizedGeom, properties: data.properties || {}, analysisData: null });
@@ -2056,10 +2019,15 @@ export default function Index() {
     return '';
   };
 
-  const handleAdaParselSubmit = useCallback(async (payload: any, options?: { forcePro?: boolean; zoomToParcel?: boolean }) => {
+  const handleAdaParselSubmit = useCallback(async (payload: any, options?: { forcePro?: boolean; forceSimple?: boolean; zoomToParcel?: boolean }) => {
     setActiveScreen(null);
-    const runAsPro = isProMode || options?.forcePro === true;
-    if (options?.forcePro) {
+    const forceSimple = options?.forceSimple === true || pendingSavedQuerySimpleRef.current;
+    if (pendingSavedQuerySimpleRef.current) pendingSavedQuerySimpleRef.current = false;
+    const runAsPro = forceSimple ? false : isProMode || options?.forcePro === true;
+    if (forceSimple) {
+      setIsProMode(false);
+      setQueryModeChoice('simple');
+    } else if (options?.forcePro) {
       setIsProMode(true);
       setQueryModeChoice('pro');
     }
@@ -2095,7 +2063,7 @@ export default function Index() {
 
         // Parseli haritada çiz (kullanıcı onaylamadan önce parseli görsün) — TKGM raw [lat,lon] → normalize
         try {
-          const normalizedTkgmGeomAda = normalizeGeometryCoordinates(tkgmData.geometry);
+          const normalizedTkgmGeomAda = normalizeParcelGeometry(tkgmData.geometry);
           setParcelData({ geometry: normalizedTkgmGeomAda, properties: tkgmData.properties || {}, analysisData: null });
           if (options?.zoomToParcel) {
             zoomToParcelOnMap(normalizedTkgmGeomAda);
@@ -2167,22 +2135,6 @@ export default function Index() {
       }
     } catch (error: any) {
       console.error('[handleAdaParselSubmit] Sorgu hatası:', error);
-      if (error?.type === 'TKGM_PARCEL_NOT_FOUND') {
-        Alert.alert('Parsel Bulunamadı', error.message || 'Parsel bulunamadı.', [{ text: 'Tamam' }]);
-        return;
-      }
-      if (error?.type === 'TKGM_RATE_LIMIT') {
-        Alert.alert(
-          'Günlük Sorgu Limiti',
-          error.message || 'TKGM günlük sorgu limiti aşıldı. Lütfen daha sonra tekrar deneyin.',
-          [{ text: 'Tamam' }]
-        );
-        return;
-      }
-      if (error?.type === 'TIMEOUT' || error?.type === 'CORS_OR_NETWORK_ERROR') {
-        Alert.alert('Bağlantı Hatası', error.message || 'TKGM sunucusuna bağlanılamadı.', [{ text: 'Tamam' }]);
-        return;
-      }
       if (error instanceof QueryLimitError) {
         Alert.alert(
           'Günlük Sorgu Limiti',
@@ -2194,13 +2146,18 @@ export default function Index() {
                 { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) },
               ]
         );
-      } else {
-        Alert.alert(
-          'Bağlantı Hatası',
-          'Parsel sorgusu tamamlanamadı. Lütfen internet bağlantınızı kontrol edin.',
-          [{ text: 'Tamam' }]
-        );
+        return;
       }
+      if (typeof error?.type === 'string') {
+        const alert = getTkgmUserAlert(error);
+        Alert.alert(alert.title, alert.message, [{ text: 'Tamam' }]);
+        return;
+      }
+      Alert.alert(
+        'Bağlantı Hatası',
+        'Parsel sorgusu tamamlanamadı. Lütfen internet bağlantınızı kontrol edin.',
+        [{ text: 'Tamam' }]
+      );
     } finally {
       endParcelQueryLoad(loadSeq);
     }
@@ -2227,34 +2184,46 @@ export default function Index() {
     setMyQueriesVisible(true);
   }, []);
 
+  const buildSavedQueryPayload = useCallback((q: SavedQueryItem) => {
+    const proparcelVal =
+      ('proparcel_value' in q && q.proparcel_value != null ? q.proparcel_value : null) ??
+      (q as SavedQuery).proparcel_value;
+    const payload: {
+      mahalleTkgmValue: number;
+      mahalle: string;
+      ada: string;
+      parsel: string;
+      proparcelValue?: number;
+    } = {
+      mahalleTkgmValue: Number(q.tkgm_value),
+      mahalle: '',
+      ada: String(q.ada),
+      parsel: String(q.parsel),
+    };
+    if (proparcelVal != null && Number.isFinite(Number(proparcelVal))) {
+      payload.proparcelValue = Number(proparcelVal);
+    }
+    return payload;
+  }, []);
+
   const runSimpleQueryFromSaved = useCallback(
     (q: SavedQueryItem) => {
       setMyQueriesVisible(false);
       closeMenu();
-      if (isProMode) setIsProMode(false);
-      setQueryModeChoice('simple');
-      const proparcelVal =
-        ('proparcel_value' in q && q.proparcel_value != null ? q.proparcel_value : null) ??
-        (q as SavedQuery).proparcel_value;
-      const payload: {
-        mahalleTkgmValue: number;
-        mahalle: string;
-        ada: string;
-        parsel: string;
-        proparcelValue?: number;
-      } = {
-        mahalleTkgmValue: Number(q.tkgm_value),
-        mahalle: '',
-        ada: String(q.ada),
-        parsel: String(q.parsel),
-      };
-      if (proparcelVal != null && Number.isFinite(Number(proparcelVal))) {
-        payload.proparcelValue = Number(proparcelVal);
-      }
       setActiveScreen(null);
-      void handleAdaParselSubmit(payload);
+      void handleAdaParselSubmit(buildSavedQueryPayload(q), { forceSimple: true });
     },
-    [closeMenu, isProMode, handleAdaParselSubmit]
+    [closeMenu, handleAdaParselSubmit, buildSavedQueryPayload]
+  );
+
+  const runProQueryFromSaved = useCallback(
+    (q: SavedQueryItem) => {
+      setMyQueriesVisible(false);
+      closeMenu();
+      setActiveScreen(null);
+      void handleAdaParselSubmit(buildSavedQueryPayload(q), { forcePro: true });
+    },
+    [closeMenu, handleAdaParselSubmit, buildSavedQueryPayload]
   );
 
   // Deep link (App.tsx) veya pro→basit geçiş sonrası basit sorgu
@@ -2537,10 +2506,7 @@ export default function Index() {
       drawing.bumpTextBoxLayoutOnCamera();
     }
     bumpParcelPatternLayout();
-    if (screenshotPreviewModeRef.current) {
-      runPreviewSnapPrewarm(180);
-    }
-  }, [is3DMode, show3DSlider, drawing.shapes, drawing.bumpTextBoxLayoutOnCamera, runPreviewSnapPrewarm, bumpParcelPatternLayout]);
+  }, [is3DMode, show3DSlider, drawing.shapes, drawing.bumpTextBoxLayoutOnCamera, bumpParcelPatternLayout]);
   
   const toggle3DMode = () => {
     const n = !is3DMode; 
@@ -2991,7 +2957,7 @@ export default function Index() {
           const { title, suggestedType } = generatePropertyTypeTitle(nitelikText);
 
           try {
-            const normalizedTkgmGeom = normalizeGeometryCoordinates(data.geometry);
+            const normalizedTkgmGeom = normalizeParcelGeometry(data.geometry);
             console.log('[executeParcelQueryAtLngLat] TKGM geometry normalized, first coord:', JSON.stringify(normalizedTkgmGeom?.coordinates?.[0]?.[0] ?? normalizedTkgmGeom?.coordinates?.[0]?.[0]?.[0]).slice(0, 40));
             setParcelData({ geometry: normalizedTkgmGeom, properties: data.properties || {}, analysisData: null });
             const s = calculateBoundsAndCamera(normalizedTkgmGeom);
@@ -3035,21 +3001,9 @@ export default function Index() {
                   { text: 'Giriş Yap', onPress: () => router.push('/auth/login' as any) },
                 ],
           );
-        } else if (error?.type === 'TKGM_RATE_LIMIT') {
-          Alert.alert(
-            'Günlük Sorgu Limiti',
-            error.message || 'TKGM günlük sorgu limiti aşıldı. Lütfen daha sonra tekrar deneyin.',
-            [{ text: 'Tamam' }],
-          );
-        } else if (error?.type === 'TIMEOUT' || error?.type === 'CORS_OR_NETWORK_ERROR') {
-          Alert.alert(
-            'Bağlantı Hatası',
-            error.message || 'TKGM sunucusuna bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.',
-            [{ text: 'Tamam' }],
-          );
-        } else if (typeof error?.type === 'string' && error?.message) {
-          // TKGM 500 / beklenmeyen sunucu hataları → çökme yerine uyarı modalı.
-          Alert.alert('Uyarı', error.message, [{ text: 'Tamam' }]);
+        } else if (typeof error?.type === 'string') {
+          const alert = getTkgmUserAlert(error);
+          Alert.alert(alert.title, alert.message, [{ text: 'Tamam' }]);
         } else {
           Alert.alert(
             'Bağlantı Hatası',
@@ -3252,8 +3206,10 @@ export default function Index() {
     }
   };
 
+  const canUseProSorgu = canAccessProSorgu(user, userProfile);
+
   const handleQueryActionPro = () => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !canUseProSorgu) return;
     suppressGhostMapPress();
     menuItemClickedRef.current = true;
     setLocationMenuVisible(false);
@@ -3539,7 +3495,7 @@ export default function Index() {
       }
       let normalizedGeometry: any = null;
       if (geometryRaw?.coordinates) {
-        normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
+        normalizedGeometry = normalizeParcelGeometry(geometryRaw);
       }
       const pd: any = data?.parameters_data || {};
       const pv: any = pd?.parcel_values || {};
@@ -3593,15 +3549,17 @@ export default function Index() {
             const mahalleAd = propertiesSlice.mahalleAd || '';
             const apiTitle = mahalleAd ? `${mahalleAd} - ${adaVal}/${parselVal}` : `${adaVal}/${parselVal}`;
             try {
-              const apiRes = await createSavedQueryApi({
-                tkgm_value: Number(tkgmValue),
-                ada: String(adaVal),
-                parsel: String(parselVal),
-                title: apiTitle,
-                proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
-              });
-              if (!apiRes.ok) console.warn('[handlePropertyTypeSelect] API kayıt hatası:', apiRes.error);
-              else console.log('[handlePropertyTypeSelect] API kayıt başarılı, id:', apiRes.data?.id);
+              await saveProQueryToApi(
+                data,
+                {
+                  tkgm_value: Number(tkgmValue),
+                  ada: String(adaVal),
+                  parsel: String(parselVal),
+                  title: apiTitle,
+                  proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
+                },
+                'handlePropertyTypeSelect',
+              );
             } catch (apiErr) {
               console.warn('[handlePropertyTypeSelect] API kayıt exception:', apiErr);
             }
@@ -3785,7 +3743,7 @@ export default function Index() {
     }
   }, [closeHoldMapTools, holdMapToolsActive, holdZoomEnabled]);
 
-  const homeMapGesturesAllowed = !isMapInteractionLocked && !screenshotPreviewMode;
+  const homeMapGesturesAllowed = !isMapInteractionLocked;
   /** 3D yönetim paneli açıkken pitch panelden; parmak pitch pinch zoom ile çakışmasın. */
   const homeMapFingerPitchEnabled = homeMapGesturesAllowed && !show3DSlider;
   /** Tek parmak pan — zoom butonu basılıyken kapatılır; scrollEnabled buna bağlanmaz (pinch/rotate kesilmesin). */
@@ -3849,22 +3807,18 @@ export default function Index() {
         </View>
 
         <View style={styles.headerCenter}>
-          <View style={styles.headerLogoOrb}>
-            <Image
-              source={proparcelFavicon}
-              style={styles.headerLogo}
-              resizeMode="cover"
-              accessibilityLabel="ProParcel"
-            />
-          </View>
-          <TouchableOpacity
+          <ExpertHeaderBrandFlip
+            enabled={isAuthenticated && isExpertUser(user, userProfile)}
+            displayName={
+              String(user?.full_name || '').trim() ||
+              [userProfile?.first_name, userProfile?.last_name]
+                .map((v) => (v == null ? '' : String(v)).trim())
+                .filter(Boolean)
+                .join(' ')
+            }
+            avatarUrl={userProfile?.avatar_url || userProfile?.pending_avatar_url}
             onPress={() => router.push('landing', { skipIntro: true })}
-            activeOpacity={0.75}
-            accessibilityLabel="ProParcel ana sayfa"
-            hitSlop={{ top: 8, bottom: 8, left: 4, right: 12 }}
-          >
-            <Text style={styles.headerTitle}>ProParcel</Text>
-          </TouchableOpacity>
+          />
         </View>
 
         <View style={styles.headerSideRight}>
@@ -4113,6 +4067,7 @@ export default function Index() {
             {/* 3D editör açıkken ana haritayı unmount et: iki MapView aynı anda OOM (607MB alloc) yapıyor */}
             {Mapbox && !shapeDrawingModalVisible && isScreenFocused ? (
               <View
+                ref={homeMapContainerRef}
                 style={{ flex: 1 }}
                 collapsable={false}
                 onLayout={(e) => {
@@ -4170,7 +4125,9 @@ export default function Index() {
                 }}
               >
                 <Mapbox.Camera ref={cameraRef} defaultSettings={mapDefaultSettings} maxZoomLevel={22} minZoomLevel={2} />
-                {is3DMode ? <HomeIndexMap3DLayers idPrefix="home-index" /> : null}
+                {is3DMode ? (
+                  <HomeIndexMap3DLayers idPrefix="home-index" />
+                ) : null}
                 
                 {adminBoundary?.geometry ? (
                   <Mapbox.ShapeSource
@@ -4541,7 +4498,9 @@ export default function Index() {
               const infoTop = mapTop + mapHeight;
 
               // Alt menü gizleneceği için aksiyonları daha aşağıda konumlandır
-              const actionBottom = 24 + (insets.bottom || 0);
+              const baseActionBottom = 24 + (insets.bottom || 0);
+              const actionBottom =
+                keyboardHeight > 0 ? keyboardHeight + 24 : baseActionBottom;
               const pricePanelBottom = actionBottom + 72;
 
               // İptal: kesik çizgi sınırının hemen üstünde sağ üstte
@@ -4725,16 +4684,22 @@ export default function Index() {
           }
           onHierarchySelect={handleLocationHierarchySelect}
           onBeforeSavedQueryRun={() => {
+            pendingSavedQuerySimpleRef.current = true;
             if (isProMode) setIsProMode(false);
             setQueryModeChoice('simple');
           }}
         />
-        <MyQueriesModal
-          visible={myQueriesVisible}
-          onClose={() => setMyQueriesVisible(false)}
-          onSelect={runSimpleQueryFromSaved}
-          isAuthenticated={isAuthenticated}
-        />
+        {myQueriesVisible ? (
+          <MyQueriesModal
+            visible
+            onClose={() => setMyQueriesVisible(false)}
+            onSelect={runSimpleQueryFromSaved}
+            onSelectPro={
+              canAccessProSorgu(user, userProfile) ? runProQueryFromSaved : undefined
+            }
+            isAuthenticated={isAuthenticated}
+          />
+        ) : null}
         <ErrorBoundary>
           <ShapeDrawingModal
             visible={shapeDrawingModalVisible}
@@ -4859,8 +4824,8 @@ export default function Index() {
               <View style={[styles.queryActionDivider, !isProMode && styles.queryActionDividerSimple]} />
               <TouchableOpacity
                 testID="query-action-pro"
-                style={[styles.queryActionItem, !isAuthenticated && { opacity: 0.45 }]}
-                disabled={!isAuthenticated}
+                style={[styles.queryActionItem, (!isAuthenticated || !canUseProSorgu) && { opacity: 0.45 }]}
+                disabled={!isAuthenticated || !canUseProSorgu}
                 onPress={handleQueryActionPro}
               >
                 <Text
@@ -4955,15 +4920,6 @@ export default function Index() {
             >
               <Text style={styles.pillButton3dLabel}>3D</Text>
             </TouchableOpacity>
-            <VrPillBarButton
-              styles={styles}
-              onInteraction={() => {
-                menuItemClickedRef.current = true;
-                setHomeMapToolsSheetOpen(false);
-                setLocationMenuVisible(false);
-                setShow3DSlider(false);
-              }}
-            />
             <TouchableOpacity testID="search-button" onPress={() => openParcelSearchModal('parcel')} style={[styles.pillButton, styles.pillButtonEven]}>
               <Ionicons name="search" size={18} color="#fff" />
             </TouchableOpacity>
@@ -4971,21 +4927,23 @@ export default function Index() {
           </View>
           </View>
         </View>
-        <View
-          pointerEvents="box-none"
-          style={[styles.homeVoiceOrbLayer, { bottom: 62 + insets.bottom }]}
-        >
-          <HomeVoiceQueryOrb
-            onInteraction={() => {
-              suppressGhostMapPress();
-              menuItemClickedRef.current = true;
-              setLocationMenuVisible(false);
-              setHomeMapToolsSheetOpen(false);
-              setShow3DSlider(false);
-            }}
-            onQueryResolved={handleHomeVoiceQueryResolved}
-          />
-        </View>
+        {isScreenFocused ? (
+          <View
+            pointerEvents="box-none"
+            style={[styles.homeVoiceOrbLayer, { bottom: 62 + insets.bottom }]}
+          >
+            <HomeVoiceQueryOrb
+              onInteraction={() => {
+                suppressGhostMapPress();
+                menuItemClickedRef.current = true;
+                setLocationMenuVisible(false);
+                setHomeMapToolsSheetOpen(false);
+                setShow3DSlider(false);
+              }}
+              onFormSeedResolved={handleHomeVoiceQueryResolved}
+            />
+          </View>
+        ) : null}
         <HomeMapToolsSheet
           visible={homeMapToolsSheetOpen}
           onClose={handleHomeMapToolsSheetDismiss}
@@ -5089,9 +5047,10 @@ export default function Index() {
             }}
           />
           <UserMenuSheetList
-            items={getMenuItems(isProMode, isAuthenticated, isAppAdminUser(user), user, userProfile)}
+            items={homeMenuItems}
             st={userMenuSheetDarkStyles}
             variant="dark"
+            sheetVisible={menuVisible}
             submenuOpenId={submenuOpenId}
             uzmanGorusuOpen={uzmanGorusuOpen}
             setUzmanGorusuOpen={setUzmanGorusuOpen}
@@ -5111,7 +5070,7 @@ export default function Index() {
         visible={welcomeVisible}
         onClose={() => {
           setWelcomeVisible(false);
-          if (user) user.has_seen_welcome = true;
+          persistWelcomeDismissed();
           if (user && user.has_seen_app_tour === false) {
             setTimeout(() => setTourVisible(true), 500);
           }
@@ -5123,7 +5082,7 @@ export default function Index() {
         visible={tourVisible}
         onClose={() => {
           setTourVisible(false);
-          if (user) user.has_seen_app_tour = true;
+          persistAppTourDismissed();
         }}
       />
 
@@ -5153,6 +5112,7 @@ export default function Index() {
           }
           setQueryModeChoice('pro');
         }}
+        onShare={handleParcelModalShare}
       />
       <ProQueryConfirmModal
         visible={proQueryConfirmVisible}
@@ -5240,7 +5200,7 @@ export default function Index() {
             const geometryRawF = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
             if (geometryRawF && geometryRawF.coordinates) {
-              normalizedGeometry = normalizeGeometryCoordinates(geometryRawF);
+              normalizedGeometry = normalizeParcelGeometry(geometryRawF);
             }
             if (normalizedGeometry) {
               setShowEdgeMeasurements(false);
@@ -5310,15 +5270,17 @@ export default function Index() {
                   const mahalleAd = propertiesSlice.mahalleAd || '';
                   const apiTitle = mahalleAd ? `${mahalleAd} - ${adaVal}/${parselVal}` : `${adaVal}/${parselVal}`;
                   try {
-                    const apiRes = await createSavedQueryApi({
-                      tkgm_value: Number(tkgmValue),
-                      ada: String(adaVal),
-                      parsel: String(parselVal),
-                      title: apiTitle,
-                      proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
-                    });
-                    if (!apiRes.ok) console.warn('[FactoryEstimateModal] API kayıt hatası:', apiRes.error);
-                    else console.log('[FactoryEstimateModal] API kayıt başarılı, id:', apiRes.data?.id);
+                    await saveProQueryToApi(
+                      data,
+                      {
+                        tkgm_value: Number(tkgmValue),
+                        ada: String(adaVal),
+                        parsel: String(parselVal),
+                        title: apiTitle,
+                        proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
+                      },
+                      'FactoryEstimateModal',
+                    );
                   } catch (apiErr) {
                     console.warn('[FactoryEstimateModal] API kayıt exception:', apiErr);
                   }
@@ -5406,7 +5368,7 @@ export default function Index() {
             const geometryRawV = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
             if (geometryRawV && geometryRawV.coordinates) {
-              normalizedGeometry = normalizeGeometryCoordinates(geometryRawV);
+              normalizedGeometry = normalizeParcelGeometry(geometryRawV);
             }
             if (normalizedGeometry) {
               setShowEdgeMeasurements(false);
@@ -5477,15 +5439,17 @@ export default function Index() {
                   const mahalleAd = propertiesSlice.mahalleAd || '';
                   const apiTitle = mahalleAd ? `${mahalleAd} - ${adaVal}/${parselVal}` : `${adaVal}/${parselVal}`;
                   try {
-                    const apiRes = await createSavedQueryApi({
-                      tkgm_value: Number(tkgmValue),
-                      ada: String(adaVal),
-                      parsel: String(parselVal),
-                      title: apiTitle,
-                      proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
-                    });
-                    if (!apiRes.ok) console.warn('[VillaEstimateModal] API kayıt hatası:', apiRes.error);
-                    else console.log('[VillaEstimateModal] API kayıt başarılı, id:', apiRes.data?.id);
+                    await saveProQueryToApi(
+                      data,
+                      {
+                        tkgm_value: Number(tkgmValue),
+                        ada: String(adaVal),
+                        parsel: String(parselVal),
+                        title: apiTitle,
+                        proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
+                      },
+                      'VillaEstimateModal',
+                    );
                   } catch (apiErr) {
                     console.warn('[VillaEstimateModal] API kayıt exception:', apiErr);
                   }
@@ -5558,7 +5522,7 @@ export default function Index() {
             const data = await runProParcelQuery(requestBody);
             const geometryRaw = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
-            if (geometryRaw?.coordinates) normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
+            if (geometryRaw?.coordinates) normalizedGeometry = normalizeParcelGeometry(geometryRaw);
             if (normalizedGeometry) {
               setShowEdgeMeasurements(false);
               setParcelData({ geometry: normalizedGeometry, properties: { ...data.properties, ...data.parameters_data?.parcel_values }, analysisData: data });
@@ -5605,14 +5569,17 @@ export default function Index() {
                   const mahalleAd = propertiesSlice.mahalleAd || '';
                   const apiTitle = mahalleAd ? `${mahalleAd} - ${adaVal}/${parselVal}` : `${adaVal}/${parselVal}`;
                   try {
-                    const apiRes = await createSavedQueryApi({
-                      tkgm_value: Number(tkgmValue),
-                      ada: String(adaVal),
-                      parsel: String(parselVal),
-                      title: apiTitle,
-                      proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
-                    });
-                    if (!apiRes.ok) console.warn('[BinaEstimateModal] API kayıt hatası:', apiRes.error);
+                    await saveProQueryToApi(
+                      data,
+                      {
+                        tkgm_value: Number(tkgmValue),
+                        ada: String(adaVal),
+                        parsel: String(parselVal),
+                        title: apiTitle,
+                        proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
+                      },
+                      'BinaEstimateModal',
+                    );
                   } catch (apiErr) { console.warn('[BinaEstimateModal] API kayıt exception:', apiErr); }
                 }
               }
@@ -5674,7 +5641,7 @@ export default function Index() {
             const data = await runProParcelQuery(requestBody);
             const geometryRaw = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
-            if (geometryRaw?.coordinates) normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
+            if (geometryRaw?.coordinates) normalizedGeometry = normalizeParcelGeometry(geometryRaw);
             if (normalizedGeometry) {
               setShowEdgeMeasurements(false);
               setParcelData({ geometry: normalizedGeometry, properties: { ...data.properties, ...data.parameters_data?.parcel_values }, analysisData: data });
@@ -5721,14 +5688,17 @@ export default function Index() {
                   const mahalleAd = propertiesSlice.mahalleAd || '';
                   const apiTitle = mahalleAd ? `${mahalleAd} - ${adaVal}/${parselVal}` : `${adaVal}/${parselVal}`;
                   try {
-                    const apiRes = await createSavedQueryApi({
-                      tkgm_value: Number(tkgmValue),
-                      ada: String(adaVal),
-                      parsel: String(parselVal),
-                      title: apiTitle,
-                      proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
-                    });
-                    if (!apiRes.ok) console.warn('[MustakilEvEstimateModal] API kayıt hatası:', apiRes.error);
+                    await saveProQueryToApi(
+                      data,
+                      {
+                        tkgm_value: Number(tkgmValue),
+                        ada: String(adaVal),
+                        parsel: String(parselVal),
+                        title: apiTitle,
+                        proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
+                      },
+                      'MustakilEvEstimateModal',
+                    );
                   } catch (apiErr) { console.warn('[MustakilEvEstimateModal] API kayıt exception:', apiErr); }
                 }
               }
@@ -5790,7 +5760,7 @@ export default function Index() {
             const data = await runProParcelQuery(requestBody);
             const geometryRaw = data.parameters_polygons?.parcel_polygon || data.geometry;
             let normalizedGeometry: any = null;
-            if (geometryRaw?.coordinates) normalizedGeometry = normalizeGeometryCoordinates(geometryRaw);
+            if (geometryRaw?.coordinates) normalizedGeometry = normalizeParcelGeometry(geometryRaw);
             if (normalizedGeometry) {
               setShowEdgeMeasurements(false);
               setParcelData({ geometry: normalizedGeometry, properties: { ...data.properties, ...data.parameters_data?.parcel_values }, analysisData: data });
@@ -5837,14 +5807,17 @@ export default function Index() {
                   const mahalleAd = propertiesSlice.mahalleAd || '';
                   const apiTitle = mahalleAd ? `${mahalleAd} - ${adaVal}/${parselVal}` : `${adaVal}/${parselVal}`;
                   try {
-                    const apiRes = await createSavedQueryApi({
-                      tkgm_value: Number(tkgmValue),
-                      ada: String(adaVal),
-                      parsel: String(parselVal),
-                      title: apiTitle,
-                      proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
-                    });
-                    if (!apiRes.ok) console.warn('[KonutDaireModal] API kayıt hatası:', apiRes.error);
+                    await saveProQueryToApi(
+                      data,
+                      {
+                        tkgm_value: Number(tkgmValue),
+                        ada: String(adaVal),
+                        parsel: String(parselVal),
+                        title: apiTitle,
+                        proparcel_value: proparcelValue != null ? Number(proparcelValue) : null,
+                      },
+                      'KonutDaireModal',
+                    );
                   } catch (apiErr) { console.warn('[KonutDaireModal] API kayıt exception:', apiErr); }
                 }
               }
@@ -5909,7 +5882,7 @@ export default function Index() {
                     <Image source={TepeCoinSpinGif} style={styles.priceWarnGif} resizeMode="contain" />
                   </View>
                   <View style={styles.priceWarnHeaderCenter} pointerEvents="none">
-                    <Text style={styles.priceWarnTitle}>TEPE COIN KAZAN</Text>
+                    <Text style={styles.priceWarnTitle}>TEPE KREDİ KAZAN</Text>
                   </View>
                   <TouchableOpacity
                     style={styles.priceWarnClose}
@@ -5922,7 +5895,7 @@ export default function Index() {
 
                 <View style={styles.priceWarnBody}>
                   <Text style={styles.priceWarnText}>
-                    Bedava Tepe Coin Kazanmak İçin Lütfen Fiyat Bilgisi Giriniz
+                    Bedava Tepe Kredi Kazanmak İçin Lütfen Fiyat Bilgisi Giriniz
                   </Text>
                 </View>
 
@@ -6093,26 +6066,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#1e293b',
   },
-  headerLogoOrb: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(8, 26, 55, 0.55)',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 223, 255, 0.35)',
-    shadowColor: '#38bdf8',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.55,
-    shadowRadius: 10,
-    ...(Platform.OS === 'android' ? { elevation: 6 } : {}),
-  },
-  headerLogo: {
-    width: 28,
-    height: 28,
-  },
   headerButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: '#334155', borderRadius: 6 },
   // Topbar VIP rozeti
   topbarVipBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#d97706', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, height: 32 },
@@ -6120,8 +6073,6 @@ const styles = StyleSheet.create({
   // Basit/Pro switch: headerModeImgBtn
   headerModeImgBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   headerModeImg: { width: 34, height: 34 },
-  // Ana sayfa coin alanı: 3D sayfası ölçülerine göre
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#fff', letterSpacing: 0.2 },
   content: { flex: 1, backgroundColor: '#1e293b', position: 'relative', overflow: 'visible' },
   homeContainer: { flex: 1 },
   mapContainer: { flex: 1 },

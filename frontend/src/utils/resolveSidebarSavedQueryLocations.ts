@@ -50,6 +50,40 @@ export type ResolvedSidebarLocations = {
   quarter: Quarter;
 };
 
+export type ResolvedSidebarCityTown = {
+  city: City;
+  town: Town;
+};
+
+function resolveCityTownNodes(item: SidebarSavedQuery): ResolvedSidebarCityTown | null {
+  const cities = LOCATIONS.cities || [];
+
+  if (item.il_id && item.ilce_id) {
+    const city = cities.find((c) => String(c.Id) === String(item.il_id));
+    const town = city?.Towns.find((t) => String(t.Id) === String(item.ilce_id));
+    if (city && town) return { city, town };
+  }
+
+  if (item.il_tkgm_value && item.ilce_tkgm_value) {
+    const city = cities.find((c) => String(c.Tkgm_value) === String(item.il_tkgm_value));
+    const town = city?.Towns.find((t) => String(t.Tkgm_value) === String(item.ilce_tkgm_value));
+    if (city && town) return { city, town };
+  }
+
+  if (item.il || item.ilce) {
+    const city = cities.find((c) => matchesName(c.Proparcel_text, item.il));
+    const town = city?.Towns.find((t) => matchesName(t.Proparcel_text, item.ilce));
+    if (city && town) return { city, town };
+  }
+
+  return null;
+}
+
+/** İl + ilçe (mahalle yok) — kısmi sesli sorgu seed */
+export function resolveSidebarSavedQueryCityTown(item: SidebarSavedQuery): ResolvedSidebarCityTown | null {
+  return resolveCityTownNodes(item);
+}
+
 /** Web `setCombosForSavedQuery` — kayıtlı sorguyu forma aktarmak için il/ilçe/mahalle çöz */
 export function resolveSidebarSavedQueryLocations(item: SidebarSavedQuery): ResolvedSidebarLocations | null {
   const cities = LOCATIONS.cities || [];

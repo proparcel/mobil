@@ -32,7 +32,11 @@ export default function AdminUserDetailScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
-    if (!userId) return;
+    if (!userId) {
+      setLoading(false);
+      Alert.alert("Hata", "Geçersiz kullanıcı kimliği.");
+      return;
+    }
     setLoading(true);
     const res = await fetchAdminUserDetail(userId);
     if (res.ok) setUser(res.data.user);
@@ -65,8 +69,10 @@ export default function AdminUserDetailScreen() {
   return (
     <SafeAreaView style={adminCommonStyles.container} edges={["top"]}>
       <AdminScreenHeader title="Kullanıcı Detayı" onBack={() => router.back()} />
-      {loading || !user ? (
+      {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} color={adminColors.accent} />
+      ) : !user ? (
+        <Text style={adminCommonStyles.emptyText}>Kullanıcı bilgisi yüklenemedi.</Text>
       ) : (
         <ScrollView contentContainerStyle={styles.scroll}>
           <View style={adminCommonStyles.card}>
@@ -81,7 +87,7 @@ export default function AdminUserDetailScreen() {
             <Text style={styles.line}>Kayıt: {user.created_at}</Text>
           </View>
           <View style={adminCommonStyles.card}>
-            <Text style={adminCommonStyles.cardTitle}>Tepe Coin</Text>
+            <Text style={adminCommonStyles.cardTitle}>Tepe Kredi</Text>
             <Text style={styles.balance}>Bakiye: {user.balance}</Text>
             <Text style={adminCommonStyles.cardSub}>Toplam alınan: {user.total_purchased}</Text>
             <Text style={adminCommonStyles.cardSub}>Toplam kullanılan: {user.total_used}</Text>

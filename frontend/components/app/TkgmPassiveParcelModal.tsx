@@ -88,7 +88,7 @@ const TkgmPassiveParcelModal: React.FC<TkgmPassiveParcelModalProps> = ({
           <View style={styles.head}>
             <Text style={styles.title}>Parsel pasif / toplulaştırılmış</Text>
             <Text style={styles.sub}>
-              Sorguladığınız ada-parsel TKGM'de pasif durumdadır. Haritada gittiği aktif
+              Sorguladığınız ada-parsel pasif durumdadır. Haritada gittiği aktif
               parsel kullanılacaktır.
             </Text>
           </View>

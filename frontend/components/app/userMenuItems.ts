@@ -11,6 +11,8 @@ export type HomeMenuItem = {
   title: string;
   icon: string;
   disabled?: boolean;
+  /** Pasif öğeye tıklanınca gösterilecek kısa metin */
+  disabledPressTitle?: string;
   hasSubmenu?: boolean;
   /** Admin panel satırı vurgusu */
   highlight?: boolean;
@@ -29,6 +31,7 @@ export function getMenuItems(
       { id: "emlak-vitrini", title: "Emlak Vitrini", icon: "storefront-outline", disabled: false },
       { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
       { id: "hukuki-metinler", title: "Hukuki metinler", icon: "document-text-outline", disabled: false },
+      { id: "destek", title: "Destek", icon: "help-circle-outline", disabled: false },
       { id: "giris", title: "Giriş", icon: "log-in", disabled: false },
     ];
   }
@@ -48,7 +51,13 @@ export function getMenuItems(
     { id: "emlak-vitrini", title: "Emlak Vitrini", icon: "storefront-outline", disabled: false },
     { id: "son-30-gun-pro", title: "Son 30 Gün Pro Sorguları", icon: "calendar", disabled: false },
     { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
-    { id: "ai-video", title: "AI İşlemleri", icon: "film-outline", disabled: false, hasSubmenu: true },
+    {
+      id: "ai-video",
+      title: "AI İşlemleri",
+      icon: "film-outline",
+      disabled: false,
+      hasSubmenu: true,
+    },
     { id: "sosyal-medya-sablonu", title: "Sosyal Medya Postu", icon: "share-social-outline", disabled: false },
     { id: "aranacaklar", title: "Aranacaklar", icon: "call-outline", disabled: false },
     { id: "bildirimler", title: "Bildirimler", icon: "notifications", disabled: false },
@@ -65,6 +74,7 @@ export function getMenuItems(
     { id: "dosyalarim", title: "Dosyalarım", icon: "folder", disabled: false, hasSubmenu: true },
     { id: "kredi-paketleri", title: "Kredi Paketleri", icon: "layers-outline", disabled: false },
     { id: "hukuki-metinler", title: "Hukuki Metinler", icon: "document-text-outline", disabled: false },
+    { id: "destek", title: "Destek", icon: "help-circle-outline", disabled: false },
     { id: "cikis", title: "Çıkış", icon: "log-out", disabled: false },
   ];
 }

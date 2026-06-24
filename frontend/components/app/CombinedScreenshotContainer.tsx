@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useImperativeHandle, useRef, useState } from 'react';
-import { View, Text, Image, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import ViewShot from 'react-native-view-shot';
 import {
   getCombinedImageDimensions,
@@ -24,11 +24,14 @@ import {
   LOCATION_MAHALLE_KEYS,
 } from '../../src/utils/mergeParcelDisplayProperties';
 import { MapCaptureOverlayOnMap } from './MapCaptureOverlayOnMap';
+import { MapCaptureClippedImage } from './MapCaptureClippedImage';
 import type { MapOverlayCapturePayload } from '../../src/utils/mapOverlayCaptureProjection';
+import type { MapCropNorm } from '../../src/utils/mapViewShotCapture';
 
 export type CaptureWithMapUriOptions = {
   overlay?: MapOverlayCapturePayload | null;
   sourceViewport?: { width: number; height: number } | null;
+  mapCropNorm?: MapCropNorm | null;
   /** Arazi yok ve overlay yok → doğrudan mapUri (2. ViewShot yok) */
   skipViewShot?: boolean;
 };
@@ -111,6 +114,7 @@ export const CombinedScreenshotContainer = React.forwardRef<
   const [displayMapUri, setDisplayMapUri] = useState<string | null>(capturedMapUri);
   const [captureOverlay, setCaptureOverlay] = useState<MapOverlayCapturePayload | null>(null);
   const [captureSourceViewport, setCaptureSourceViewport] = useState<{ width: number; height: number } | null>(null);
+  const [captureMapCropNorm, setCaptureMapCropNorm] = useState<MapCropNorm | null>(null);
   const imageReadyResolveRef = useRef<(() => void) | null>(null);
 
   React.useEffect(() => {
@@ -154,6 +158,7 @@ export const CombinedScreenshotContainer = React.forwardRef<
         setDisplayMapUri(mapUri);
         setCaptureOverlay(options?.overlay ?? null);
         setCaptureSourceViewport(options?.sourceViewport ?? null);
+        setCaptureMapCropNorm(options?.mapCropNorm ?? null);
         await waitCaptureLayoutFrames(2);
         await waitForDisplayedImage(mapUri);
         return runViewShotCapture();
@@ -173,8 +178,24 @@ export const CombinedScreenshotContainer = React.forwardRef<
       width={dimensions.mapWidth}
       height={dimensions.mapHeight}
       sourceViewport={captureSourceViewport}
+      mapCropNorm={captureMapCropNorm}
     />
   );
+
+  const mapImageLayer = displayMapUri ? (
+    <MapCaptureClippedImage
+      uri={displayMapUri}
+      width={dimensions.mapWidth}
+      height={dimensions.mapHeight}
+      sourceViewport={captureSourceViewport}
+      mapCropNorm={captureMapCropNorm}
+      onLoadEnd={handleMapImageLoad}
+      onError={() => {
+        imageReadyResolveRef.current?.();
+        imageReadyResolveRef.current = null;
+      }}
+    />
+  ) : null;
 
   if (mapOnly) {
     return (
@@ -190,18 +211,7 @@ export const CombinedScreenshotContainer = React.forwardRef<
         }}
       >
         <View style={{ width: dimensions.mapWidth, height: dimensions.mapHeight, backgroundColor: '#0f172a' }}>
-          {displayMapUri ? (
-            <Image
-              source={{ uri: displayMapUri }}
-              fadeDuration={0}
-              onLoadEnd={handleMapImageLoad}
-              style={{
-                width: dimensions.mapWidth,
-                height: dimensions.mapHeight,
-                resizeMode: 'cover',
-              }}
-            />
-          ) : null}
+          {mapImageLayer}
           {mapOverlayLayer}
         </View>
       </ViewShot>
@@ -289,22 +299,7 @@ export const CombinedScreenshotContainer = React.forwardRef<
       }}
     >
       <View style={{ width: dimensions.mapWidth, height: dimensions.mapHeight, backgroundColor: '#0f172a' }}>
-        {displayMapUri ? (
-          <Image
-            source={{ uri: displayMapUri }}
-            fadeDuration={0}
-            onLoadEnd={handleMapImageLoad}
-            onError={() => {
-              imageReadyResolveRef.current?.();
-              imageReadyResolveRef.current = null;
-            }}
-            style={{
-              width: dimensions.mapWidth,
-              height: dimensions.mapHeight,
-              resizeMode: 'cover',
-            }}
-          />
-        ) : null}
+        {mapImageLayer}
         {mapOverlayLayer}
         <View style={styles.brandOverlay}>
           <Text style={styles.brandOverlayText}>PROPARCEL</Text>

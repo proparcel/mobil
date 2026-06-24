@@ -105,7 +105,34 @@ export function resolveModelStaticImageUri(rawPath: string | undefined | null): 
   return `${base}/static/${raw.replace(/^\//, "")}`;
 }
 
-export type ModelType = "car" | "house" | "tree" | "grass";
+export type ModelType = string;
+
+export const MODEL_CATEGORY_LABELS: Record<string, string> = {
+  car: "Araç",
+  house: "Ev",
+  tree: "Ağaç",
+  grass: "Çim",
+  gardenseating: "Bahçe Oturma",
+  ground: "Zemin",
+  images: "Görseller",
+};
+
+const CATEGORY_DISPLAY_ORDER = ["house", "car", "tree", "grass", "gardenseating", "ground", "images"];
+
+/** API yanıtındaki kategori anahtarlarından galeri sırasını üretir. */
+export function resolveModelGroupMeta(data: Record<string, unknown>): Array<{ id: string; title: string }> {
+  const keys = Object.keys(data).filter((k) => Array.isArray(data[k]));
+  return keys
+    .sort((a, b) => {
+      const ia = CATEGORY_DISPLAY_ORDER.indexOf(a);
+      const ib = CATEGORY_DISPLAY_ORDER.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    })
+    .map((id) => ({ id, title: MODEL_CATEGORY_LABELS[id] ?? id }));
+}
 
 export type RemoteModelListEntry = {
   id?: number;
@@ -133,10 +160,10 @@ export type RemoteModelListEntry = {
   glb_pivot_at_base?: boolean;
 };
 
-export type RemoteModelsListResponse = Partial<Record<ModelType, RemoteModelListEntry[]>>;
+export type RemoteModelsListResponse = Record<string, RemoteModelListEntry[]>;
 
 export type ModelCatalogFlatItem = {
-  groupId: ModelType;
+  groupId: string;
   groupTitle: string;
   /** Tablo id'nin string hali (örn. "20"); Mapbox/instance key olarak kullanılır, model_id alanı kullanılmaz */
   modelId: string;
@@ -165,13 +192,6 @@ export type ModelCatalogFlatItem = {
   /** API glb_pivot_at_base — true ise Z offset 0 kullanılır */
   glbPivotAtBase?: boolean;
 };
-
-const MODEL_GROUP_META: Array<{ id: ModelType; title: string }> = [
-  { id: "car", title: "Araba" },
-  { id: "house", title: "Ev" },
-  { id: "tree", title: "Ağaç" },
-  { id: "grass", title: "Çim" },
-];
 
 function stripQueryAndHash(input: string): string {
   const q = input.indexOf("?");
@@ -263,15 +283,14 @@ async function fetchModelsListFromApiWithBase(): Promise<{ baseUrl: string | nul
       });
       
       if (data && typeof data === "object") {
-        // Kategori sayılarını logla
+        const groupMeta = resolveModelGroupMeta(data as Record<string, unknown>);
         const categoryCounts: Record<string, number> = {};
-        for (const meta of MODEL_GROUP_META) {
+        for (const meta of groupMeta) {
           const entries = coerceArray((data as any)?.[meta.id]);
           categoryCounts[meta.id] = entries.length;
         }
         console.log("[modelCatalog] ✅ Başarılı! Model kategorileri:", categoryCounts);
-        // Debug: ilk kategorideki ilk birkaç modelde is_owned, is_available, remaining_uses
-        for (const meta of MODEL_GROUP_META) {
+        for (const meta of groupMeta) {
           const entries = coerceArray((data as any)?.[meta.id]);
           if (entries.length > 0) {
             const sample = entries.slice(0, 3).map((m: any) => ({
@@ -280,8 +299,9 @@ async function fetchModelsListFromApiWithBase(): Promise<{ baseUrl: string | nul
               is_owned: m?.is_owned,
               is_available: m?.is_available,
               remaining_uses: m?.remaining_uses,
+              thumbnail_path: m?.thumbnail_path,
             }));
-            console.log(`[modelCatalog] Örnek ${meta.id} (is_owned/is_available/remaining_uses):`, JSON.stringify(sample));
+            console.log(`[modelCatalog] Örnek ${meta.id}:`, JSON.stringify(sample));
             break;
           }
         }
@@ -354,7 +374,10 @@ export async function fetchModelCatalogFlat(): Promise<ModelCatalogFlatItem[]> {
     console.log("[modelCatalog] Models base URL:", modelsBase);
     const out: ModelCatalogFlatItem[] = [];
 
-    for (const meta of MODEL_GROUP_META) {
+    const groupMeta = resolveModelGroupMeta(data as Record<string, unknown>);
+    console.log("[modelCatalog] API kategorileri:", groupMeta.map((g) => g.id).join(", "));
+
+    for (const meta of groupMeta) {
       const entries = coerceArray<RemoteModelListEntry>((data as any)?.[meta.id]);
       console.log(`[modelCatalog] Kategori ${meta.id}: ${entries.length} model bulundu`);
       let processedCount = 0;

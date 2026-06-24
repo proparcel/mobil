@@ -2,46 +2,91 @@
  * Apple In-App Purchase ürün kimlikleri ve backend paket eşlemesi.
  * App Store Connect Product ID'ler ile birebir eşleşmelidir.
  *
- * Kurumsal: baslangic / standart / pro (.monthly | .yearly)
- * Bireysel: individual.baslangic / standart / pro (.monthly | .yearly)
+ * Kurumsal aylık: sub.corp.*.monthly (Consumable) | Kurumsal yıllık: corp.yearly.* (Subscription)
+ * Bireysel aylık: sub.indiv.*.monthly (Consumable) | Bireysel yıllık: indiv.yearly.* (Subscription)
  * Ek paket: ek.baslangic / standart / pro (Consumable)
  */
 
 import type { CreditPackage } from "../services/creditService";
 
-/** Kurumsal aylık — App Store: 1 Month, Auto-Renewable */
+/** Kurumsal aylık — App Store: Consumable (In-App Purchase) */
 export const IAP_KURUMSAL_MONTHLY_SKUS = [
-  "com.proparcel.baslangic.monthly",
-  "com.proparcel.standart.monthly",
-  "com.proparcel.pro.monthly",
+  "com.proparcel.sub.corp.baslangic.monthly",
+  "com.proparcel.sub.corp.standart.monthly",
+  "com.proparcel.sub.corp.pro.monthly",
 ] as const;
 
 /** Kurumsal yıllık — App Store: 1 Year, Auto-Renewable */
 export const IAP_KURUMSAL_YEARLY_SKUS = [
-  "com.proparcel.baslangic.yearly",
-  "com.proparcel.standart.yearly",
-  "com.proparcel.pro.yearly",
+  "com.proparcel.corp.yearly.baslangic",
+  "com.proparcel.corp.yearly.standart",
+  "com.proparcel.corp.yearly.pro",
 ] as const;
 
-/** Bireysel aylık — App Store: 1 Month, Auto-Renewable */
+/** Bireysel aylık — App Store: Consumable (In-App Purchase) */
 export const IAP_INDIVIDUAL_MONTHLY_SKUS = [
-  "com.proparcel.individual.baslangic.monthly",
-  "com.proparcel.individual.standart.monthly",
-  "com.proparcel.individual.pro.monthly",
+  "com.proparcel.sub.indiv.baslangic.monthly",
+  "com.proparcel.sub.indiv.standart.monthly",
+  "com.proparcel.sub.indiv.pro.monthly",
 ] as const;
 
 /** Bireysel yıllık — App Store: 1 Year, Auto-Renewable */
 export const IAP_INDIVIDUAL_YEARLY_SKUS = [
-  "com.proparcel.individual.baslangic.yearly",
-  "com.proparcel.individual.standart.yearly",
-  "com.proparcel.individual.pro.yearly",
+  "com.proparcel.indiv.yearly.baslangic",
+  "com.proparcel.indiv.yearly.standart",
+  "com.proparcel.indiv.yearly.pro",
 ] as const;
 
-/** Ek paket — App Store: Consumable (aktif yıllık abonelik gerekir) */
+/** Ek paket — App Store / Play: Consumable */
 export const IAP_EK_CONSUMABLE_SKUS = [
   "com.proparcel.ek.baslangic",
   "com.proparcel.ek.standart",
   "com.proparcel.ek.pro",
+] as const;
+
+/** TL paket lisansları — App Store / Play: Consumable */
+export const IAP_LICENSE_CONSUMABLE_SKUS = [
+  "com.proparcel.license.ai_video",
+  "com.proparcel.license.drone_video",
+  "com.proparcel.license.ai_drone_proparcel",
+  "com.proparcel.license.drone_video_ek_sahne_1",
+  "com.proparcel.license.drone_video_ek_sahne_2",
+] as const;
+
+export const LICENSE_ACTION_TO_IAP_SKU: Record<string, (typeof IAP_LICENSE_CONSUMABLE_SKUS)[number]> = {
+  ai_video: "com.proparcel.license.ai_video",
+  drone_video: "com.proparcel.license.drone_video",
+  ai_drone_proparcel: "com.proparcel.license.ai_drone_proparcel",
+  drone_video_ek_sahne: "com.proparcel.license.drone_video_ek_sahne_1",
+  drone_video_ek_sahne_2: "com.proparcel.license.drone_video_ek_sahne_2",
+};
+
+/** iOS App Store — Auto-Renewable Subscription (yalnızca yıllık) */
+export const IAP_IOS_SUBSCRIPTION_SKUS = [
+  ...IAP_KURUMSAL_YEARLY_SKUS,
+  ...IAP_INDIVIDUAL_YEARLY_SKUS,
+] as const;
+
+/** iOS App Store — Consumable (aylık paketler + ek) */
+export const IAP_IOS_CONSUMABLE_SKUS = [
+  ...IAP_KURUMSAL_MONTHLY_SKUS,
+  ...IAP_INDIVIDUAL_MONTHLY_SKUS,
+  ...IAP_EK_CONSUMABLE_SKUS,
+  ...IAP_LICENSE_CONSUMABLE_SKUS,
+] as const;
+
+/** Google Play — yıllık abonelik SKU'ları */
+export const IAP_PLAY_SUBSCRIPTION_SKUS = [
+  ...IAP_KURUMSAL_YEARLY_SKUS,
+  ...IAP_INDIVIDUAL_YEARLY_SKUS,
+] as const;
+
+/** Google Play — tek seferlik (aylık + ek) SKU'ları */
+export const IAP_PLAY_INAPP_SKUS = [
+  ...IAP_KURUMSAL_MONTHLY_SKUS,
+  ...IAP_INDIVIDUAL_MONTHLY_SKUS,
+  ...IAP_EK_CONSUMABLE_SKUS,
+  ...IAP_LICENSE_CONSUMABLE_SKUS,
 ] as const;
 
 /** @deprecated Kurumsal aylık alias */
@@ -58,14 +103,30 @@ export const IAP_LEGACY_BLOCKED_SKUS = [
   "com.proparcel.credit250",
   "com.proparcel.credit500",
   "com.proparcel.standart.monthl",
+  "com.proparcel.baslangic.monthly",
+  "com.proparcel.standart.monthly",
+  "com.proparcel.pro.monthly",
+  "com.proparcel.individual.baslangic.monthly",
+  "com.proparcel.individual.standart.monthly",
+  "com.proparcel.individual.pro.monthly",
+  "com.proparcel.indiv.monthly.baslangic",
+  "com.proparcel.indiv.monthly.standart",
+  "com.proparcel.indiv.monthly.pro",
+  "com.proparcel.baslangic.yearly",
+  "com.proparcel.standart.yearly",
+  "com.proparcel.pro.yearly",
+  "com.proparcel.sub.corp.baslangic.yearly",
+  "com.proparcel.sub.corp.standart.yearly",
+  "com.proparcel.sub.corp.pro.yearly",
+  "com.proparcel.individual.baslangic.yearly",
+  "com.proparcel.individual.standart.yearly",
+  "com.proparcel.individual.pro.yearly",
+  "com.proparcel.sub.indiv.baslangic.yearly",
+  "com.proparcel.sub.indiv.standart.yearly",
+  "com.proparcel.sub.indiv.pro.yearly",
 ] as const;
 
-export const IAP_SUBSCRIPTION_SKUS = [
-  ...IAP_KURUMSAL_MONTHLY_SKUS,
-  ...IAP_KURUMSAL_YEARLY_SKUS,
-  ...IAP_INDIVIDUAL_MONTHLY_SKUS,
-  ...IAP_INDIVIDUAL_YEARLY_SKUS,
-] as const;
+export const IAP_SUBSCRIPTION_SKUS = IAP_IOS_SUBSCRIPTION_SKUS;
 
 export type IapKurumsalMonthlySku = (typeof IAP_KURUMSAL_MONTHLY_SKUS)[number];
 export type IapKurumsalYearlySku = (typeof IAP_KURUMSAL_YEARLY_SKUS)[number];
@@ -80,36 +141,36 @@ export type IapProductSku =
   | IapEkConsumableSku;
 
 export const ALL_IAP_SKUS: readonly string[] = [
-  ...IAP_SUBSCRIPTION_SKUS,
-  ...IAP_EK_CONSUMABLE_SKUS,
+  ...IAP_IOS_SUBSCRIPTION_SKUS,
+  ...IAP_IOS_CONSUMABLE_SKUS,
 ];
 
 /** Kurumsal aylık slug → Product ID */
 export const SLUG_TO_IAP_KURUMSAL_MONTHLY: Record<string, IapKurumsalMonthlySku> = {
-  "baslangic-1ay": "com.proparcel.baslangic.monthly",
-  "standart-1ay": "com.proparcel.standart.monthly",
-  "profesyonel-1ay": "com.proparcel.pro.monthly",
+  "baslangic-1ay": "com.proparcel.sub.corp.baslangic.monthly",
+  "standart-1ay": "com.proparcel.sub.corp.standart.monthly",
+  "profesyonel-1ay": "com.proparcel.sub.corp.pro.monthly",
 };
 
 /** Kurumsal yıllık slug → Product ID */
 export const SLUG_TO_IAP_KURUMSAL_YEARLY: Record<string, IapKurumsalYearlySku> = {
-  "baslangic-12ay": "com.proparcel.baslangic.yearly",
-  "standart-12ay": "com.proparcel.standart.yearly",
-  "profesyonel-12ay": "com.proparcel.pro.yearly",
+  "baslangic-12ay": "com.proparcel.corp.yearly.baslangic",
+  "standart-12ay": "com.proparcel.corp.yearly.standart",
+  "profesyonel-12ay": "com.proparcel.corp.yearly.pro",
 };
 
 /** Bireysel aylık slug → Product ID */
 export const SLUG_TO_IAP_INDIVIDUAL_MONTHLY: Record<string, IapIndividualMonthlySku> = {
-  "baslangic-1ay-bireysel": "com.proparcel.individual.baslangic.monthly",
-  "standart-1ay-bireysel": "com.proparcel.individual.standart.monthly",
-  "profesyonel-1ay-bireysel": "com.proparcel.individual.pro.monthly",
+  "baslangic-1ay-bireysel": "com.proparcel.sub.indiv.baslangic.monthly",
+  "standart-1ay-bireysel": "com.proparcel.sub.indiv.standart.monthly",
+  "profesyonel-1ay-bireysel": "com.proparcel.sub.indiv.pro.monthly",
 };
 
 /** Bireysel yıllık slug → Product ID */
 export const SLUG_TO_IAP_INDIVIDUAL_YEARLY: Record<string, IapIndividualYearlySku> = {
-  "baslangic-12ay-bireysel": "com.proparcel.individual.baslangic.yearly",
-  "standart-12ay-bireysel": "com.proparcel.individual.standart.yearly",
-  "profesyonel-12ay-bireysel": "com.proparcel.individual.pro.yearly",
+  "baslangic-12ay-bireysel": "com.proparcel.indiv.yearly.baslangic",
+  "standart-12ay-bireysel": "com.proparcel.indiv.yearly.standart",
+  "profesyonel-12ay-bireysel": "com.proparcel.indiv.yearly.pro",
 };
 
 /** Ek paket slug → Product ID */
@@ -138,18 +199,23 @@ export function isLegacyBlockedProductId(productId: string): boolean {
 }
 
 export function isConsumableProductId(productId: string): boolean {
-  return (IAP_EK_CONSUMABLE_SKUS as readonly string[]).includes(productId);
+  return (IAP_IOS_CONSUMABLE_SKUS as readonly string[]).includes(productId);
 }
 
 export function isEkProductId(productId: string): boolean {
-  return isConsumableProductId(productId);
+  return (IAP_EK_CONSUMABLE_SKUS as readonly string[]).includes(productId);
 }
 
-export function isMonthlySubscriptionProductId(productId: string): boolean {
+export function isMonthlyPackageProductId(productId: string): boolean {
   return (
     (IAP_KURUMSAL_MONTHLY_SKUS as readonly string[]).includes(productId) ||
     (IAP_INDIVIDUAL_MONTHLY_SKUS as readonly string[]).includes(productId)
   );
+}
+
+/** @deprecated iOS'ta aylık paketler abonelik değil consumable; isMonthlyPackageProductId kullanın */
+export function isMonthlySubscriptionProductId(productId: string): boolean {
+  return isMonthlyPackageProductId(productId);
 }
 
 export function isYearlySubscriptionProductId(productId: string): boolean {
@@ -160,7 +226,7 @@ export function isYearlySubscriptionProductId(productId: string): boolean {
 }
 
 export function isSubscriptionProductId(productId: string): boolean {
-  return isMonthlySubscriptionProductId(productId) || isYearlySubscriptionProductId(productId);
+  return isYearlySubscriptionProductId(productId);
 }
 
 export function isKnownIapProductId(productId: string): boolean {
@@ -187,16 +253,48 @@ export function packageHasIapProduct(pkg: CreditPackage): boolean {
   return resolveIapProductId(pkg) != null;
 }
 
+export function isPlaySubscriptionProductId(productId: string): boolean {
+  return (IAP_PLAY_SUBSCRIPTION_SKUS as readonly string[]).includes(productId);
+}
+
+export function isPlayInAppProductId(productId: string): boolean {
+  return (IAP_PLAY_INAPP_SKUS as readonly string[]).includes(productId);
+}
+
+export function packageHasPlayProduct(pkg: CreditPackage): boolean {
+  return packageHasIapProduct(pkg);
+}
+
+export function isLicenseProductId(productId: string): boolean {
+  return (IAP_LICENSE_CONSUMABLE_SKUS as readonly string[]).includes(productId);
+}
+
+export function licenseActionForProductId(productId: string): string | null {
+  for (const [action, sku] of Object.entries(LICENSE_ACTION_TO_IAP_SKU)) {
+    if (sku === productId) return action;
+  }
+  return null;
+}
+
+export function resolveLicenseProductId(
+  actionType: string,
+  pricing?: { ios_product_id?: string; google_product_id?: string } | null,
+  platform: "ios" | "android" = "ios",
+): string | null {
+  const fromApi =
+    platform === "android"
+      ? (pricing?.google_product_id || "").trim()
+      : (pricing?.ios_product_id || "").trim();
+  if (fromApi) return fromApi;
+  return LICENSE_ACTION_TO_IAP_SKU[actionType] ?? null;
+}
+
 export function isEkPackage(pkg: CreditPackage): boolean {
   const slug = (pkg.slug || "").toLowerCase();
   return Boolean(pkg.is_ek_package || slug.startsWith("ek_"));
 }
 
-/** Tek Kullanım paketinde yıllık abonelik zorunlu mu (ek_baslangic hariç). */
-export function ekPackageRequiresYearlySubscription(pkg: CreditPackage): boolean {
-  if (!isEkPackage(pkg)) return false;
-  if (pkg.requires_yearly_subscription === false) return false;
-  const slug = (pkg.slug || "").toLowerCase();
-  if (slug === "ek_baslangic") return false;
-  return pkg.requires_yearly_subscription ?? true;
+/** Ek paket — herkes satın alabilir (yıllık abonelik zorunlu değil). */
+export function ekPackageRequiresYearlySubscription(_pkg: CreditPackage): boolean {
+  return false;
 }

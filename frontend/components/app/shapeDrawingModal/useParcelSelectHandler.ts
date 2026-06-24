@@ -72,9 +72,9 @@ export function useParcelSelectHandler({
         if (err?.type === "TKGM_PARCEL_NOT_FOUND") {
           Alert.alert("Bilgi", "Bu konumda parsel bulunamadı");
         } else if (err?.type === "TKGM_RATE_LIMIT") {
-          Alert.alert("Günlük Sorgu Limiti", err.message || "TKGM günlük sorgu limiti aşıldı.");
+          Alert.alert("Günlük Sorgu Limiti", err.message || "Günlük sorgu limiti aşıldı.");
         } else if (err?.type === "TIMEOUT") {
-          Alert.alert("Zaman Aşımı", "TKGM sunucusu yanıt vermedi. Lütfen birkaç saniye sonra tekrar deneyin.");
+          Alert.alert("Zaman Aşımı", "Parsel servisi yanıt vermedi. Lütfen birkaç saniye sonra tekrar deneyin.");
         } else {
           Alert.alert("Hata", err?.message || "Parsel sorgusu sırasında bir hata oluştu");
         }

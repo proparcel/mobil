@@ -22,7 +22,16 @@ echo ProParcel Google Play AAB (no models)
 echo ========================================
 echo.
 
-echo [1/3] Mapbox token senkronize ediliyor...
+echo [1/4] Guncelleme politikasi...
+node .\scripts\prepare-release-policy.js
+if errorlevel 1 (
+    echo HATA: prepare-release-policy basarisiz.
+    pause
+    exit /b 1
+)
+echo.
+
+echo [2/4] Mapbox token senkronize ediliyor...
 node .\scripts\sync-android-mapbox-token.js --strict
 if errorlevel 1 (
     echo HATA: Mapbox download token eksik. Detay: doc\MAPBOX_TOKEN_ARCHITECTURE.md
@@ -31,7 +40,7 @@ if errorlevel 1 (
 )
 echo.
 
-echo [2/3] Asset pack'ler temizleniyor...
+echo [3/4] Asset pack'ler temizleniyor...
 call npm run clear:android-asset-packs
 if errorlevel 1 (
     echo.
@@ -41,7 +50,7 @@ if errorlevel 1 (
 )
 echo.
 
-echo [3/3] AAB derleniyor (bundleRelease)...
+echo [4/4] AAB derleniyor (bundleRelease)...
 cd android
 call gradlew.bat bundleRelease
 set GRADLE_EXIT=%errorlevel%
@@ -58,6 +67,7 @@ if exist "%AAB_PATH%" (
     if not exist "release_builds" mkdir release_builds
     for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set TIMESTAMP=%%i
     copy /Y "%AAB_PATH%" "release_builds\ProParcel-1.0.8-com-proparcel-mobile-no-models-%TIMESTAMP%.aab" >nul
+    node .\scripts\copy-release-aab.js --variant=no-models
     echo.
     echo ========================================
     echo AAB Basariyla Olusturuldu (modeller yok)

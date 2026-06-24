@@ -8,9 +8,9 @@ import {
   permissionDeniedHint,
 } from '../utils/devicePermissions';
 import {
-  appendVoiceQueryDebugLog,
-  logVoiceQuerySessionHeader,
-} from '../utils/voiceQueryDebugLog';
+  appendSmartQueryDebugLog,
+  logSmartQuerySessionStart,
+} from '../utils/smartQueryDebugLog';
 
 export type SmartQueryRecordingPayload = {
   base64: string;
@@ -74,7 +74,7 @@ export function useSmartQueryAudioRecorder() {
     setRecordingUri(null);
     setRecordingMimeType('audio/m4a');
     setAudioLevel(0);
-    void appendVoiceQueryDebugLog('recorder_clear', 'recorder');
+    void appendSmartQueryDebugLog('recorder_clear', 'recorder');
   }, []);
 
   useEffect(() => {
@@ -132,13 +132,13 @@ export function useSmartQueryAudioRecorder() {
       lastStatusDurationMsRef.current = 0;
       setIsRecording(true);
       setRecordingUri(null);
-      await logVoiceQuerySessionHeader('recorder');
-      await appendVoiceQueryDebugLog('recorder_start', 'recorder', {
+      await logSmartQuerySessionStart('recorder', 'speech');
+      await appendSmartQueryDebugLog('recorder_start', 'recorder', {
         startedAtMs: recordingStartedAtMsRef.current,
       });
       return true;
     } catch (error: any) {
-      await appendVoiceQueryDebugLog('recorder_start_failed', 'recorder', {
+      await appendSmartQueryDebugLog('recorder_start_failed', 'recorder', {
         message: error?.message || 'Kayıt başlatılamadı.',
       });
       Alert.alert('Ses kaydı', error?.message || 'Kayıt başlatılamadı.');
@@ -176,7 +176,7 @@ export function useSmartQueryAudioRecorder() {
           : null;
       const statusDurationMs = lastStatusDurationMsRef.current;
 
-      await appendVoiceQueryDebugLog('recorder_stop', 'recorder', {
+      await appendSmartQueryDebugLog('recorder_stop', 'recorder', {
         uri,
         mimeType,
         path,
@@ -203,7 +203,7 @@ export function useSmartQueryAudioRecorder() {
       recordingRef.current = null;
       setIsRecording(false);
       setAudioLevel(0);
-      await appendVoiceQueryDebugLog('recorder_stop_failed', 'recorder', {
+      await appendSmartQueryDebugLog('recorder_stop_failed', 'recorder', {
         message: error?.message || 'Kayıt durdurulamadı.',
       });
       Alert.alert('Ses kaydı', error?.message || 'Kayıt durdurulamadı.');
@@ -217,7 +217,7 @@ export function useSmartQueryAudioRecorder() {
       const path = recordingUri.replace(/^file:\/\//, '');
       const fileInfo = await describeAudioFile(path);
       const base64 = await RNFS.readFile(path, 'base64');
-      await appendVoiceQueryDebugLog('recorder_payload_reuse', 'recorder', {
+      await appendSmartQueryDebugLog('recorder_payload_reuse', 'recorder', {
         uri: recordingUri,
         mimeType: recordingMimeType,
         path,
@@ -228,7 +228,7 @@ export function useSmartQueryAudioRecorder() {
       if (!base64) return null;
       return { base64, mimeType: recordingMimeType, uri: recordingUri };
     } catch (error: any) {
-      await appendVoiceQueryDebugLog('recorder_stop_failed', 'recorder', {
+      await appendSmartQueryDebugLog('recorder_stop_failed', 'recorder', {
         phase: 'payload_reuse',
         message: error?.message || 'Kayıt okunamadı.',
       });

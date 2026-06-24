@@ -10,7 +10,7 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; status?: number; code?: string; payload?: Record<string, unknown> };
 
-async function getAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+export async function getApiAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
   let accessToken = await storageService.getAccessToken();
   if (!accessToken) {
     const refreshed = await authService.refreshToken();
@@ -28,7 +28,7 @@ export async function authJsonFetch<T>(
   options: RequestInit & { json?: any } = {}
 ): Promise<ApiResult<T>> {
   const url = `${API_URL}${endpoint}`;
-  const headers = await getAuthHeaders({
+  const headers = await getApiAuthHeaders({
     "Content-Type": "application/json",
     ...(options.headers as any),
   });
@@ -60,7 +60,14 @@ export async function authJsonFetch<T>(
     }
     return { ok: true, data: parsed as T };
   } catch {
-    if (!res.ok) return { ok: false, status, error: `HTTP ${status}` };
+    if (!res.ok) {
+      return {
+        ok: false,
+        status,
+        error: `HTTP ${status}`,
+        payload: text ? { bodyPreview: text.slice(0, 800), parseError: true } : undefined,
+      };
+    }
     return { ok: true, data: text as any as T };
   }
 }
@@ -71,7 +78,7 @@ export async function authFormFetch<T>(
   options: RequestInit = {}
 ): Promise<ApiResult<T>> {
   const url = `${API_URL}${endpoint}`;
-  const headers = await getAuthHeaders({
+  const headers = await getApiAuthHeaders({
     ...(options.headers as any),
   });
 
@@ -100,7 +107,14 @@ export async function authFormFetch<T>(
     }
     return { ok: true, data: parsed as T };
   } catch {
-    if (!res.ok) return { ok: false, status, error: `HTTP ${status}` };
+    if (!res.ok) {
+      return {
+        ok: false,
+        status,
+        error: `HTTP ${status}`,
+        payload: text ? { bodyPreview: text.slice(0, 800), parseError: true } : undefined,
+      };
+    }
     return { ok: true, data: text as any as T };
   }
 }

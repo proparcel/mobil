@@ -2,6 +2,7 @@ import { API_URL } from "../config/api";
 import { authFormFetch, authJsonFetch } from "./apiClient";
 import { authService } from "./authService";
 import { storageService } from "./storageService";
+import RNFS from "react-native-fs";
 
 export type MobileUploadImage = {
   uri: string;
@@ -16,10 +17,38 @@ export type ImageAnimationLicenseRow = {
   created_at?: string | null;
 };
 
+export type ImageAnimationPackageRow = ImageAnimationLicenseRow & {
+  remainingUses: number;
+  packageUnitsTotal: number;
+};
+
 export type ImageAnimationCreditCosts = {
   image_animation: number;
   frame: number;
 };
+
+export type ImageAnimationPackageStatus = {
+  licenseRef: string | null;
+  packageUnitsTotal: number;
+  packageUnitsUsed: number;
+  remainingUses: number;
+  unitsPerCredit: number;
+};
+
+/** 1 Tepe Coin paketinde verilen canlandırma hakkı */
+export const IMAGE_ANIMATION_PACKAGE_UNITS = 3;
+
+/** İlk paket lisansı — purchasing_kredits ai_img */
+export const IMAGE_ANIMATION_PACKAGE_ACTION = "ai_img";
+
+/** Tekrar canlandırma / frame preflight — purchasing_kredits ia_drone_realimg */
+export const IMAGE_ANIMATION_EXTRA_ACTION = "ia_drone_realimg";
+
+export const DEFAULT_IMAGE_ANIMATION_TITLE = "AI Resim Canlandırma";
+
+export function createImageAnimationLicenseRef(): string {
+  return `ai_img:${Date.now()}`;
+}
 
 export type DroneMyVideoRow = {
   job_id: string;
@@ -103,8 +132,47 @@ export async function getImageAnimationCreditCosts(): Promise<
   return {
     ok: true,
     costs: {
-      image_animation: Number(costs.image_animation ?? costs.realimg ?? 1),
-      frame: Number(costs.frame ?? 2),
+      image_animation:
+        Number(costs.image_animation ?? costs.realimg ?? 0) > 0
+          ? Number(costs.image_animation ?? costs.realimg)
+          : 1,
+      frame: Number(costs.frame ?? 2) > 0 ? Number(costs.frame ?? 2) : 2,
+    },
+  };
+}
+
+export async function getImageAnimationPackageStatus(
+  licenseRef?: string,
+): Promise<{ ok: true; status: ImageAnimationPackageStatus } | { ok: false; error: string }> {
+  const query = licenseRef
+    ? `/api/drone-recording-runway/credit-costs/?license_ref=${encodeURIComponent(licenseRef)}`
+    : "/api/drone-recording-runway/credit-costs/";
+  const res = await authJsonFetch<{ image_animation_package?: Record<string, unknown> }>(query, {
+    method: "GET",
+  });
+  if (!res.ok) return { ok: false, error: errMessage(res.error, "Paket durumu alınamadı.") };
+  const pkg = ((res.data as any)?.image_animation_package || {}) as Record<string, unknown>;
+  const unitsPerCredit = Number(
+    pkg.units_per_credit ?? pkg.unitsPerCredit ?? IMAGE_ANIMATION_PACKAGE_UNITS,
+  );
+  const packageUnitsTotal = Number(
+    pkg.package_units_total ??
+      pkg.packageUnitsTotal ??
+      (unitsPerCredit > 0 ? unitsPerCredit : IMAGE_ANIMATION_PACKAGE_UNITS),
+  );
+  const packageUnitsUsed = Number(pkg.package_units_used ?? pkg.packageUnitsUsed ?? 0);
+  const remainingUses = Number(
+    pkg.remaining_uses ?? pkg.remainingUses ?? Math.max(0, packageUnitsTotal - packageUnitsUsed),
+  );
+  const ref = String(pkg.license_ref ?? pkg.licenseRef ?? "").trim();
+  return {
+    ok: true,
+    status: {
+      licenseRef: ref || null,
+      packageUnitsTotal: Math.max(1, packageUnitsTotal),
+      packageUnitsUsed: Math.max(0, packageUnitsUsed),
+      remainingUses: Math.max(0, remainingUses),
+      unitsPerCredit: Math.max(1, unitsPerCredit),
     },
   };
 }
@@ -132,6 +200,33 @@ export async function listImageAnimationLicenses(): Promise<
     }))
     .filter((row) => row.reference_id);
   return { ok: true, items };
+}
+
+export async function listImageAnimationPackages(): Promise<
+  { ok: true; items: ImageAnimationPackageRow[] } | { ok: false; error: string }
+> {
+  const licenses = await listImageAnimationLicenses();
+  if (!licenses.ok) return licenses;
+  const enriched = await Promise.all(
+    licenses.items.map(async (item) => {
+      const status = await getImageAnimationPackageStatus(item.reference_id);
+      const remainingUses = status.ok ? status.status.remainingUses : 0;
+      const packageUnitsTotal = status.ok
+        ? status.status.packageUnitsTotal
+        : IMAGE_ANIMATION_PACKAGE_UNITS;
+      return {
+        ...item,
+        remainingUses,
+        packageUnitsTotal,
+      };
+    }),
+  );
+  return {
+    ok: true,
+    items: enriched
+      .filter((row) => row.remainingUses > 0)
+      .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))),
+  };
 }
 
 export async function runwayPrepStart(payload: {
@@ -277,4 +372,41 @@ export async function waitForImageAnimationReady(
     return { ok: true };
   }
   return { ok: false, error: "Resim canlandırma zaman aşımına uğradı." };
+}
+
+export async function downloadImageAnimationResults(
+  urls: string[],
+): Promise<{ ok: true; paths: string[] } | { ok: false; error: string }> {
+  const unique = urls.map((u) => String(u || "").trim()).filter(Boolean);
+  if (!unique.length) {
+    return { ok: false, error: "İndirilecek görsel yok." };
+  }
+
+  let token = await storageService.getAccessToken();
+  if (!token) {
+    const refreshed = await authService.refreshToken();
+    if (refreshed) token = await storageService.getAccessToken();
+  }
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+  const paths: string[] = [];
+
+  try {
+    for (let i = 0; i < unique.length; i += 1) {
+      const url = unique[i]!;
+      const ext = url.includes(".png") ? "png" : "jpg";
+      const path = `${RNFS.CachesDirectoryPath}/img_anim_${Date.now()}_${i}.${ext}`;
+      const dl = await RNFS.downloadFile({
+        fromUrl: url,
+        toFile: path,
+        headers,
+      }).promise;
+      if (dl.statusCode && dl.statusCode >= 400) {
+        return { ok: false, error: `İndirme başarısız (HTTP ${dl.statusCode})` };
+      }
+      paths.push(path.startsWith("file://") ? path : `file://${path}`);
+    }
+    return { ok: true, paths };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : "Görseller indirilemedi." };
+  }
 }

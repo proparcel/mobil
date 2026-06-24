@@ -72,7 +72,7 @@ import {
   parseProfileSectionParam,
   withProfileReturn,
 } from "../../src/utils/profileReturnNavigation";
-import { deactivateListing, getMyListings } from "../../services/listingService";
+import { deactivateListing, getMyListings, publishListing } from "../../services/listingService";
 import { getPortalRecentQueries, getPortalUserAgentRatings } from "../../services/portalService";
 import type { MineListingRow } from "../../src/types/listing";
 import type { PortalQueryListItem } from "../../src/types/portal";
@@ -195,6 +195,7 @@ export default function ProfileScreen() {
   const [profileSection, setProfileSection] = useState<ProfileSectionId>("genel");
   const [mineListings, setMineListings] = useState<MineListingRow[]>([]);
   const [mineListingsLoading, setMineListingsLoading] = useState(false);
+  const [busyListingId, setBusyListingId] = useState<string | null>(null);
   const [proQueryRows, setProQueryRows] = useState<PortalQueryListItem[]>([]);
   const [proQueriesLoading, setProQueriesLoading] = useState(false);
   const [balance, setBalance] = useState<CreditBalance | null>(null);
@@ -624,17 +625,55 @@ export default function ProfileScreen() {
         text: "Pasife al",
         style: "destructive",
         onPress: async () => {
-          const res = await deactivateListing(row.listing_id, v);
-          if (!res.ok) {
-            Alert.alert(
-              "Hata",
-              typeof res.error === "string" ? res.error : "İşlem tamamlanamadı.",
-            );
-            return;
+          setBusyListingId(row.listing_id);
+          try {
+            const res = await deactivateListing(row.listing_id, v);
+            if (!res.ok) {
+              Alert.alert(
+                "Hata",
+                typeof res.error === "string" ? res.error : "İşlem tamamlanamadı.",
+              );
+              return;
+            }
+            const mine = await getMyListings();
+            if (mine.ok && mine.data?.items) setMineListings(mine.data.items);
+            Alert.alert("Tamam", "İlan pasife alındı.");
+          } finally {
+            setBusyListingId(null);
           }
-          const mine = await getMyListings();
-          if (mine.ok && mine.data?.items) setMineListings(mine.data.items);
-          Alert.alert("Tamam", "İlan pasife alındı.");
+        },
+      },
+    ]);
+  }, []);
+
+  const onPublishListingPress = useCallback((row: MineListingRow) => {
+    const pub = String(row.publication_status || "").toLowerCase();
+    if (pub !== "inactive") {
+      Alert.alert("Bilgi", "Sadece pasif ilanlar tekrar yayınlanabilir.");
+      return;
+    }
+    const v = row.version != null ? Number(row.version) : 0;
+    Alert.alert("İlanı yayınla", "Bu ilan tekrar vitrine yayınlansın mı?", [
+      { text: "İptal", style: "cancel" },
+      {
+        text: "Yayınla",
+        onPress: async () => {
+          setBusyListingId(row.listing_id);
+          try {
+            const res = await publishListing(row.listing_id, v);
+            if (!res.ok) {
+              Alert.alert(
+                "Hata",
+                typeof res.error === "string" ? res.error : "İşlem tamamlanamadı.",
+              );
+              return;
+            }
+            const mine = await getMyListings();
+            if (mine.ok && mine.data?.items) setMineListings(mine.data.items);
+            Alert.alert("Tamam", "İlan yayınlandı.");
+          } finally {
+            setBusyListingId(null);
+          }
         },
       },
     ]);
@@ -1466,7 +1505,9 @@ export default function ProfileScreen() {
             loading={mineListingsLoading}
             onOpenEditor={openListingEditor}
             onDeactivate={onDeactivateListingPress}
+            onPublish={onPublishListingPress}
             onOpenIlanIslemleri={() => router.push("ilan-islemleri", withProfileReturn({}, "ilanlar"))}
+            busyListingId={busyListingId}
           />
         ) : null}
 
@@ -1502,7 +1543,7 @@ export default function ProfileScreen() {
                       {q.title || `${q.ada}/${q.parsel}` || `Sorgu #${q.snapshot_id}`}
                     </Text>
                     <Text style={styles.profileListingMeta}>
-                      {[q.quarter_name, q.query_type].filter(Boolean).join(" · ") || "—"}
+                      {[q.city_name, q.town_name, q.quarter_name, q.query_type].filter(Boolean).join(" · ") || "—"}
                     </Text>
                   </TouchableOpacity>
                 ))}

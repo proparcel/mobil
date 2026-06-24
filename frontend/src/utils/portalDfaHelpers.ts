@@ -211,58 +211,10 @@ export type PortalDfaPriceFooter = {
 
 export type PortalDfaSimulatedFooter = PortalDfaPriceFooter & {
   appliedPercent: string;
+  landTotal?: number | null;
+  deliveryTotal?: number | null;
+  isStructureQuery?: boolean;
 };
-
-/** TR sayı girişi: 37.459 / 37459 / 37,459 */
-export function parseMahalleOrtInput(raw: string): number | null {
-  const cleaned = String(raw ?? '')
-    .trim()
-    .replace(/\s/g, '')
-    .replace(/[^\d,.-]/g, '');
-  if (!cleaned) return null;
-  const normalized =
-    cleaned.includes(',') && cleaned.includes('.')
-      ? cleaned.replace(/\./g, '').replace(',', '.')
-      : cleaned.replace(',', '.');
-  const n = Number(normalized);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-/**
- * Mahalle ortalama birim fiyatından DFA tablo çarpanları ile bitiş birim ve toplam tahmin.
- * Web `computeDfaPriceFromMahalleOrt` ile aynı.
- */
-export function computeDfaPriceFromMahalleOrt(
-  mahalleUnitPrice: number,
-  dfaRows: PortalDfaRow[],
-  areaM2: number | null | undefined,
-): PortalDfaSimulatedFooter | null {
-  const base = Number(mahalleUnitPrice);
-  if (!Number.isFinite(base) || base <= 0) {
-    return null;
-  }
-
-  const rows = Array.isArray(dfaRows) ? dfaRows : [];
-  let multiplier = 1;
-  rows.forEach((row, index) => {
-    if (index === 0) return;
-    const f = row?.factor;
-    if (f != null && Number.isFinite(Number(f))) {
-      multiplier *= Number(f);
-    }
-  });
-
-  const endUnit = base * multiplier;
-  const area = Number(areaM2);
-  const total = Number.isFinite(area) && area > 0 ? endUnit * area : null;
-
-  return {
-    startUnit: base,
-    endUnit,
-    total,
-    appliedPercent: formatDfaPercent(multiplier, false),
-  };
-}
 
 /** Web getPortalDfaPriceFooter — valuation_canonical öncelikli özet fiyatlar */
 export function getPortalDfaPriceFooter(summary: PortalQueryDetail | null | undefined): PortalDfaPriceFooter {
@@ -361,13 +313,56 @@ export type SimulatedLandFooter = {
   total: number | null;
 };
 
+/** Sunucu mahalle ort simülasyonunu valuation_layers_summary üzerine uygular. */
+export function applyMahalleOrtSimulationToValuationLayers(
+  baseLayers: NonNullable<PortalQueryDetail['valuation_layers_summary']>,
+  simulationFooter: PortalDfaSimulatedFooter | null | undefined,
+) {
+  if (!baseLayers || typeof baseLayers !== 'object') return null;
+  if (!simulationFooter) {
+    return JSON.parse(JSON.stringify(baseLayers)) as NonNullable<
+      PortalQueryDetail['valuation_layers_summary']
+    >;
+  }
+  const out = JSON.parse(JSON.stringify(baseLayers)) as NonNullable<
+    PortalQueryDetail['valuation_layers_summary']
+  >;
+  const land = { ...(out.land || {}) };
+  land.start_unit_m2 = simulationFooter.startUnit;
+  land.end_unit_m2 = simulationFooter.endUnit;
+  if (simulationFooter.landTotal != null) {
+    land.total_tl = simulationFooter.landTotal;
+  }
+  land.applied_pct =
+    simulationFooter.appliedPercent && simulationFooter.appliedPercent !== '—'
+      ? simulationFooter.appliedPercent
+      : unitDeltaToAppliedPct(simulationFooter.startUnit, simulationFooter.endUnit);
+  out.land = land;
+  if (simulationFooter.isStructureQuery && simulationFooter.deliveryTotal != null) {
+    out.delivery = { ...(out.delivery || {}), total_tl: simulationFooter.deliveryTotal };
+  }
+  return out;
+}
+
 /** Mahalle ort simülasyonu — arazi katmanını günceller (web applySimulatedLandToValuationLayers). */
 export function applySimulatedLandToValuationLayers(
   baseLayers: NonNullable<PortalQueryDetail['valuation_layers_summary']>,
-  simulatedLand: SimulatedLandFooter | null | undefined,
+  simulatedLand: SimulatedLandFooter | PortalDfaSimulatedFooter | null | undefined,
   opts: { structureCost?: number | null; deliveryTotal?: number | null } = {},
 ) {
   if (!baseLayers || typeof baseLayers !== 'object') return null;
+  if (
+    simulatedLand &&
+    ('landTotal' in simulatedLand ||
+      'deliveryTotal' in simulatedLand ||
+      'isStructureQuery' in simulatedLand ||
+      'appliedPercent' in simulatedLand)
+  ) {
+    return applyMahalleOrtSimulationToValuationLayers(
+      baseLayers,
+      simulatedLand as PortalDfaSimulatedFooter,
+    );
+  }
   const out = JSON.parse(JSON.stringify(baseLayers)) as NonNullable<PortalQueryDetail['valuation_layers_summary']>;
   if (simulatedLand) {
     const land = { ...(out.land || {}) };

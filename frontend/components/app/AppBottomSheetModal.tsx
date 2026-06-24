@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
+  useBottomSheetTimingConfigs,
   type BottomSheetBackdropProps,
   type BottomSheetModalProps,
 } from "@gorhom/bottom-sheet";
@@ -88,6 +89,8 @@ export default function AppBottomSheetModal({
   const ref = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
   const sheetBottomInset = flushToScreenBottom ? 0 : sheetModalBottomInset(insets.bottom);
+  const animationConfigs = useBottomSheetTimingConfigs({ duration: 160 });
+  const dismissNotifiedRef = useRef(false);
 
   const finalSnapPoints = useMemo<(string | number)[]>(
     () => (snapPoints && snapPoints.length ? snapPoints : ["70%", "90%"]),
@@ -110,56 +113,36 @@ export default function AppBottomSheetModal({
     }
 
     if (visible) {
-      const timeoutId = setTimeout(() => {
-        if (!ref.current) {
-          return;
-        }
-
+      dismissNotifiedRef.current = false;
+      const frame = requestAnimationFrame(() => {
         try {
-          ref.current.present();
-          setTimeout(() => {
-            try {
-              if (ref.current && desiredIndex >= 0) {
-                ref.current.snapToIndex(desiredIndex);
-              }
-            } catch {
-              // ignore
-            }
-          }, 150);
-        } catch {
-          try {
-            if (ref.current && desiredIndex >= 0) {
-              ref.current.snapToIndex(desiredIndex);
-            }
-          } catch {
-            // ignore
+          ref.current?.present();
+          if (desiredIndex >= 0) {
+            ref.current?.snapToIndex(desiredIndex);
           }
+        } catch {
+          // ignore
         }
-      }, 50);
-      return () => clearTimeout(timeoutId);
-    } else {
-      try {
-        if (ref.current) {
-          ref.current.dismiss();
-        }
-      } catch {
-        // ignore
-      }
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+
+    try {
+      ref.current?.dismiss();
+    } catch {
+      // ignore
     }
   }, [visible, desiredIndex]);
 
-  /** Kontrollü `index` prop'u değişince (modal açıkken) senkronize et; açılışta üstteki effect yeterli — çift snap titremeye yol açmasın. */
+  /** Kontrollü `index` prop'u değişince (modal açıkken) senkronize et. */
   const indexProp = index;
   useEffect(() => {
     if (!visible || typeof indexProp !== "number") return;
-    const t = setTimeout(() => {
-      try {
-        ref.current?.snapToIndex(indexProp);
-      } catch {
-        // ignore
-      }
-    }, 0);
-    return () => clearTimeout(t);
+    try {
+      ref.current?.snapToIndex(indexProp);
+    } catch {
+      // ignore
+    }
   }, [visible, indexProp]);
 
   const renderBackdrop = useCallback(
@@ -179,11 +162,24 @@ export default function AppBottomSheetModal({
   const backdropComponent =
     backdropOpacity <= 0 && enableBackdropTouchThrough ? undefined : renderBackdrop;
 
-  // onDismiss callback'ini sadece gerçekten dismiss olduğunda çağır
-  // BottomSheetModal'ın onDismiss'i sadece modal gerçekten kapandığında çağrılır
-  const handleDismiss = useCallback(() => {
+  const notifyDismiss = useCallback(() => {
+    if (dismissNotifiedRef.current) return;
+    dismissNotifiedRef.current = true;
     onClose();
   }, [onClose]);
+
+  const handleSheetChange = useCallback(
+    (index: number) => {
+      if (index === -1) {
+        notifyDismiss();
+      }
+    },
+    [notifyDismiss],
+  );
+
+  const handleDismiss = useCallback(() => {
+    notifyDismiss();
+  }, [notifyDismiss]);
 
   const defaultBackgroundStyle =
     variant === "dark" ? styles.backgroundDark : styles.backgroundLight;
@@ -202,6 +198,7 @@ export default function AppBottomSheetModal({
     <BottomSheetModal
       ref={ref}
       snapPoints={finalSnapPoints}
+      animationConfigs={animationConfigs}
       // IMPORTANT: Dynamic sizing can collapse to header-only when content is a ScrollView.
       // We want snapPoints to be the source of truth.
       enableDynamicSizing={false}
@@ -210,7 +207,7 @@ export default function AppBottomSheetModal({
       backdropComponent={backdropComponent}
       handleIndicatorStyle={handleIndicatorStyle ?? defaultHandleIndicatorStyle}
       backgroundStyle={backgroundStyle ?? defaultBackgroundStyle}
-      // Keep modal mounted only while presented; notify caller on dismiss.
+      onChange={handleSheetChange}
       onDismiss={handleDismiss}
       topInset={insets.top}
       bottomInset={sheetBottomInset}

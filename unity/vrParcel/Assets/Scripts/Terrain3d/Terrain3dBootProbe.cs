@@ -26,13 +26,10 @@ namespace ProParcel.Terrain3d
                 " cache=" + Application.temporaryCachePath +
                 " files=" + Application.persistentDataPath);
 
-            var router = Object.FindObjectOfType<ProParcelSceneRouter>();
+            var router = Object.FindAnyObjectByType<ProParcelSceneRouter>();
             Terrain3dAndroidLog.Info("[Terrain3dBoot] ProParcelSceneRouter found=" + (router != null));
 
-            var bridge = Object.FindObjectOfType<VrParcel.Bridge.VrParcelBridge>();
-            Terrain3dAndroidLog.Info("[Terrain3dBoot] VrParcelBridge found=" + (bridge != null));
-
-            var terrainBridge = Object.FindObjectOfType<ParcelTerrain3dBridge>();
+            var terrainBridge = Object.FindAnyObjectByType<ParcelTerrain3dBridge>();
             Terrain3dAndroidLog.Info("[Terrain3dBoot] ParcelTerrain3dBridge found=" + (terrainBridge != null));
             Debug.LogError("[Terrain3dBoot] scene=" + scene + " terrainBridge=" + (terrainBridge != null));
         }

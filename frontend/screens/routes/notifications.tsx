@@ -115,6 +115,16 @@ export default function NotificationsScreen() {
           return;
         }
       }
+      if (n.type === "drone_video_ready") {
+        const data = (n.data_json || {}) as { job_id?: string };
+        const jobId = String(data.job_id || "").trim();
+        if (jobId) {
+          router.push("ai-drone-simple-editor", { jobId });
+          return;
+        }
+        router.push("ai-drone-my-videos");
+        return;
+      }
       if (n.type === "ai_drone_request_ready" || n.type === "ai_drone_request_reopened") {
         const data = (n.data_json || {}) as { delivery_url?: string; request_id?: number | string };
         const requestId = String(data.request_id || "").trim();

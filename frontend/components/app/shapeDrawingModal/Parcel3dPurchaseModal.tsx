@@ -1,8 +1,8 @@
 /**
- * 3D Tasarım (parsel bazlı) satın alma modalı.
- * - Kredi maliyeti PurchasingCredit tablosundan (3d_design) gelir.
- * - Hisseli parsel satın alma modalı ile aynı UX.
+ * 3D Tasarım (parsel bazlı) satın alma modalı — şu an pasif (PARCEL_3D_DESIGN_BILLING_ENABLED).
+ * Kredi maliyeti PurchasingCredit tablosundan (3d_design) gelir.
  */
+import { PARCEL_3D_DESIGN_BILLING_ENABLED } from "../../../src/constants/parcel3dBilling";
 
 import React, { useEffect, useState } from "react";
 import {
@@ -33,7 +33,12 @@ type Props = {
   onPurchaseSuccess?: () => void;
 };
 
-export const Parcel3dPurchaseModal: React.FC<Props> = ({
+export const Parcel3dPurchaseModal: React.FC<Props> = (props) => {
+  if (!PARCEL_3D_DESIGN_BILLING_ENABLED) return null;
+  return <Parcel3dPurchaseModalInner {...props} />;
+};
+
+const Parcel3dPurchaseModalInner: React.FC<Props> = ({
   visible,
   onClose,
   referenceId,

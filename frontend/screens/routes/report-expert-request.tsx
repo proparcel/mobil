@@ -17,7 +17,7 @@ const COLORS = {
   textOnDark: '#f8fafc',
 } as const;
 
-/** purchasing_kredits action_type anahtarları → kart Tepe Coin varsayılanları */
+/** purchasing_kredits action_type anahtarları → kart Tepe Kredi varsayılanları */
 const CREDIT_ACTION_KEYS = {
   expertConsultancy: 'expert_consultancy',
   proparcelGorusu: 'proparcel_gorusu',
@@ -100,7 +100,7 @@ export default function ReportExpertRequestScreen() {
     }
     Alert.alert(
       'Uzman Görüşü',
-      `Bu bölgede ${availability.eligibleExpertCount} uzman var.\nBu işlem ${credits.expertConsultancy} Tepe Coin ücretiyle talep oluşturur.\nDevam edilsin mi?`,
+      `Bu bölgede ${availability.eligibleExpertCount} uzman var.\nBu işlem ${credits.expertConsultancy} Tepe Kredi ücretiyle talep oluşturur.\nDevam edilsin mi?`,
       [
         { text: 'Vazgeç', style: 'cancel' },
         {
@@ -165,12 +165,12 @@ export default function ReportExpertRequestScreen() {
           <Text style={styles.cardTitle}>Bölge Uzmanlarına Danış</Text>
           <Text style={styles.cardDescription}>
             Raporunuzu {mahalle ? `"${mahalle}"` : 'ilgili'} bölgesinde uzmanlaşmış gayrimenkul danışmanlarına iletebilirsiniz.
-            Rapor hakkındaki görüşler 3 iş günü içinde tarafınıza bildirilir. Belirtilen süre içinde geri bildirim gelmemesi halinde Tepe Coin bakiyeniz iade edilir.
+            Rapor hakkındaki görüşler 3 iş günü içinde tarafınıza bildirilir. Belirtilen süre içinde geri bildirim gelmemesi halinde Tepe Kredi bakiyeniz iade edilir.
           </Text>
           <View style={styles.coinRow}>
             <Image source={TepeCoinIcon} style={styles.coinIcon} resizeMode="contain" />
             <Text style={styles.coinText}>
-              {costsLoaded ? `${credits.expertConsultancy} Tepe Coin` : '... Tepe Coin'}
+              {costsLoaded ? `${credits.expertConsultancy} Tepe Kredi` : '... Tepe Kredi'}
             </Text>
           </View>
           <TouchableOpacity
@@ -192,12 +192,12 @@ export default function ReportExpertRequestScreen() {
           <Text style={styles.cardTitle}>ProParcel'den Görüş İste</Text>
           <Text style={styles.cardDescription}>
             ProParcel ekipleri tarafından saha incelemesi yapılmaksızın raporunuzun değerlendirilmesini talep edebilirsiniz.
-            Geri bildirim 3 iş günü içinde tarafınıza iletilir; aksi halde Tepe Coin bakiyeniz iade edilir.
+            Geri bildirim 3 iş günü içinde tarafınıza iletilir; aksi halde Tepe Kredi bakiyeniz iade edilir.
           </Text>
           <View style={styles.coinRow}>
             <Image source={TepeCoinIcon} style={styles.coinIcon} resizeMode="contain" />
             <Text style={styles.coinText}>
-              {costsLoaded ? `${credits.proparcelGorusu} Tepe Coin` : '... Tepe Coin'}
+              {costsLoaded ? `${credits.proparcelGorusu} Tepe Kredi` : '... Tepe Kredi'}
             </Text>
           </View>
           <TouchableOpacity style={styles.placeholderBtn} disabled>
@@ -214,7 +214,7 @@ export default function ReportExpertRequestScreen() {
           <View style={styles.coinRow}>
             <Image source={TepeCoinIcon} style={styles.coinIcon} resizeMode="contain" />
             <Text style={styles.coinText}>
-              {costsLoaded ? `${credits.proparcelExper} Tepe Coin` : '... Tepe Coin'}
+              {costsLoaded ? `${credits.proparcelExper} Tepe Kredi` : '... Tepe Kredi'}
             </Text>
           </View>
           <TouchableOpacity style={styles.placeholderBtn} disabled>

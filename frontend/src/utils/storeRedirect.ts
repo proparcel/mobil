@@ -6,9 +6,8 @@
 
 import { Platform, Linking, Alert } from 'react-native';
 
-// App Store ve Play Store linkleri - gerçek linkler belirlendiğinde güncellenecek
-const APP_STORE_URL = 'https://apps.apple.com/app/id6758405457';
-const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.proparcel.mobile';
+const APP_STORE_URL = 'https://apps.apple.com/tr/app/proparcel/id6758405457?l=tr';
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.proparcel.mobile&hl=tr';
 
 /**
  * Platform'a göre store URL'ini döndürür

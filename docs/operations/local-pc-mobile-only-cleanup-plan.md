@@ -1,6 +1,6 @@
 # Lokal PC — mobil-only temizlik planı
 
-> **Durum:** Plan (henüz uygulanmadı)  
+> **Durum:** L1–L4 uygulandı (lokal mobil-only)  
 > **Tarih:** 2026-06-19  
 > **Kapsam:** `C:\ProParcel` — yalnızca mobil geliştirme  
 > **İlgili:** pp33 (control-plane, asla pull almaz), pp32 (heavy + drone worker, ayrı sadeleştirme planı)
@@ -14,15 +14,15 @@ Lokal geliştirme PC'de **ProParcel ana projesine ait backend, web, doküman ve 
 | Ortam | Git remote | Pull | Rol |
 |-------|------------|------|-----|
 | **pp33 (sunucu)** | `proparcel_v1` | **Yasak** | **Ana monorepo kaynağı** — web, Django, docs, broker |
-| **pp32 (sunucu)** | `proparcel_v1` (worker kopyası) | **Yasak** | Heavy + drone worker |
+| **pp32 (sunucu)** | **`proparcel_pp32`** | **`start_32.bat pull` yalnızca pp32'de** | Heavy + drone worker |
 | **Lokal PC** | **`proparcel/mobil.git`** (submodule) | **Yasak** (`proparcel_v1`) | Mobil geliştirme; sunucu reposu **lokalde tutulmaz** |
 
 **Önemli:** `proparcel_v1` **sunucunun reposudur** (pp33). Lokal PC bu monorepo’nun “yeni home’u” veya devamı **değildir**. Lokal temizlik = diskten sunucu kodunu kaldırmak; mobil iş **`https://github.com/proparcel/mobil.git`** ile submodule (`mobile/mobil_github`) üzerinden sürer — commit/push **mobil repo**ya gider.
 
 ```
-pp33  ── proparcel_v1 ──►  web + backend + docs (kaynak)
-pp32  ── proparcel_v1 ──►  worker node (ayrı plan)
-lokal ── mobil.git    ──►  mobile/mobil_github/frontend (Metro)
+pp33  ── proparcel_v1    ──►  web + backend + docs (kaynak)
+pp32  ── proparcel_pp32  ──►  worker node (ayrı repo — bkz. pp32-worker-scope.md)
+lokal ── mobil.git       ──►  mobile/mobil_github/frontend (Metro)
 ```
 
 ---
@@ -38,7 +38,7 @@ Aşağıdakiler dışında **hiçbir şey** lokal kökte kalmamalı.
 | `.gitmodules` | Yalnızca `mobile/mobil_github` girdisi |
 | `.git/` (kök) | **Kaldırılacak veya arşivlenecek** — kök `proparcel_v1` clone’u sunucu reposudur, lokal mobil workflow’da kullanılmaz |
 | `README.md` | **Yeniden yazılacak** — yalnızca lokal mobil workspace tanımı + pp33/pp32'ye referans (ana proje dokümanı değil) |
-| `ProParcel-multi.code-workspace` | **Güncellenecek** — lokal kök + isteğe bağlı pp32/pp33 mount (salt okuma / operasyon notu) |
+| `ProParcel-multi.code-workspace` | **Güncellendi** — yalnızca mobil + lokal allowlist; pp32/pp33 mount **yok** → [REMOTE-ACCESS.md](../../../../REMOTE-ACCESS.md) |
 | `.cursor/rules/` | **Yalnızca mobil** kurallar kalır; backend/worker/test_modulleri kuralları silinir |
 | `.gitignore` | **Sadeleştirilmiş** — mobil + IDE; Django/staticfiles kuralları kaldırılır |
 | **`birlestirilmis_katmanlar/`** | Yerel DEM / coğrafi katman ağacı (büyük veri; Git’e dahil değil). Lokal referans veya offline test için **kalır** |
@@ -229,7 +229,7 @@ Kök dosyalar ayrıca tek tek silinir (denylist).
 ### Faz L2 — Yeniden yazım
 
 - [ ] `README.md` — lokal mobil workspace (pp33 API, pp32 worker notu, **pull yok**)
-- [ ] `ProParcel-multi.code-workspace` — folders: lokal mobil + pp32/pp33 mount (opsiyonel)
+- [x] `ProParcel-multi.code-workspace` — mobil + allowlist only; mount kaldırıldı ([REMOTE-ACCESS.md](../../../../REMOTE-ACCESS.md))
 - [ ] `.gitignore` — mobil-only
 - [ ] `.gitmodules` — yalnızca mobil submodule (kök `proparcel_v1` `.git` kaldırıldıysa isteğe bağlı silinir)
 
@@ -284,9 +284,8 @@ Ana proje dokümantasyonu ve mimari **pp33 sunucusunda** (`proparcel_v1`) kalır
 
 ## Sonraki adımlar (bu plandan sonra)
 
-1. **pp32 worker-only sadeleştirme planı** (`pp32-worker-scope.md`)
+1. **pp32 worker-only sadeleştirme** — [pp32-worker-scope.md](./pp32-worker-scope.md) (rclone; drone + birlestirilmis_katmanlar kalır)
 2. **pp33 sunucuda** ana README + `docs/` (kaynak doküman — lokalde olmayacak)
-3. pp33 commit (feature gate) — sunucuda, mount değil
 
 ---
 

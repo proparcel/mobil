@@ -22,6 +22,8 @@ export type CreateAiDroneRequestBody = {
   userNote: string;
   showUserCard: boolean;
   idempotencyKey: string;
+  paymentReference?: string;
+  paymentMethod?: string;
 };
 
 export type CreateAiDroneRequestResult = {
@@ -173,7 +175,15 @@ export const aiDroneProparcelService = {
   async createRequest(body: CreateAiDroneRequestBody): Promise<CreateAiDroneRequestResult> {
     const res = await authJsonFetch<CreateAiDroneRequestResult & Record<string, unknown>>(AI_DRONE_API.createRequest, {
       method: "POST",
-      json: body,
+      json: {
+        parcel: body.parcel,
+        tkgmSummary: body.tkgmSummary,
+        userNote: body.userNote,
+        showUserCard: body.showUserCard,
+        idempotencyKey: body.idempotencyKey,
+        payment_reference: body.paymentReference,
+        payment_method: body.paymentMethod,
+      },
     });
     if (!res.ok) {
       const d = res as { error: string; status?: number };

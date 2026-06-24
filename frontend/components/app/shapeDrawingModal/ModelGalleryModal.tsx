@@ -1,12 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, Image, StyleSheet, ActivityIndicator } from "react-native";
+import { MODEL_CATEGORY_LABELS } from "@/src/maps/models/modelCatalog";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import AppBottomSheetModal from "../AppBottomSheetModal";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { type ModelCatalogFlatItem, resolveModelStaticImageUri } from "@/src/maps/models/modelCatalog";
 import { UsageBadge } from "./UsageBadge";
 import { sheetEditorScrollBottomPadding } from "@/src/utils/sheetSafeArea";
-import { isModelUsable } from "@/src/services/modelUsageService";
 import { isFreeRole } from "@/src/maps/models/modelAvailability";
 type ModelGalleryModalProps = {
   visible: boolean;
@@ -32,14 +32,25 @@ export type ModelGalleryContentProps = {
   onPurchaseSuccess?: () => void;
   /** Bottom sheet dışında (üst Modal) satın alma ekranı açmak için */
   onRequestPurchase?: (m: ModelCatalogFlatItem) => void;
+  /** Kullanılabilir model seçilmeden / satın alma açılmadan önce galeri kapatılır */
+  onCloseGallery?: () => void;
 };
 
-const categoryLabels: Record<string, { icon: string; label: string }> = {
-  house: { icon: "🏠", label: "Ev Modelleri" },
-  car: { icon: "🚗", label: "Araç Modelleri" },
-  tree: { icon: "🌳", label: "Ağaç Modelleri" },
-  grass: { icon: "🌿", label: "Çim Modelleri" },
+const categoryIcons: Record<string, string> = {
+  house: "🏠",
+  car: "🚗",
+  tree: "🌳",
+  grass: "🌿",
+  gardenseating: "🪑",
+  ground: "🟫",
+  images: "🖼️",
 };
+
+function getCategoryLabel(categoryId: string): { icon: string; label: string } {
+  const icon = categoryIcons[categoryId] ?? "📦";
+  const base = MODEL_CATEGORY_LABELS[categoryId] ?? categoryId;
+  return { icon, label: `${base} Modelleri` };
+}
 
 export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
   insetsBottom,
@@ -50,6 +61,7 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
   getRemainingUses,
   onPurchaseSuccess,
   onRequestPurchase,
+  onCloseGallery,
 }) => {
   const modelsByCategory = useMemo(() => {
     const grouped: Record<string, ModelCatalogFlatItem[]> = {};
@@ -71,23 +83,20 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
   };
 
   const handleModelPress = async (model: ModelCatalogFlatItem) => {
+    const label = (model.name && model.name.trim()) ? model.name : formatModelDisplayName(model.filename);
+
+    // Kilitli model → satın alma akışı
     if (!model.isAvailable) {
       if (model.id != null && !isFreeRole(model.role)) {
+        onCloseGallery?.();
         openPurchase(model);
       }
       return;
     }
 
-    const rawRemainingUses = model.id !== undefined && getRemainingUses
-      ? getRemainingUses(model.id)
-      : model.remainingUses ?? null;
-    const isFree = isFreeRole(model.role);
-    const remainingUses = isFree ? null : rawRemainingUses;
-    const isUsable = isModelUsable(remainingUses);
-
-    if (!isUsable) return;
-
+    // Satın alınmış / erişilebilir model — sınırsız kullanım, usegCount kontrolü yok
     try {
+      onCloseGallery?.();
       await onSelectModel(model);
     } catch (error) {
       console.error("[ModelGalleryContent] Model selection error:", error);
@@ -114,7 +123,7 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
           </View>
         ) : (
           Object.entries(modelsByCategory).map(([categoryId, models]) => {
-            const categoryInfo = categoryLabels[categoryId] || { icon: "📦", label: categoryId };
+            const categoryInfo = getCategoryLabel(categoryId);
             return (
               <View key={categoryId} style={styles.categorySection}>
                 <View style={styles.categoryHeader}>
@@ -127,12 +136,12 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
                 </View>
                 <View style={styles.modelsGrid}>
                   {models.map((model) => {
-                    const rawRemainingUses = model.id !== undefined && getRemainingUses
-                      ? getRemainingUses(model.id)
-                      : model.remainingUses ?? null;
                     const isFree = isFreeRole(model.role);
-                    const remainingUses = isFree ? null : rawRemainingUses;
-                    const isUsable = isModelUsable(remainingUses);
+                    const remainingUses = isFree || model.isOwned
+                      ? null
+                      : (model.id !== undefined && getRemainingUses
+                          ? getRemainingUses(model.id)
+                          : model.remainingUses ?? null);
                     const label = (model.name && model.name.trim()) ? model.name : formatModelDisplayName(model.filename);
                     const imgUri = resolveModelStaticImageUri(model.thumbnailPath || model.picturePath);
 
@@ -160,11 +169,7 @@ export const ModelGalleryContent: React.FC<ModelGalleryContentProps> = ({
                             <View style={styles.lockOverlay}>
                               <Ionicons name="lock-closed" size={20} color="#fff" />
                             </View>
-                          ) : (
-                            <View style={styles.availableIndicator}>
-                              <Ionicons name="checkmark-circle" size={20} color="#10b981" />
-                            </View>
-                          )}
+                          ) : null}
                           {model.isOwned && (
                             <View style={styles.ownedBadge}>
                               <Ionicons name="checkmark" size={12} color="#fff" />
@@ -218,15 +223,6 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
   onPurchaseSuccess,
   onRequestPurchase,
 }) => {
-  const handleSelectAndClose = async (m: ModelCatalogFlatItem) => {
-    try {
-      await onSelectModel(m);
-      onClose();
-    } catch (error) {
-      console.error("[ModelGalleryModal] Model selection error:", error);
-    }
-  };
-
   return (
     <>
       <AppBottomSheetModal
@@ -251,11 +247,12 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
             insetsBottom={insetsBottom}
             modelCatalogFlat={modelCatalogFlat}
             isModelCatalogLoading={isModelCatalogLoading}
-            onSelectModel={handleSelectAndClose}
+            onSelectModel={onSelectModel}
             formatModelDisplayName={formatModelDisplayName}
             getRemainingUses={getRemainingUses}
             onPurchaseSuccess={onPurchaseSuccess}
             onRequestPurchase={onRequestPurchase}
+            onCloseGallery={onClose}
           />
         </View>
       </AppBottomSheetModal>
@@ -388,14 +385,6 @@ const styles = StyleSheet.create({
     top: 8,
     right: 8,
     backgroundColor: "rgba(0, 0, 0, 0.7)",
-    borderRadius: 20,
-    padding: 6,
-  },
-  availableIndicator: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: "rgba(16, 185, 129, 0.9)",
     borderRadius: 20,
     padding: 6,
   },

@@ -18,7 +18,7 @@ import {
 import { useLocalSearchParams, useRouter } from '../../src/hooks/useNavigation';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { parseTurkishPrice } from '../../src/utils/priceParser';
+import { normalizeGeometryCoordinates } from '../../src/utils/parcelUtils';
 import { normalizeParcelShapeLabel } from '../../src/utils/normalizeParcelShapeLabel';
 import { API_URL, FALLBACK_API_URL } from '../../config/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -83,59 +83,7 @@ const { width: WINDOW_WIDTH } = Dimensions.get('window');
 
 // Koordinat normalizasyonu: TKGM [lat,lng] -> Mapbox [lng,lat]
 function normalizeGeometryLonLatForTurkey(geom: any): any {
-  if (!geom || !geom.coordinates || !geom.type) return geom;
-
-  const deepClone = (v: any) => {
-    try {
-      return JSON.parse(JSON.stringify(v));
-    } catch {
-      return v;
-    }
-  };
-
-  const swapCoordsArray = (coords: any): any => {
-    if (!Array.isArray(coords)) return coords;
-    if (coords.length === 2 && typeof coords[0] === 'number' && typeof coords[1] === 'number') {
-      return [coords[1], coords[0]];
-    }
-    return coords.map(swapCoordsArray);
-  };
-
-  const getFirstCoord = (g: any): [number, number] | null => {
-    try {
-      if (!g || !g.coordinates) return null;
-      if (g.type === 'Point' && Array.isArray(g.coordinates) && g.coordinates.length >= 2) {
-        return [Number(g.coordinates[0]), Number(g.coordinates[1])];
-      }
-      if (g.type === 'LineString' && Array.isArray(g.coordinates?.[0]) && g.coordinates[0].length >= 2) {
-        return [Number(g.coordinates[0][0]), Number(g.coordinates[0][1])];
-      }
-      if (g.type === 'MultiLineString' && Array.isArray(g.coordinates?.[0]?.[0]) && g.coordinates[0][0].length >= 2) {
-        return [Number(g.coordinates[0][0][0]), Number(g.coordinates[0][0][1])];
-      }
-      if (g.type === 'Polygon' && Array.isArray(g.coordinates?.[0]?.[0]) && g.coordinates[0][0].length >= 2) {
-        return [Number(g.coordinates[0][0][0]), Number(g.coordinates[0][0][1])];
-      }
-      if (g.type === 'MultiPolygon' && Array.isArray(g.coordinates?.[0]?.[0]?.[0]) && g.coordinates[0][0][0].length >= 2) {
-        return [Number(g.coordinates[0][0][0][0]), Number(g.coordinates[0][0][0][1])];
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  };
-
-  // Eğer ilk koordinat TR lat aralığında ise [lat,lon] olma ihtimali yüksek → swap
-  const first = getFirstCoord(geom);
-  if (!first) return geom;
-  const x = first[0];
-  const y = first[1];
-  const looksLikeLatLonTR = Number.isFinite(x) && Number.isFinite(y) && x >= 35 && x <= 43 && y >= 25 && y <= 46;
-  if (!looksLikeLatLonTR) return geom;
-
-  const cloned = deepClone(geom);
-  cloned.coordinates = swapCoordsArray(cloned.coordinates);
-  return cloned;
+  return normalizeGeometryCoordinates(geom);
 }
 
 type Params = {
@@ -2313,7 +2261,7 @@ export default function ExpertRequestReportScreen() {
             <View style={styles.photoCoinBanner}>
               <Ionicons name="gift" size={18} color="#059669" />
               <Text style={styles.photoCoinBannerText}>
-                <Text style={{ fontWeight: '700' }}>3 veya daha fazla güncel fotoğraf</Text> yüklerseniz <Text style={{ fontWeight: '700' }}>{photoUpload3Credits} Tepe Coin</Text> kazanın!
+                <Text style={{ fontWeight: '700' }}>3 veya daha fazla güncel fotoğraf</Text> yüklerseniz <Text style={{ fontWeight: '700' }}>{photoUpload3Credits} Tepe Kredi</Text> kazanın!
               </Text>
             </View>
             <View style={styles.imageGrid}>
@@ -2418,7 +2366,7 @@ export default function ExpertRequestReportScreen() {
           <View style={styles.photoCoinBanner}>
             <Ionicons name="gift" size={18} color="#059669" />
             <Text style={styles.photoCoinBannerText}>
-              <Text style={{ fontWeight: '700' }}>3 veya daha fazla güncel fotoğraf</Text> yüklerseniz <Text style={{ fontWeight: '700' }}>{photoUpload3Credits} Tepe Coin</Text> kazanın!
+              <Text style={{ fontWeight: '700' }}>3 veya daha fazla güncel fotoğraf</Text> yüklerseniz <Text style={{ fontWeight: '700' }}>{photoUpload3Credits} Tepe Kredi</Text> kazanın!
             </Text>
           </View>
           <View style={styles.imageGrid}>

@@ -17,7 +17,7 @@ import {
 } from '../../../src/types/parcelResponse';
 import { normalizeGeometryCoordinates, calculateBoundsAndCamera, isPointInParcel } from '../parcelUtils';
 import { extractNitelikText, generatePropertyTypeTitle } from '../propertyTypeUtils';
-import { fetchTkgmByIds } from '../tkgmApi';
+import { fetchTkgmByIds, getTkgmUserAlert } from '../tkgmApi';
 import {
   isPassiveParcelPayload,
   normalizeAndConfirm,
@@ -297,9 +297,10 @@ export const createHandleAdaParselSubmit = (
         return;
       }
 
-      // TKGM tipli hatalar (500/timeout/network/invalid vb.) → çökme yerine uyarı modalı.
-      if (typeof e?.type === 'string' && e?.message) {
-        Alert.alert('Uyarı', e.message);
+      // TKGM tipli hatalar (500/timeout/network vb.) → çökme yerine uyarı modalı (hata değil).
+      if (typeof e?.type === 'string') {
+        const alert = getTkgmUserAlert(e);
+        Alert.alert(alert.title, alert.message);
         return;
       }
 

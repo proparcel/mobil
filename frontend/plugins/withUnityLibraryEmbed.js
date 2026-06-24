@@ -1,7 +1,11 @@
 const fs = require("fs");
 const path = require("path");
 const { withDangerousMod, withAppBuildGradle, withSettingsGradle } = require("expo/config-plugins");
-const { validateUnityArExport } = require("../scripts/validate-unity-export.js");
+const { validateUnityTerrainExport } = require("../scripts/validate-unity-export.js");
+const {
+  patchAppManifestOptionalHardware,
+  patchUnityLibraryManifestOptionalHardware,
+} = require("./androidOptionalHardware.js");
 
 const UNITY_EXPORT_FROM_FRONTEND = path.join("..", "unity", "vrParcel", "builds", "android", "unityLibrary");
 const UNITY_EXPORT_FROM_ANDROID = path.join("..", "..", "unity", "vrParcel", "builds", "android", "unityLibrary");
@@ -30,10 +34,9 @@ function detectUnityAbis(libraryRoot) {
     .filter((name) => fs.existsSync(path.join(jniRoot, name, "libunity.so")));
 }
 
-function patchSettingsGradle(settingsGradle) {
+function patchSettingsGradle(settingsGradle, libraryRoot) {
   let next = settingsGradle;
   const libraryDir = UNITY_EXPORT_FROM_ANDROID.replace(/\\/g, "/");
-  const xrManifestDir = `${libraryDir}/xrmanifest.androidlib`.replace(/\\/g, "/");
 
   if (!next.includes(UNITY_MARKER)) {
     const block = `
@@ -44,12 +47,20 @@ project(':unityLibrary').projectDir = new File(settingsDir, '${libraryDir}')
     next = `${next.trimEnd()}\n${block}\n`;
   }
 
-  if (!next.includes("pp-unity-xrmanifest")) {
+  const xrManifestDir = `${libraryDir}/xrmanifest.androidlib`.replace(/\\/g, "/");
+  const hasXrManifest = libraryRoot && fs.existsSync(path.join(libraryRoot, "xrmanifest.androidlib"));
+  if (hasXrManifest && !next.includes("pp-unity-xrmanifest")) {
     next += `
-// pp-unity-xrmanifest — ARCore XR manifest (Unity export alt modulu)
+// pp-unity-xrmanifest — ARCore XR manifest (yalnizca AR export'ta)
 include ':unityLibrary:xrmanifest.androidlib'
 project(':unityLibrary:xrmanifest.androidlib').projectDir = new File(settingsDir, '${xrManifestDir}')
 `;
+  }
+  if (!hasXrManifest) {
+    next = next.replace(
+      /\n\/\/ pp-unity-xrmanifest[\s\S]*?xrmanifest\.androidlib'\)\n/g,
+      "\n",
+    );
   }
 
   return next;
@@ -69,9 +80,9 @@ function ensureBuildConfigField(buildGradle, fieldName, value) {
   );
 }
 
-function patchAppBuildGradle(buildGradle, linked, arReady) {
+function patchAppBuildGradle(buildGradle, linked, terrainReady) {
   let next = ensureBuildConfigField(buildGradle, "VR_UNITY_LINKED", linked);
-  next = ensureBuildConfigField(next, "VR_UNITY_AR_READY", arReady);
+  next = ensureBuildConfigField(next, "TERRAIN_UNITY_READY", terrainReady);
 
   if (linked && !next.includes("implementation project(':unityLibrary')")) {
     next = next.replace(
@@ -92,17 +103,68 @@ function patchAppBuildGradle(buildGradle, linked, arReady) {
         `pickFirst 'lib/armeabi-v7a/libc++_shared.so'\n        ${line}`,
       );
     }
+
+    if (!next.includes("pp-unity-min-sdk")) {
+      next = next.replace(
+        /minSdkVersion rootProject\.ext\.minSdkVersion/,
+        "minSdkVersion Math.max(rootProject.ext.minSdkVersion as Integer, 25) // pp-unity-min-sdk",
+      );
+    }
   }
 
   return next;
 }
 
-function ensureUnityGradleProperties(gradlePropsPath) {
+function resolveUnityExportGradleProperties(projectRoot) {
+  return path.resolve(projectRoot, "..", "unity", "vrParcel", "builds", "android", "gradle.properties");
+}
+
+function ensureUnityGradleProperties(gradlePropsPath, projectRoot) {
   if (!fs.existsSync(gradlePropsPath)) return;
   let text = fs.readFileSync(gradlePropsPath, "utf8");
-  if (/^unityStreamingAssets=/m.test(text)) return;
-  text += `\nunityStreamingAssets=\n`;
-  fs.writeFileSync(gradlePropsPath, text);
+  let changed = false;
+
+  if (!/^unityStreamingAssets=/m.test(text)) {
+    text += `\nunityStreamingAssets=\n`;
+    changed = true;
+  }
+
+  const unityExportPropsPath = resolveUnityExportGradleProperties(projectRoot);
+  if (fs.existsSync(unityExportPropsPath)) {
+    const unityText = fs.readFileSync(unityExportPropsPath, "utf8");
+    for (const line of unityText.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.startsWith("unity.")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq <= 0) continue;
+      const key = trimmed.slice(0, eq);
+      const regex = new RegExp(`^${key.replace(/\./g, "\\.")}=.*$`, "m");
+      if (regex.test(text)) {
+        const current = text.match(regex)[0];
+        if (current !== trimmed) {
+          text = text.replace(regex, trimmed);
+          changed = true;
+        }
+      } else {
+        text += `\n${trimmed}`;
+        changed = true;
+      }
+    }
+  }
+
+  // Unity .so dosyalari: AGP 8+ extractNativeLibs manifest yerine legacy packaging
+  if (!/^expo\.useLegacyPackaging=true/m.test(text)) {
+    if (/^expo\.useLegacyPackaging=/m.test(text)) {
+      text = text.replace(/^expo\.useLegacyPackaging=.*$/m, "expo.useLegacyPackaging=true");
+    } else {
+      text += `\nexpo.useLegacyPackaging=true\n`;
+    }
+    changed = true;
+  }
+
+  if (changed) {
+    fs.writeFileSync(gradlePropsPath, text);
+  }
 }
 
 function patchUnityLibraryGradle(libraryRoot) {
@@ -155,6 +217,31 @@ function patchUnityLibraryGradle(libraryRoot) {
     throw new GradleException("Android SDK bulunamadi. ANDROID_HOME ayarlayin veya frontend/android/local.properties olusturun.")
 }`,
     );
+    changed = true;
+  }
+
+  if (!text.includes("def getUnityAndroidNdkPath()")) {
+    const helper = `
+def getUnityAndroidNdkPath() {
+    if (project.hasProperty('unity.androidNdkPath')) {
+        return getProperty('unity.androidNdkPath').replace('\\\\', '/')
+    }
+    def sdk = getSdkDir()
+    def preferred = "\${sdk}/ndk/27.2.12479018"
+    if (file(preferred).exists()) return preferred
+    throw new GradleException("unity.androidNdkPath yok. npm run fix:android-native calistirin.")
+}
+
+def getUnityAndroidSdkPath() {
+    if (project.hasProperty('unity.androidSdkPath')) {
+        return getProperty('unity.androidSdkPath').replace('\\\\', '/')
+    }
+    return getSdkDir()
+}
+`;
+    text = text.replace(/def getSdkDir\(\)/, `${helper}\ndef getSdkDir()`);
+    text = text.replace(/getProperty\("unity\.androidNdkPath"\)/g, "getUnityAndroidNdkPath()");
+    text = text.replace(/getProperty\("unity\.androidSdkPath"\)/g, "getUnityAndroidSdkPath()");
     changed = true;
   }
 
@@ -295,22 +382,50 @@ function patchUnityLibraryManifest(libraryRoot) {
   if (!text.includes("android.hardware.camera.ar")) {
     text = text.replace(
       /<uses-feature android:glEsVersion/,
-      '<uses-feature android:name="android.hardware.camera.ar" android:required="true" />\n  <uses-feature android:glEsVersion',
+      '<uses-feature android:name="android.hardware.camera.ar" android:required="false" />\n  <uses-feature android:glEsVersion',
+    );
+    changed = true;
+  } else {
+    text = text.replace(
+      /android\.hardware\.camera\.ar" android:required="true"/g,
+      'android.hardware.camera.ar" android:required="false"',
     );
     changed = true;
   }
 
   if (!text.includes("pp-unity-library-mode")) {
     text = text.replace(
-      /<activity android:name="com\.unity3d\.player\.UnityPlayerActivity"([^>]*)android:exported="true">[\s\S]*?<\/activity>/,
-      `<activity android:name="com.unity3d.player.UnityPlayerActivity"$1android:exported="false">\n      <!-- pp-unity-library-mode: RN MainActivity tek launcher -->\n      <meta-data android:name="unityplayer.UnityActivity" android:value="true" />\n    </activity>`,
+      /<activity[^>]*android:name="com\.unity3d\.player\.UnityPlayerActivity"[\s\S]*?<\/activity>/,
+      `<activity android:name="com.unity3d.player.UnityPlayerActivity" android:exported="false" android:enabled="true">
+      <!-- pp-unity-library-mode: RN MainActivity tek launcher -->
+      <meta-data android:name="unityplayer.UnityActivity" android:value="true" />
+    </activity>`,
     );
+    changed = true;
+  } else if (/UnityPlayerActivity[^>]*android:exported="true"/.test(text)) {
+    text = text.replace(
+      /(android:name="com\.unity3d\.player\.UnityPlayerActivity"[^>]*?)android:exported="true"/,
+      '$1android:exported="false"',
+    );
+    changed = true;
+  }
+
+  // pp-unity-permissions-min: VR modulu ag kullanmiyor; INTERNET iznini Unity manifest'ten cikar
+  if (!text.includes("pp-unity-permissions-min")) {
+    text = text.replace(/\s*<uses-permission android:name="android\.permission\.INTERNET"\s*\/?>\s*/g, "\n");
+    if (!text.includes("pp-unity-permissions-min")) {
+      text = text.replace(
+        /<manifest([^>]*)>/,
+        '<manifest$1>\n  <!-- pp-unity-permissions-min: INTERNET kaldirildi (RN ana uygulama yonetir) -->',
+      );
+    }
     changed = true;
   }
 
   if (changed) {
     fs.writeFileSync(manifestPath, text);
   }
+  patchUnityLibraryManifestOptionalHardware(libraryRoot);
 }
 
 function patchAppManifestUnityActivity(manifestPath) {
@@ -318,10 +433,11 @@ function patchAppManifestUnityActivity(manifestPath) {
   let text = fs.readFileSync(manifestPath, "utf8");
   let changed = false;
 
-  if (!text.includes("android:extractNativeLibs")) {
+  if (text.includes('android:extractNativeLibs="true"')) {
+    text = text.replace(/\s*android:extractNativeLibs="true"/g, "");
     text = text.replace(
-      /<application([^>]*android:enableOnBackInvokedCallback="false")/,
-      '<application$1 android:extractNativeLibs="true" tools:replace="android:enableOnBackInvokedCallback,android:extractNativeLibs"',
+      /tools:replace="android:enableOnBackInvokedCallback,android:extractNativeLibs"/g,
+      'tools:replace="android:enableOnBackInvokedCallback"',
     );
     changed = true;
   }
@@ -332,10 +448,19 @@ function patchAppManifestUnityActivity(manifestPath) {
     <activity
         android:name="com.unity3d.player.UnityPlayerActivity"
         android:exported="false"
-        tools:node="merge">
+        tools:node="merge"
+        tools:replace="android:exported">
       <intent-filter tools:node="removeAll" />
     </activity>`;
     text = text.replace(/(\s*<\/application>)/, `${block}\n$1`);
+    changed = true;
+  }
+
+  if (text.includes(UNITY_MANIFEST_MARKER) && !text.includes('tools:replace="android:exported"')) {
+    text = text.replace(
+      /(<activity[\s\S]*?com\.unity3d\.player\.UnityPlayerActivity[\s\S]*?tools:node="merge")/,
+      '$1\n        tools:replace="android:exported"',
+    );
     changed = true;
   }
 
@@ -344,36 +469,15 @@ function patchAppManifestUnityActivity(manifestPath) {
   }
 }
 
-function patchMainActivity(mainActivityPath) {
+function stripMainActivityVrUnityHost(mainActivityPath) {
   if (!fs.existsSync(mainActivityPath)) return;
   let text = fs.readFileSync(mainActivityPath, "utf8");
-  if (text.includes("VrUnityHost.pause")) return;
-
-  if (!text.includes("import com.proparcel.mobile.vrparcel.VrUnityHost")) {
-    text = text.replace(
-      /^package com\.proparcel\.mobile/m,
-      "package com.proparcel.mobile\n\nimport com.proparcel.mobile.vrparcel.VrUnityHost",
-    );
-  }
-
-  const lifecycleBlock = `
-  override fun onPause() {
-    super.onPause()
-    VrUnityHost.pause(this)
-  }
-
-  override fun onResume() {
-    super.onResume()
-    VrUnityHost.resume(this)
-  }
-
-  override fun onDestroy() {
-    super.onDestroy()
-    VrUnityHost.destroy()
-  }
-`;
-
-  text = text.replace(/\n}\s*$/, `${lifecycleBlock}\n}\n`);
+  if (!text.includes("VrUnityHost")) return;
+  text = text.replace(/\nimport com\.proparcel\.mobile\.vrparcel\.VrUnityHost/, "");
+  text = text.replace(
+    /\n  override fun onPause\(\) \{\s*\n\s*super\.onPause\(\)\s*\n\s*VrUnityHost\.pause\(this\)\s*\n\s*\}\s*\n\s*override fun onResume\(\) \{\s*\n\s*super\.onResume\(\)\s*\n\s*VrUnityHost\.resume\(this\)\s*\n\s*\}\s*\n\s*override fun onDestroy\(\) \{\s*\n\s*super\.onDestroy\(\)\s*\n\s*VrUnityHost\.destroy\(\)\s*\n\s*\}\s*\n/,
+    "\n",
+  );
   fs.writeFileSync(mainActivityPath, text);
 }
 
@@ -392,11 +496,11 @@ function ensureUnityLibraryEmbed(projectRoot) {
 
   const settingsGradlePath = path.join(androidRoot, "settings.gradle");
   if (fs.existsSync(settingsGradlePath)) {
-    const next = patchSettingsGradle(fs.readFileSync(settingsGradlePath, "utf8"));
+    const next = patchSettingsGradle(fs.readFileSync(settingsGradlePath, "utf8"), libraryRoot);
     fs.writeFileSync(settingsGradlePath, next);
   }
 
-  const exportValidation = validateUnityArExport(libraryRoot);
+  const exportValidation = validateUnityTerrainExport(libraryRoot);
   if (!exportValidation.ok) {
     console.warn(`[withUnityLibraryEmbed] ${exportValidation.message}`);
   }
@@ -407,16 +511,18 @@ function ensureUnityLibraryEmbed(projectRoot) {
     fs.writeFileSync(appBuildGradlePath, next);
   }
 
-  ensureUnityGradleProperties(path.join(androidRoot, "gradle.properties"));
+  ensureUnityGradleProperties(path.join(androidRoot, "gradle.properties"), projectRoot);
   ensureUnityGameViewString(libraryRoot);
   patchUnityLibraryGradle(libraryRoot);
   patchUnityLibraryGradleAgp(libraryRoot);
   patchXrManifestAndroidLib(libraryRoot);
   patchAndroidRootBuildGradle(androidRoot, libraryRoot);
   patchUnityLibraryManifest(libraryRoot);
-  patchAppManifestUnityActivity(path.join(androidRoot, "app", "src", "main", "AndroidManifest.xml"));
+  const appManifestPath = path.join(androidRoot, "app", "src", "main", "AndroidManifest.xml");
+  patchAppManifestUnityActivity(appManifestPath);
+  patchAppManifestOptionalHardware(appManifestPath);
 
-  patchMainActivity(
+  stripMainActivityVrUnityHost(
     path.join(
       androidRoot,
       "app",
@@ -429,7 +535,7 @@ function ensureUnityLibraryEmbed(projectRoot) {
   );
 
   console.log(
-    `[withUnityLibraryEmbed] unityLibrary baglandi → VR_UNITY_LINKED=true, VR_UNITY_AR_READY=${exportValidation.ok}`,
+    `[withUnityLibraryEmbed] unityLibrary baglandi → VR_UNITY_LINKED=true, TERRAIN_UNITY_READY=${exportValidation.ok}`,
   );
   return true;
 }
@@ -443,20 +549,20 @@ module.exports = function withUnityLibraryEmbed(config) {
       );
       return cfg;
     }
-    cfg.modResults.contents = patchSettingsGradle(cfg.modResults.contents);
+    cfg.modResults.contents = patchSettingsGradle(cfg.modResults.contents, resolveUnityLibraryRoot(projectRoot));
     console.log("[withUnityLibraryEmbed] settings.gradle → :unityLibrary");
     return cfg;
   });
 
   config = withAppBuildGradle(config, (cfg) => {
     const linked = unityExportReady(cfg.modRequest.projectRoot);
-    const arReady = linked
-      ? validateUnityArExport(resolveUnityLibraryRoot(cfg.modRequest.projectRoot)).ok
+    const terrainReady = linked
+      ? validateUnityTerrainExport(resolveUnityLibraryRoot(cfg.modRequest.projectRoot)).ok
       : false;
-    cfg.modResults.contents = patchAppBuildGradle(cfg.modResults.contents, linked, arReady);
+    cfg.modResults.contents = patchAppBuildGradle(cfg.modResults.contents, linked, terrainReady);
     if (linked) {
       console.log(
-        `[withUnityLibraryEmbed] app/build.gradle → unityLibrary + VR_UNITY_LINKED=true, VR_UNITY_AR_READY=${arReady}`,
+        `[withUnityLibraryEmbed] app/build.gradle → unityLibrary + VR_UNITY_LINKED=true, TERRAIN_UNITY_READY=${terrainReady}`,
       );
     } else {
       console.log("[withUnityLibraryEmbed] app/build.gradle → VR_UNITY_LINKED=false");
@@ -477,4 +583,5 @@ module.exports = function withUnityLibraryEmbed(config) {
 
 module.exports.UNITY_EXPORT_FROM_FRONTEND = UNITY_EXPORT_FROM_FRONTEND;
 module.exports.unityExportReady = unityExportReady;
+module.exports.resolveUnityLibraryRoot = resolveUnityLibraryRoot;
 module.exports.ensureUnityLibraryEmbed = ensureUnityLibraryEmbed;

@@ -145,7 +145,7 @@ namespace ProParcel.Terrain3d
                 .Add("jsonLength", json.Length));
             try
             {
-                var dto = JsonUtility.FromJson<ParcelTerrain3dDto>(json);
+                var dto = UnityEngine.JsonUtility.FromJson<ParcelTerrain3dDto>(json);
                 if (dto == null)
                 {
                     Terrain3dAndroidLog.EventError("unity.json.parse.failed", Terrain3dLogData.New()
@@ -396,7 +396,7 @@ namespace ProParcel.Terrain3d
 
         private void FitCamera()
         {
-            orbitCamera = orbitCamera != null ? orbitCamera : FindObjectOfType<TerrainOrbitCamera>();
+            orbitCamera = orbitCamera != null ? orbitCamera : FindAnyObjectByType<TerrainOrbitCamera>();
             if (orbitCamera == null)
             {
                 Terrain3dAndroidLog.EventError("unity.camera.fit.finished", Terrain3dLogData.New()
@@ -539,7 +539,7 @@ namespace ProParcel.Terrain3d
             {
                 try
                 {
-                    var holder = JsonUtility.FromJson<SessionIdHolder>(trimmed);
+                    var holder = UnityEngine.JsonUtility.FromJson<SessionIdHolder>(trimmed);
                     if (holder != null && !string.IsNullOrWhiteSpace(holder.sessionId))
                         return holder.sessionId;
                 }
@@ -567,7 +567,7 @@ namespace ProParcel.Terrain3d
 
         private static void EnsureSceneStyle()
         {
-            var style = FindObjectOfType<TerrainViewerSceneStyle>();
+            var style = FindAnyObjectByType<TerrainViewerSceneStyle>();
             if (style != null)
             {
                 style.ApplyStyle();
@@ -615,7 +615,7 @@ namespace ProParcel.Terrain3d
             }
 
             if (orbitCamera == null)
-                orbitCamera = FindObjectOfType<TerrainOrbitCamera>();
+                orbitCamera = FindAnyObjectByType<TerrainOrbitCamera>();
         }
 
         private void OnDestroy()

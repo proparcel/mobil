@@ -58,7 +58,6 @@ import {
   type ModelCatalogFlatItem,
 } from "@/src/maps/models/modelCatalog";
 import { useModelUsage } from "./shapeDrawingModal/useModelUsage";
-import { decrementModelUsage } from "@/src/services/modelUsageService";
 import { ensureModelAvailable } from "@/src/services/modelDelivery";
 import { UsageInfoPanel } from "./shapeDrawingModal/UsageInfoPanel";
 import { isFreeRole } from "@/src/maps/models/modelAvailability";
@@ -140,9 +139,6 @@ import { useModelTransformBar } from "./shapeDrawingModal/useModelDragPinch";
 import { useScreenShield } from "../../screens/contexts/ScreenShieldContext";
 import { useAuth } from "../../screens/contexts/AuthContext";
 import { creditService } from "../../services/creditService";
-import { Parcel3dPurchaseModal } from "./shapeDrawingModal/Parcel3dPurchaseModal";
-import { cacheParcel3dTkgmAfterPurchase } from "../../src/utils/parcel3dPurchasedStorage";
-import { parcel3dReferenceId } from "../../src/utils/parcel3dReference";
 import { saveImageUrisToPhotoLibrary } from "../../src/utils/saveToDeviceGallery";
 import { calculateBoundsAndCamera, normalizeGeometryCoordinates } from "@/src/utils/parcelUtils";
 
@@ -319,17 +315,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [captureMode, setCaptureMode] = useState(false);
   const [captureInProgress, setCaptureInProgress] = useState(false);
-  // 3D tasarım satın alma (parsel bazlı) gate
-  const [parcel3dPurchaseVisible, setParcel3dPurchaseVisible] = useState(false);
-  const [pendingPaidAction, setPendingPaidAction] = useState<"shareSelected" | "saveSelected" | null>(null);
-  const [pendingParcelInfo, setPendingParcelInfo] = useState<{
-    mahalle: string;
-    ada: string;
-    parsel: string;
-    referenceId: string;
-    mahalleTkgmValue?: number;
-    proparcelValue?: number;
-  } | null>(null);
   const composeDims = useMemo(() => {
     const d = getModelEditorCaptureDimensions();
     return { width: d.mapWidth, height: d.mapHeight };
@@ -434,7 +419,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   const {
     modelCatalogFlat,
     isModelCatalogLoading,
-    modelCatalogError,
     modelsProp,
   } = useModelCatalog(visible, modelCatalogRefreshKey);
 
@@ -678,38 +662,18 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
   // Handler for before adding model (decrement usage)
   const onBeforeAddModel = useCallback(async (modelId: number): Promise<{ success: boolean; remainingUses: number | null }> => {
     try {
-      // role=free => kullanım decrement yapılmaz ve her zaman kullanılabilir kabul edilir
       const meta = modelCatalogFlat.find((m) => m.id === modelId);
-      if (isFreeRole(meta?.role)) {
+      // Ücretsiz, satın alınmış veya erişilebilir modeller: sınırsız, sayaç düşürülmez
+      if (isFreeRole(meta?.role) || meta?.isOwned || meta?.isAvailable) {
         updateModelUsage(modelId, null);
         return { success: true, remainingUses: null };
       }
 
-      // Optimistic update: decrease usage count immediately
-      const currentUses = getRemainingUses(modelId);
-      if (currentUses !== null && currentUses > 0) {
-        updateModelUsage(modelId, currentUses - 1);
-      }
-
-      // Call API to decrement usage
-      const result = await decrementModelUsage(modelId);
-      
-      if (result.success) {
-        // Update with server response
-        updateModelUsage(modelId, result.remaining_uses);
-        return { success: true, remainingUses: result.remaining_uses };
-      } else {
-        // Rollback optimistic update on failure
-        updateModelUsage(modelId, currentUses);
-        return { success: false, remainingUses: currentUses };
-      }
+      return { success: false, remainingUses: 0 };
     } catch (error) {
-      // Rollback optimistic update on error
-      const currentUses = getRemainingUses(modelId);
-      updateModelUsage(modelId, currentUses);
       throw error;
     }
-  }, [getRemainingUses, updateModelUsage, modelCatalogFlat]);
+  }, [updateModelUsage, modelCatalogFlat]);
 
   const clearModelPlacementMode = useCallback(() => {
     // Model seçimi aktifken başka bir araç seçilirse model yerleştirme modu kapanmalı
@@ -785,7 +749,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     setModelLoadingText,
     setModelLoadingProgress,
     formatModelDisplayName,
-    getRemainingUses,
   });
 
   /** İlk karede state henüz dolmadan haritada parsel çizimi (initialParcel ile açılış) */
@@ -1798,25 +1761,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
     }
   }, [captureItems, selectedIds]);
 
-  const on3dPurchaseSuccess = useCallback(async () => {
-    const ctx = pendingParcelInfo;
-    if (!ctx) {
-      setPendingPaidAction(null);
-      return;
-    }
-    await cacheParcel3dTkgmAfterPurchase(ctx.mahalle, ctx.ada, ctx.parsel, ctx.mahalleTkgmValue, ctx.proparcelValue);
-    const action = pendingPaidAction;
-    setPendingPaidAction(null);
-    setPendingParcelInfo(null);
-    if (action === "shareSelected") {
-      // Satın alma sonrası paylaşımı tekrar dene (seçim hala duruyor).
-      handleShareSelected();
-    } else if (action === "saveSelected") {
-      // Satın alma sonrası kaydetmeyi tekrar dene.
-      handleSaveSelected();
-    }
-  }, [pendingParcelInfo, pendingPaidAction, handleShareSelected, handleSaveSelected]);
-
   const handleDeleteSelected = useCallback(() => {
     const idsToDelete = new Set(selectedIds);
     deleteCaptureFiles(captureItems, idsToDelete).then((remaining) => {
@@ -2438,19 +2382,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
           onDelete={handleDeleteFromPreview}
         />
 
-        {/* 3D Tasarım (parsel bazlı) satın alma modalı */}
-        <Parcel3dPurchaseModal
-          visible={parcel3dPurchaseVisible}
-          onClose={() => setParcel3dPurchaseVisible(false)}
-          referenceId={pendingParcelInfo?.referenceId}
-          mahalle={pendingParcelInfo?.mahalle}
-          ada={pendingParcelInfo?.ada}
-          parsel={pendingParcelInfo?.parsel}
-          mahalleTkgmValue={pendingParcelInfo?.mahalleTkgmValue}
-          proparcelValue={pendingParcelInfo?.proparcelValue}
-          onPurchaseSuccess={on3dPurchaseSuccess}
-        />
-
         {/* Parsel mahalle satırı editörde gösterilmez (kullanıcı isteği) */}
 
         <MeasurementEditSheet
@@ -2584,8 +2515,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
           onHisseliParsellereBolPress={handleHisseliParsellereBol}
           isModelCatalogLoading={isModelCatalogLoading}
           modelCatalogFlat={modelCatalogFlat}
-          modelCatalogError={modelCatalogError}
-          placingModelId={modelState.placingModelId}
           onSelectModel={onSelectModel}
           onClearModels={() => {
             modelActions.clearModelInstances();
@@ -2594,20 +2523,6 @@ const ShapeDrawingModal: React.FC<ShapeDrawingModalProps> = ({
           }}
           formatModelDisplayName={formatModelDisplayName}
           getRemainingUses={getRemainingUses}
-          onSelectOwnedModel={(ownedModel) => {
-            const oid = ownedModel.model_id;
-            const oidNum = typeof oid === "number" ? oid : Number(oid);
-            const byId =
-              modelCatalogFlat.find((m) => m.id === oid) ??
-              (Number.isFinite(oidNum) ? modelCatalogFlat.find((m) => m.id === oidNum) : undefined) ??
-              modelCatalogFlat.find((m) => m.id != null && String(m.id) === String(oid));
-            if (byId) {
-              onSelectModel(byId);
-              return;
-            }
-            const sameName = modelCatalogFlat.filter((m) => m.filename === ownedModel.file);
-            if (sameName.length === 1) onSelectModel(sameName[0]);
-          }}
           onModelCatalogRefresh={() => {
             setModelCatalogRefreshKey((prev) => prev + 1);
           }}

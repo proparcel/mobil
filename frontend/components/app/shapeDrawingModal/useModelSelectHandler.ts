@@ -1,9 +1,7 @@
 import { useCallback } from "react";
 import { Alert } from "react-native";
 import type { ModelCatalogFlatItem } from "@/src/maps/models/modelCatalog";
-import { isModelUsable } from "@/src/services/modelUsageService";
 import { ensureModelAvailable } from "@/src/services/modelDelivery";
-import { isFreeRole } from "@/src/maps/models/modelAvailability";
 import { resolveModelGlbSourceUrl } from "@/src/maps/models/modelCatalog";
 
 type Args = {
@@ -21,7 +19,6 @@ type Args = {
 
   formatModelDisplayName: (modelId: string) => string;
   
-  getRemainingUses?: (modelId: number) => number | null;
 };
 
 export function useModelSelectHandler(args: Args) {
@@ -36,7 +33,6 @@ export function useModelSelectHandler(args: Args) {
     setModelLoadingText,
     setModelLoadingProgress,
     formatModelDisplayName,
-    getRemainingUses,
   } = args;
 
   return useCallback(
@@ -55,25 +51,7 @@ export function useModelSelectHandler(args: Args) {
         if (m.isAvailable === false) {
           Alert.alert(
             "Model Kilitli",
-            `"${label}" kilitli. Model listesinde kilit simgesine dokunun veya Galeri sekmesinden satın alın.`
-          );
-          return;
-        }
-
-        // Check usage count before allowing selection
-        if (!isFreeRole(m.role) && m.id !== undefined && getRemainingUses) {
-          const remainingUses = getRemainingUses(m.id);
-          if (!isModelUsable(remainingUses)) {
-            Alert.alert(
-              "Kullanım Hakkı Tükenmiş",
-              `"${label}" modeli için kullanım hakkınız tükenmiş. Lütfen başka bir model seçin veya modeli yeniden satın alın.`
-            );
-            return;
-          }
-        } else if (!isFreeRole(m.role) && m.remainingUses !== undefined && !isModelUsable(m.remainingUses)) {
-          Alert.alert(
-            "Kullanım Hakkı Tükenmiş",
-            `"${label}" modeli için kullanım hakkınız tükenmiş. Lütfen başka bir model seçin veya modeli yeniden satın alın.`
+            `"${label}" kilitli. Galeriden satın alabilirsiniz.`
           );
           return;
         }
@@ -157,7 +135,6 @@ export function useModelSelectHandler(args: Args) {
       setParcelSelectMode,
       setPlacingModelId,
       setShapeDrawingMode,
-      getRemainingUses,
     ]
   );
 }
