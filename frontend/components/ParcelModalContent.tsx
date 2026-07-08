@@ -10,6 +10,7 @@ import {
   LOCATION_ILCE_KEYS,
   LOCATION_MAHALLE_KEYS,
 } from '../src/utils/mergeParcelDisplayProperties';
+import { formatParcelAreaDisplay, pickParcelAreaRaw, resolveParcelAreaM2 } from '../src/utils/dfaRows';
 
 interface ParcelModalContentProps {
   properties: Record<string, any>;
@@ -55,21 +56,6 @@ const pickRaw = (source: Record<string, any>, keys: string[]): any => {
   return null;
 };
 
-const parseAreaToNumber = (value: any): number => {
-  if (value === null || value === undefined || value === '') return 0;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const s = String(value).replace(/\s/g, '').replace(/m²|m2/gi, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, '');
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const formatArea = (value: any): string => {
-  if (value === null || value === undefined || value === '') return '-';
-  const n = typeof value === 'string' ? Number(value.replace(',', '.')) : Number(value);
-  if (!Number.isFinite(n)) return `${String(value)} m²`;
-  return `${n.toLocaleString('tr-TR')} m²`;
-};
-
 const formatPriceMaybe = (raw: any): string => {
   if (raw === null || raw === undefined) return '-';
   if (typeof raw === 'string') {
@@ -100,15 +86,15 @@ export const ParcelModalContent: React.FC<ParcelModalContentProps> = ({
     const mahalle = pickParcelDisplayValue(mergedProperties, LOCATION_MAHALLE_KEYS);
     const ada = pickValue(mergedProperties, ['adaNo', 'ada', 'Ada']);
     const parsel = pickValue(mergedProperties, ['parselNo', 'parsel', 'Parsel']);
-    const alanRaw = mergedProperties.alan ?? mergedProperties.area ?? mergedProperties.Area ?? mergedProperties.area_m2;
-    const alan = formatArea(alanRaw);
+    const alanRaw = pickParcelAreaRaw(mergedProperties);
+    const alan = formatParcelAreaDisplay(alanRaw, '-');
     const nitelik = pickValue(mergedProperties, ['nitelik', 'Nitelik']);
     const mevkii = pickValue(mergedProperties, ['mevkii']);
     const unitRaw = pickRaw(mergedProperties, PRICE_KEYS_UNIT);
     let totalRaw = pickRaw(mergedProperties, PRICE_KEYS_TOTAL);
     if (totalRaw === null) {
       const unitNum = parseTurkishPrice(unitRaw as any);
-      const areaNum = parseAreaToNumber(alanRaw);
+      const areaNum = resolveParcelAreaM2(alanRaw);
       if (unitNum > 0 && areaNum > 0) totalRaw = unitNum * areaNum;
     }
     return { il, ilce, mahalle, ada, parsel, alan, nitelik, mevkii, unitPriceText: formatPriceMaybe(unitRaw), totalPriceText: formatPriceMaybe(totalRaw) };

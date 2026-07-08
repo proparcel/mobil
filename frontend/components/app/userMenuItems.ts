@@ -32,6 +32,7 @@ export function getMenuItems(
       { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
       { id: "hukuki-metinler", title: "Hukuki metinler", icon: "document-text-outline", disabled: false },
       { id: "destek", title: "Destek", icon: "help-circle-outline", disabled: false },
+      { id: "nasil-yapilir", title: "Nasıl Yapılır", icon: "play-circle-outline", disabled: false },
       { id: "giris", title: "Giriş", icon: "log-in", disabled: false },
     ];
   }
@@ -43,13 +44,20 @@ export function getMenuItems(
   const adminUser = isAdmin === true || isAppAdminUser(user);
 
   return [
-    { id: "sorgularim", title: "Sorgularım", icon: "time-outline", disabled: false },
     { id: "kullanici", title: "Profil", icon: "person", disabled: false },
     ...(adminUser
       ? [{ id: "admin-panel", title: "Admin Panel", icon: "shield-checkmark", highlight: true }]
       : []),
     { id: "emlak-vitrini", title: "Emlak Vitrini", icon: "storefront-outline", disabled: false },
+    {
+      id: "ilan-islemleri",
+      title: "İlan İşlemleri",
+      icon: "briefcase-outline",
+      disabled: false,
+      hasSubmenu: true,
+    },
     { id: "son-30-gun-pro", title: "Son 30 Gün Pro Sorguları", icon: "calendar", disabled: false },
+    { id: "sorgularim", title: "Sorgularım", icon: "time-outline", disabled: false },
     { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
     {
       id: "ai-video",
@@ -59,22 +67,16 @@ export function getMenuItems(
       hasSubmenu: true,
     },
     { id: "sosyal-medya-sablonu", title: "Sosyal Medya Postu", icon: "share-social-outline", disabled: false },
-    { id: "aranacaklar", title: "Aranacaklar", icon: "call-outline", disabled: false },
-    { id: "bildirimler", title: "Bildirimler", icon: "notifications", disabled: false },
     ...(canSeeEmsalSalesReport
-      ? [{ id: "emsal-satis-bildir", title: "Emsal Satış Bildir", icon: "stats-chart-outline" as const }]
+      ? [{ id: "emsal-satis-bildir", title: "Emsal Bildir", icon: "stats-chart-outline" as const }]
       : []),
-    {
-      id: "ilan-islemleri",
-      title: "İlan İşlemleri",
-      icon: "briefcase-outline",
-      disabled: false,
-      hasSubmenu: true,
-    },
-    { id: "dosyalarim", title: "Dosyalarım", icon: "folder", disabled: false, hasSubmenu: true },
+    { id: "aranacaklar", title: "Aranacaklar", icon: "call-outline", disabled: false },
     { id: "kredi-paketleri", title: "Kredi Paketleri", icon: "layers-outline", disabled: false },
+    { id: "dosyalarim", title: "Dosyalarım", icon: "folder", disabled: false, hasSubmenu: true },
+    { id: "bildirimler", title: "Bildirimler", icon: "notifications", disabled: false },
     { id: "hukuki-metinler", title: "Hukuki Metinler", icon: "document-text-outline", disabled: false },
     { id: "destek", title: "Destek", icon: "help-circle-outline", disabled: false },
+    { id: "nasil-yapilir", title: "Nasıl Yapılır", icon: "play-circle-outline", disabled: false },
     { id: "cikis", title: "Çıkış", icon: "log-out", disabled: false },
   ];
 }

@@ -10,33 +10,51 @@ Kayıt ekranında **Sesli Komut ile Üye Ol** ile açılan sihirbaz; üyelik for
 | Kurumsal | `corporate_type` (emlak/spk/lihkab) tab ile seçili |
 | Danışman | Firma seçili veya sesli `consultant_company` adımı |
 
-## Akış
+## Akış (sürekli kayıt)
+
+Wizard açıldığında kayıt başlar. Her **Tamam** ile o sorunun sesi durdurulup saklanır, hemen sonraki soru için yeni kayıt başlar (API beklemesi yok). Son sesli adımda Tamam → tüm segmentler **paralel** API'ye gider → wizard kapanır → sonuçlar forma yansır.
 
 ```mermaid
 sequenceDiagram
-  participant U as Kullanıcı
+  participant U as Kullanici
   participant W as VoiceRegistrationWizard
   participant R as useSmartQueryAudioRecorder
   participant API as Django
-  participant F as register.tsx form
+  participant F as register_form
 
-  U->>W: Sesli Komut ile Üye Ol
-  W->>R: Otomatik startRecording
-  U->>U: Cevap söyler
-  U->>W: Tamam
-  W->>R: stopRecording base64
-  W->>API: POST voice_registration_field_extract
-  API-->>W: field value is_valid
-  W->>F: onFieldResolved patch
-  W->>R: Sonraki adım otomatik kayıt
-  Note over W,F: manual_password adımında ses yok
+  U->>W: Sesli Komut ile Uye Ol
+  W->>R: startRecording
+  loop Her sesli adim
+    U->>U: Cevap soyler
+    U->>W: Tamam
+    W->>R: stopRecording segment sakla
+    W->>R: startRecording sonraki soru
+    Note over W,API: API beklemesi yok
+  end
+  par Paralel istekler
+    W->>API: field + segment base64
+    W->>API: field + segment base64
+  end
+  API-->>W: sonuclar
+  W->>F: basarili patch onBatchCompleted
+  W->>F: hatali alanlar errors kirmizi border
+  W->>U: Forma don
 ```
 
 ## Wizard durumları
 
-`idle` → `listening` → `processing` → (başarı) sonraki adım | (hata) `error` → yeniden `listening`
+`idle` → `listening` (sürekli) → adımlar arası anında geçiş → son adımda `processing` → wizard kapanır.
 
-`completed`: `manual_password` sonrası wizard kapanır; şifre manuel.
+Wizard içinde adım adım “Algılanan sonuç” onayı yok; doğrulama kayıt formunda görünür.
+
+## Form hata işaretleme
+
+Toplu işlem sonrası:
+- Başarılı alanlar forma yazılır; ilgili `errors.*` temizlenir.
+- Hatalı alanlar forma yazılmaz; `register.tsx` `errors` state ile **kırmızı border** (`inputError` / `pickerTouchError`).
+- En az bir hata varsa Alert: *Bazı alanlar algılanamadı. Kırmızı işaretli alanları kontrol edin.*
+
+Alan → error key eşlemesi: `voiceRegistrationFieldToFormErrorKey.ts`
 
 ## Dinamik adımlar
 
@@ -63,14 +81,14 @@ Kurumsal ek:
 
 | field | Not |
 |-------|-----|
-| `company_name` | Opsiyonel; helper: *Yetki belgeniz varsa ve firma değilseniz bu adımı geçin.* Geç → ad soyad fallback |
+| `company_name` | Opsiyonel; helper: *Yetki belgeniz varsa ve firma değilseniz bu adımı geçin.* Geç → API’ye gitmez |
 | `company_license_no` | Zorunlu |
 | `spk_tc_no` | Yalnız SPK kurumsal |
 | `office_no` | Yalnız LİHKAB kurumsal |
 
 Danışman SPK parent: `consultant_license_no`
 
-Son: `manual_password` — ses yok; şifre elle.
+`manual_password` adımı wizard UI’da gösterilmez; sesli adımlar bitince wizard kapanır, şifre formdan elle girilir.
 
 ## Form patch
 
@@ -106,7 +124,9 @@ Detay: plan dokümanı *Firma türü stratejisi* bölümü; test: [test_matrisi.
 
 - `frontend/components/auth/VoiceRegistrationWizard.tsx`
 - `frontend/src/hooks/useVoiceRegistrationWizard.ts`
+- `frontend/src/hooks/useSmartQueryAudioRecorder.ts`
 - `frontend/services/voiceRegistrationService.ts`
+- `frontend/src/utils/voiceRegistrationFieldToFormErrorKey.ts`
 - `frontend/src/utils/voiceRegistrationSteps.ts`
 - `frontend/src/utils/voiceRegistrationResolve.ts`
 - `frontend/src/utils/voiceRegistrationValidators.ts`
@@ -115,3 +135,12 @@ Detay: plan dokümanı *Firma türü stratejisi* bölümü; test: [test_matrisi.
 ## API
 
 [api_voice_registration.md](./api_voice_registration.md)
+
+## Test notları
+
+- Bireysel / kurumsal / danışman — tüm sesli adımlar tek kayıtta tamamlanmalı
+- Bilerek hatalı alan → formda kırmızı border + hata mesajı
+- Başarılı alanlar dolu, hatalı alan boş veya önceki değerde
+- Elle düzenleme border’ı temizler
+- Opsiyonel telefon/firma **Geç** → segment marker ve API yok
+- `voice-registration-debug.log` — `segment_captured`, `batch_flush_*` olayları

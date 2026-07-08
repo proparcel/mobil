@@ -1,16 +1,102 @@
 import type { DfaRow } from '../types/reportPayload';
 
+const PARCEL_AREA_KEYS = [
+  'alan',
+  'Alan',
+  'ALAN',
+  'area',
+  'Area',
+  'area_m2',
+  'arazi_m2',
+  'areaM2',
+  'yuzolcum',
+  'Yuzolcum',
+  'YUZOLCUM',
+] as const;
+
+/** TKGM / parsel özelliklerinden alan ham değerini seçer. */
+export function pickParcelAreaRaw(source: Record<string, unknown> | null | undefined): unknown {
+  if (!source) return null;
+  for (const key of PARCEL_AREA_KEYS) {
+    const v = source[key];
+    if (v != null && String(v).trim() !== '') return v;
+  }
+  return null;
+}
+
+/**
+ * Alan metnini m² sayısına çevirir.
+ * TR: "2.450,00" / "1.556" (binlik nokta) — EN/API: "500.00" (ondalık nokta).
+ */
 export function parseAreaM2(value: unknown): number {
   if (value === null || value === undefined || value === '') return 0;
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const s = String(value)
+
+  let s = String(value)
+    .trim()
     .replace(/\s/g, '')
     .replace(/m²|m2/gi, '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
+    .replace(/[^\d.,\-+]/g, '');
+
+  if (!s) return 0;
+
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+
+  if (hasComma) {
+    // TR: nokta binlik, virgül ondalık (ör. 2.450,00)
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (hasDot) {
+    const parts = s.split('.');
+    const lastPart = parts[parts.length - 1] ?? '';
+    // Son parça 1–2 hane → ondalık nokta (500.00); aksi halde binlik nokta (1.556)
+    const isDecimalDot = parts.length === 2 && lastPart.length <= 2;
+    if (!isDecimalDot) {
+      s = s.replace(/\./g, '');
+    }
+  }
+
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * ParselModal bottom sheet ile aynı sayısal çözümleme:
+ * önce doğrudan sayı / basit metin, sonra TKGM metin formatı.
+ */
+export function resolveParcelAreaM2(value: unknown): number {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const n = Number(value.trim().replace(',', '.'));
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return parseAreaM2(value);
+}
+
+/** ParselModal bottom sheet ile aynı alan gösterimi. */
+export function formatParcelAreaDisplay(value: unknown, empty = ''): string {
+  if (value === null || value === undefined || value === '') return empty;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const n = Number(trimmed.replace(',', '.'));
+    if (Number.isFinite(n) && n > 0) {
+      return `${n.toLocaleString('tr-TR')} m²`;
+    }
+    const parsed = parseAreaM2(trimmed);
+    if (parsed > 0) {
+      return `${parsed.toLocaleString('tr-TR')} m²`;
+    }
+    return trimmed ? `${trimmed} m²` : empty;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return empty;
+  return `${n.toLocaleString('tr-TR')} m²`;
+}
+
+/** @deprecated formatParcelAreaDisplay kullanın */
+export function formatAreaM2Display(value: unknown, empty = ''): string {
+  return formatParcelAreaDisplay(value, empty);
 }
 
 export function pctTextFromFactors(appliedFactor: unknown): string {

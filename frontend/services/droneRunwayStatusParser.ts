@@ -34,6 +34,11 @@ export type RunwayStatusClassification = {
 };
 
 export type DroneMyVideoMeta = {
+  editor_mode?: string;
+  prompt_profile?: string;
+  ai_video_title?: string;
+  image_animation_title?: string;
+  license_ref?: string;
   progress?: RunwayProgressPayload;
   job_error?: string;
   reference_id?: string;

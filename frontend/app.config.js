@@ -23,11 +23,11 @@ const DEV_CLIENT_PACKAGES = [
 module.exports = {
   name: "ProParcel",
   displayName: "ProParcel",
-  version: "2.0.10",
+  version: "2.0.16",
   expo: {
     name: "ProParcel",
     slug: "frontend",
-    version: "2.0.10",
+    version: "2.0.16",
     scheme: "proparcel",
     icon: "./assets/images/icon.png",
     splash: {
@@ -49,7 +49,7 @@ module.exports = {
     jsEngine: "hermes",
     ios: {
       bundleIdentifier: "com.proparcel.app",
-      buildNumber: "33",
+      buildNumber: "39",
       icon: "./assets/images/icon.png",
       supportsTablet: true,
       ...(process.env.IOS_ASSOCIATED_DOMAINS === "1"
@@ -77,12 +77,15 @@ module.exports = {
     },
     android: {
       package: "com.proparcel.mobile",
-      versionCode: 38,
+      versionCode: 41,
+      // Firebase Cloud Messaging — frontend/google-services.json (Firebase Console'dan indir)
+      googleServicesFile: "./google-services.json",
       navigationBar: {
         enforceContrast: false,
         backgroundColor: "#1e293b",
       },
       permissions: [
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.READ_CONTACTS",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -128,12 +131,13 @@ module.exports = {
               },
             ],
           ]),
-      "./plugins/withIosNoPushEntitlement.js",
       "./plugins/withIosLocationPermissions.js",
+      "./plugins/withIosPodfileGitSource.js",
       "./plugins/withOptionalAndroidHardware.js",
       "./plugins/withParcelTerrain3dNativeModules.js",
       "./plugins/withUnitySmokeTestNativeModules.js",
       "./plugins/withUnityLibraryEmbed.js",
+      "./plugins/withVrParcelNativeModules.js",
       "./plugins/withUnityFrameworkEmbed.js",
       "./plugins/withAppLinks.js",
       [
@@ -172,6 +176,7 @@ module.exports = {
           granularPermissions: [],
         },
       ],
+      "expo-notifications",
       [
         "@rnmapbox/maps",
         {
@@ -180,6 +185,17 @@ module.exports = {
         },
       ],
       "react-native-iap",
+      [
+        "expo-share-intent",
+        {
+          iosAppGroupIdentifier: "group.com.proparcel.app.share",
+          iosActivationRules: {
+            NSExtensionActivationSupportsImageWithMaxCount: 1,
+          },
+          androidIntentFilters: ["image/*"],
+          androidMultiIntentFilters: ["image/*"],
+        },
+      ],
     ],
   },
 };

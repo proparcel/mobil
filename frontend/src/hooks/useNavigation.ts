@@ -13,14 +13,12 @@ type ProfileReturnParams = ProfileReturnRouteParams;
 export const useRoute = useRNRoute;
 
 export type RootStackParamList = {
-  /** Web ana sayfa (landing) — skipIntro: header’dan gelince cinematic atlanır */
-  landing: { skipIntro?: boolean } | undefined;
   index:
     | {
         proQueryMahalle?: number;
         proQueryAda?: string;
         proQueryParsel?: string;
-        launch?: 'my-queries' | 'parcel-split' | '3d-designs';
+        launch?: 'my-queries' | 'parcel-split' | '3d-designs' | 'basit-sorgu';
       }
     | undefined;
   profile: { profileSection?: ProfileSectionId } | undefined;
@@ -38,7 +36,6 @@ export type RootStackParamList = {
   notifications: undefined;
   "expert-requests": { mode?: "mine" | "incoming" } | undefined;
   "sales-report": undefined;
-  "ai-video-studio": { tab?: "create" | "videos"; jobId?: string } | undefined;
   "ai-image-animation-purchase": undefined;
   "ai-image-animation-editor": {
     image_animation_title?: string;
@@ -46,6 +43,7 @@ export type RootStackParamList = {
   };
   "ai-drone-hub": undefined;
   "ai-drone-simple-editor": { jobId?: string } | undefined;
+  "ai-video-new-editor": { jobId?: string } | undefined;
   "ai-drone-my-videos": undefined;
   "ai-drone-video-info": undefined;
   "ai-drone-jobs": undefined;
@@ -88,7 +86,15 @@ export type RootStackParamList = {
     cityName?: string;
     city_name?: string;
   };
-  "son-30-gun": ProfileReturnParams | undefined;
+  "son-30-gun":
+    | ({
+        mine?: string | boolean;
+        /** Detaydan dönüş — kayıtlı liste filtrelerini geri yükle */
+        restoreListSession?: string;
+        fallbackCityId?: string;
+        fallback_city_id?: string;
+      } & ProfileReturnParams)
+    | undefined;
   dosyalarim: undefined;
   "son-30-gun-detay": {
     snapshotId: string;
@@ -96,6 +102,8 @@ export type RootStackParamList = {
     ratingId?: string;
     listingId?: string;
     fromProQuery?: string;
+    /** Son 30 gün listesinden açıldı — geri liste durumunu korur */
+    fromSon30Gun?: string;
   } & ProfileReturnParams;
   "portal-v5-report-webview": {
     snapshotId: string;
@@ -131,6 +139,7 @@ export type RootStackParamList = {
   "otp-verify": { phone?: string; mode?: string; [key: string]: any };
   "forgot-password": undefined;
   "legal-hub": ProfileReturnParams | undefined;
+  "nasil-yapilir": { tab?: "videos" | "live"; videoId?: string; liveTitle?: string } | undefined;
   "legal-webview": { slug: string; title?: string };
   "accounts-webview": { path: string; title?: string } & ProfileReturnParams;
   "portal-webview": { path: string; title?: string } & ProfileReturnParams;
@@ -142,6 +151,14 @@ export type RootStackParamList = {
   /** Pro sorgu favorileri — GET /api/portal/recent-queries/favorites/ */
   "sorgu-favorilerim": undefined;
   "ilan-islemleri": ProfileReturnParams | undefined;
+  "listing-wizard": {
+    listingId: string;
+    mode?: "create" | "edit";
+    forceEidsFirst?: string;
+    returnSnapshotId?: string;
+    eids?: string;
+    eids_error?: string;
+  };
   aranacaklar: undefined;
   "aranacaklar-picker": undefined;
   "aranacaklar-detail": { contactId: string };
@@ -158,6 +175,10 @@ export type RootStackParamList = {
 };
 
 export type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+export function useNavigation(): NavigationProp {
+  return useRNNavigation<NavigationProp>();
+}
 
 /**
  * useRouter hook - React Navigation için router API wrapper

@@ -18,8 +18,12 @@ import {
   ProQueryHttpError,
   getProQueryAlertButtons,
   getProQueryErrorAlert,
+  shouldDeferProQueryForApify,
   runProParcelQuery,
+  startProParcelQueryBackground,
+  type BackgroundProQueryPending,
 } from '../utils/proQueryApi';
+import { startProQueryBackgroundWatch } from '../../services/proQueryJobTracker';
 import {
   PortalDetailGeometryError,
   type ProQueryTkgmFeature,
@@ -55,6 +59,11 @@ export type ProQueryTypeFlowController = {
   konutVisible: boolean;
   areaM2: number;
   submitting: boolean;
+  apifyPendingVisible: boolean;
+  apifyPendingMessage: string;
+  apifyConfirming: boolean;
+  confirmApifyPending: () => void;
+  dismissApifyPending: () => void;
   /** Tip seçim modalını açar (onay modalı YOK). */
   launch: (input: ProQueryLaunchInput) => void;
   closeTypeModal: () => void;
@@ -116,9 +125,13 @@ export function useProQueryAfterTypeSelect(
   const [konutVisible, setKonutVisible] = useState(false);
   const [areaM2, setAreaM2] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [apifyPendingVisible, setApifyPendingVisible] = useState(false);
+  const [apifyPendingMessage, setApifyPendingMessage] = useState('');
+  const [apifyConfirming, setApifyConfirming] = useState(false);
 
   const featureRef = useRef<ProQueryTkgmFeature | null>(null);
   const shareRef = useRef<ShareParcelSelection | null>(null);
+  const pendingBodyRef = useRef<Record<string, unknown> | null>(null);
 
   const handleError = useCallback(
     (error: unknown) => {
@@ -155,44 +168,95 @@ export function useProQueryAfterTypeSelect(
     [isAuthenticated, onLogin, onInsufficientCredit],
   );
 
+  const buildRequestBody = useCallback(
+    (propertyType: string, extraParams?: Record<string, unknown>) => {
+      const feature = featureRef.current;
+      if (!feature) return null;
+      const props = (feature.properties || {}) as Record<string, any>;
+      const body: Record<string, unknown> = {
+        tkgm_data: feature,
+        property_type_override: propertyType,
+        map_mode: '2d',
+        is3D: false,
+        source,
+        ...(extraParams || {}),
+      };
+      if (props.mahalleAd && props.adaNo && props.parselNo) {
+        body.mahalle = props.mahalleAd;
+        body.ada = props.adaNo;
+        body.parsel = props.parselNo;
+        if (props.mahalleId) body.mahalleTkgmValue = props.mahalleId;
+      }
+      applyShareSelectionToBody(body, shareRef.current);
+      return body;
+    },
+    [source],
+  );
+
+  const runBackgroundQuery = useCallback(
+    async (body: Record<string, unknown>) => {
+      const pending: BackgroundProQueryPending = await startProParcelQueryBackground(body);
+      startProQueryBackgroundWatch(pending);
+      featureRef.current = null;
+      shareRef.current = null;
+    },
+    [],
+  );
+
   const runQuery = useCallback(
     async (propertyType: string, extraParams?: Record<string, unknown>) => {
-      const feature = featureRef.current;
-      if (!feature) return;
+      const body = buildRequestBody(propertyType, extraParams);
+      if (!body) return;
       setSubmitting(true);
       try {
-        const props = (feature.properties || {}) as Record<string, any>;
-        const body: Record<string, unknown> = {
-          tkgm_data: feature,
-          property_type_override: propertyType,
-          map_mode: '2d',
-          is3D: false,
-          source,
-          ...(extraParams || {}),
-        };
-        if (props.mahalleAd && props.adaNo && props.parselNo) {
-          body.mahalle = props.mahalleAd;
-          body.ada = props.adaNo;
-          body.parsel = props.parselNo;
-          if (props.mahalleId) body.mahalleTkgmValue = props.mahalleId;
+        const gate = await shouldDeferProQueryForApify(body);
+        if (gate.deferred) {
+          pendingBodyRef.current = gate.body;
+          setApifyPendingMessage(gate.message);
+          setApifyPendingVisible(true);
+          setSubmitting(false);
+          return;
         }
-        applyShareSelectionToBody(body, shareRef.current);
 
         const data = await runProParcelQuery(body);
         if (data?.error) {
           throw new Error(String(data.error));
         }
         await onSuccess(data);
+        featureRef.current = null;
+        shareRef.current = null;
       } catch (error) {
         handleError(error);
       } finally {
         setSubmitting(false);
-        featureRef.current = null;
-        shareRef.current = null;
       }
     },
-    [source, onSuccess, handleError],
+    [buildRequestBody, onSuccess, handleError],
   );
+
+  const confirmApifyPending = useCallback(async () => {
+    const body = pendingBodyRef.current;
+    if (!body || apifyConfirming) return;
+    setApifyConfirming(true);
+    try {
+      await runBackgroundQuery(body);
+      setApifyPendingVisible(false);
+      pendingBodyRef.current = null;
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setApifyConfirming(false);
+      setSubmitting(false);
+    }
+  }, [apifyConfirming, runBackgroundQuery, handleError]);
+
+  const dismissApifyPending = useCallback(() => {
+    setApifyPendingVisible(false);
+    pendingBodyRef.current = null;
+    setSubmitting(false);
+    featureRef.current = null;
+    shareRef.current = null;
+  }, []);
 
   const launch = useCallback((input: ProQueryLaunchInput) => {
     featureRef.current = input.feature;
@@ -295,6 +359,13 @@ export function useProQueryAfterTypeSelect(
     konutVisible,
     areaM2,
     submitting,
+    apifyPendingVisible,
+    apifyPendingMessage,
+    apifyConfirming,
+    confirmApifyPending: () => {
+      void confirmApifyPending();
+    },
+    dismissApifyPending,
     launch,
     closeTypeModal,
     handleSelect,

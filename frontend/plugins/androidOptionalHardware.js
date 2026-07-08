@@ -28,6 +28,19 @@ function buildOptionalFeatureBlock() {
   return `\n  <!-- ${MARKER}: AR/VR/camera/mic optional for Play device catalog -->\n${lines.join("\n")}\n`;
 }
 
+function dedupeOptionalFeatures(text) {
+  for (const name of OPTIONAL_FEATURES) {
+    const escaped = name.replace(/\./g, "\\.");
+    const pattern = new RegExp(`\\s*<uses-feature android:name="${escaped}"[^>]*/>\\s*`, "g");
+    let count = 0;
+    text = text.replace(pattern, (match) => {
+      count += 1;
+      return count === 1 ? match : "";
+    });
+  }
+  return text;
+}
+
 function patchArCoreMetaOptional(manifest) {
   manifest = manifest.replace(
     /(<meta-data android:name="com\.google\.ar\.core"[^>]*)\s*tools:replace="android:value"(?:\s*tools:replace="android:value")*/g,
@@ -58,6 +71,7 @@ function patchAppManifestOptionalHardware(manifestPath) {
     text = text.replace(/(<manifest[^>]*>\s*)/, `$1${buildOptionalFeatureBlock()}`);
   }
 
+  text = dedupeOptionalFeatures(text);
   text = patchArCoreMetaOptional(text);
   fs.writeFileSync(manifestPath, text);
   return true;

@@ -21,5 +21,6 @@ frontend/android/**
 frontend/ios
 frontend/ios/**
 frontend/apk_releases
+frontend/app_releases
 frontend/release_builds
 frontend/ios_release_builds

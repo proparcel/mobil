@@ -13,6 +13,7 @@ type Props = {
   isPending: boolean;
   isSaved: boolean;
   isPlaying: boolean;
+  selecting?: boolean;
   onPlayToggle: (track: MusicTrack, index: number) => void;
   onSelect: (track: MusicTrack) => void;
 };
@@ -23,6 +24,7 @@ export function DroneMusicTrackCard({
   isPending,
   isSaved,
   isPlaying,
+  selecting = false,
   onPlayToggle,
   onSelect,
 }: Props) {
@@ -56,9 +58,14 @@ export function DroneMusicTrackCard({
         <TouchableOpacity
           style={[styles.selectBtn, isPending && styles.selectBtnActive]}
           onPress={() => onSelect(track)}
+          disabled={selecting}
           accessibilityLabel="Seç"
         >
-          <Text style={styles.selectBtnText}>Seç</Text>
+          {selecting ? (
+            <ActivityIndicator size="small" color="#0f172a" />
+          ) : (
+            <Text style={styles.selectBtnText}>Seç</Text>
+          )}
         </TouchableOpacity>
       </View>
     </View>

@@ -8,10 +8,13 @@ import {
   getSlopeHillPoints,
   getSlopeInfo,
 } from '../../src/utils/slopeTerrainHelpers';
+import { INSIGHT_GRID_CARD_HEIGHT } from './portalInsightMetricLayout';
 
 export type PortalSlopeTerrainCardProps = {
   slope?: number | null;
   variant?: 'default' | 'compact';
+  /** Genel özet grid içinde — tam genişlik, dış kart sınırı yok */
+  embedded?: boolean;
 };
 
 const TERRAIN_H = 92;
@@ -21,8 +24,9 @@ const HILL_H = TERRAIN_H - GROUND_H;
 export default function PortalSlopeTerrainCard({
   slope,
   variant = 'default',
+  embedded = false,
 }: PortalSlopeTerrainCardProps) {
-  const compact = variant === 'compact';
+  const compact = variant === 'compact' || embedded;
   const info = useMemo(() => getSlopeInfo(slope ?? null), [slope]);
   const color = useMemo(() => getSlopeHeatColor(slope ?? null), [slope]);
   const hints = useMemo(() => getMobilityHints(slope ?? null), [slope]);
@@ -33,32 +37,53 @@ export default function PortalSlopeTerrainCard({
   const iconIsTractor = /traktor/i.test(info.iconUri);
   const iconLarge = iconIsCar || iconIsTractor;
 
-  const terrainH = compact ? 68 : TERRAIN_H;
-  const hillH = terrainH - GROUND_H;
+  const terrainH = embedded ? INSIGHT_GRID_CARD_HEIGHT - 8 : compact ? 68 : TERRAIN_H;
+  const groundH = embedded ? 12 : GROUND_H;
+  const hillH = terrainH - groundH;
 
   return (
-    <View style={[styles.card, compact && styles.cardCompact]}>
-      <View style={[styles.header, compact && styles.headerCompact]}>
-        <Text style={[styles.title, compact && styles.titleCompact]}>Eğim</Text>
-      </View>
+    <View style={[styles.card, compact && styles.cardCompact, embedded && styles.cardEmbedded]}>
+      {!embedded ? (
+        <View style={[styles.header, compact && styles.headerCompact]}>
+          <Text style={[styles.title, compact && styles.titleCompact]}>Eğim</Text>
+        </View>
+      ) : null}
 
       <View
-        style={[styles.terrainArea, { height: terrainH }, compact && styles.terrainAreaCompact]}
+        style={[
+          styles.terrainArea,
+          { height: terrainH },
+          compact && styles.terrainAreaCompact,
+          embedded && styles.terrainAreaEmbedded,
+        ]}
         accessibilityRole="image"
         accessibilityLabel={`Eğim ${valueLabel}. ${info.desc}. Arazi kesiti.`}
       >
         <View style={styles.sky} />
-        <View style={[styles.hillWrap, { height: hillH }]}>
+        <View style={[styles.hillWrap, { height: hillH, bottom: groundH }]}>
           <Svg width="100%" height={hillH} viewBox={`0 0 100 ${HILL_H}`} preserveAspectRatio="none">
             <Polygon points={hillPoints} fill={color} />
           </Svg>
           <View style={styles.hillHighlight} pointerEvents="none" />
         </View>
-        <View style={[styles.ground, { height: GROUND_H }]} />
-        <View style={[styles.textOverlay, compact && styles.textOverlayCompact, iconLarge && styles.textOverlayLargeIcon]}>
-          <View style={[styles.textOverlayInner, compact && styles.textOverlayInnerCompact]}>
-            <Text style={[styles.value, compact && styles.valueCompact]}>{valueLabel}</Text>
-            <Text style={[styles.desc, compact && styles.descCompact]} numberOfLines={2}>
+        <View style={[styles.ground, { height: groundH }]} />
+        <View
+          style={[
+            styles.textOverlay,
+            compact && styles.textOverlayCompact,
+            embedded && styles.textOverlayEmbedded,
+            iconLarge && !embedded && styles.textOverlayLargeIcon,
+            iconLarge && embedded && styles.textOverlayEmbeddedLargeIcon,
+          ]}
+        >
+          <View style={[styles.textOverlayInner, compact && styles.textOverlayInnerCompact, embedded && styles.textOverlayInnerEmbedded]}>
+            {embedded ? (
+              <Text style={styles.titleEmbedded} numberOfLines={1}>
+                Eğim
+              </Text>
+            ) : null}
+            <Text style={[styles.value, compact && styles.valueCompact, embedded && styles.valueEmbedded]}>{valueLabel}</Text>
+            <Text style={[styles.desc, compact && styles.descCompact, embedded && styles.descEmbedded]} numberOfLines={2}>
               {info.desc}
             </Text>
           </View>
@@ -68,7 +93,9 @@ export default function PortalSlopeTerrainCard({
           style={[
             styles.icon,
             compact && styles.iconCompact,
-            iconLarge && styles.iconLarge,
+            embedded && styles.iconEmbedded,
+            iconLarge && !embedded && styles.iconLarge,
+            iconLarge && embedded && styles.iconEmbeddedLarge,
             iconIsCar && styles.iconCarOffset,
             iconIsTractor && styles.iconTractorOffset,
           ]}
@@ -113,6 +140,12 @@ const styles = StyleSheet.create({
   cardCompact: {
     maxWidth: undefined,
   },
+  cardEmbedded: {
+    flex: 1,
+    width: '100%',
+    maxWidth: undefined,
+    alignSelf: 'stretch',
+  },
   header: {
     alignItems: 'center',
     marginBottom: 6,
@@ -141,6 +174,12 @@ const styles = StyleSheet.create({
   },
   terrainAreaCompact: {
     borderRadius: 8,
+  },
+  terrainAreaEmbedded: {
+    flex: 1,
+    borderRadius: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
   },
   sky: {
     ...StyleSheet.absoluteFillObject,
@@ -176,6 +215,14 @@ const styles = StyleSheet.create({
   textOverlayCompact: {
     right: 72,
   },
+  textOverlayEmbedded: {
+    left: 4,
+    top: 4,
+    right: 58,
+  },
+  textOverlayEmbeddedLargeIcon: {
+    right: 66,
+  },
   textOverlayLargeIcon: {
     right: 104,
   },
@@ -191,6 +238,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 3,
   },
+  textOverlayInnerEmbedded: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  titleEmbedded: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    marginBottom: 1,
+  },
   value: {
     fontSize: 22,
     fontWeight: '800',
@@ -199,6 +258,9 @@ const styles = StyleSheet.create({
   },
   valueCompact: {
     fontSize: 17,
+  },
+  valueEmbedded: {
+    fontSize: 15,
   },
   desc: {
     marginTop: 3,
@@ -210,6 +272,10 @@ const styles = StyleSheet.create({
   descCompact: {
     fontSize: 10,
     marginTop: 2,
+  },
+  descEmbedded: {
+    fontSize: 11,
+    marginTop: 1,
   },
   icon: {
     position: 'absolute',
@@ -224,6 +290,20 @@ const styles = StyleSheet.create({
     height: 48,
     right: 22,
     top: 10,
+  },
+  iconEmbedded: {
+    width: 44,
+    height: 52,
+    right: 4,
+    top: 10,
+    zIndex: 5,
+  },
+  iconEmbeddedLarge: {
+    width: 56,
+    height: 64,
+    right: 2,
+    top: 6,
+    zIndex: 5,
   },
   iconLarge: {
     width: 66,

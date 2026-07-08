@@ -1,4 +1,5 @@
 import type { SavedQueryItem } from "../../components/app/MyQueriesModal";
+import { formatParcelAreaDisplay } from "./dfaRows";
 import { makeSavedQueryKey, type SavedQuery } from "./savedQueries";
 import { resolveLocationForSavedQueryItem } from "./resolveSavedQueryLocation";
 
@@ -15,13 +16,7 @@ export type SavedQueryDisplayRow = {
 
 /** Web `formatArea` — sidebar Sorgularım */
 export function formatQueryArea(area: unknown): string {
-  if (area == null || area === "") return "";
-  const raw = String(area).trim();
-  const numeric = Number(raw.replace(/\./g, "").replace(",", ".").replace(/[^\d.\-]/g, ""));
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return `${numeric.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} m²`;
-  }
-  return raw;
+  return formatParcelAreaDisplay(area);
 }
 
 export function getSavedQueryItemId(q: SavedQueryItem): string {

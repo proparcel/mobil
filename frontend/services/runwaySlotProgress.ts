@@ -200,8 +200,22 @@ export function toPipelineSlotProgressItems(
   label: string;
 }> {
   const slots = Math.max(1, Math.min(8, slotCount));
-  return Array.from({ length: slots }, (_, i) => {
-    const slot = i + 1;
+  return toPipelineSlotProgressItemsForSlots(
+    bySlot,
+    Array.from({ length: slots }, (_, i) => i + 1),
+  );
+}
+
+export function toPipelineSlotProgressItemsForSlots(
+  bySlot: Record<string, MergedRunwaySlotProgress>,
+  slotNumbers: number[],
+): Array<{
+  slot: number;
+  percent: number;
+  status: "pending" | "active" | "done" | "failed";
+  label: string;
+}> {
+  return slotNumbers.map((slot) => {
     const entry = bySlot[String(slot)] || { slot, step: "queued", percent: 0, label: "Bekleniyor" };
     const step = String(entry.step || "").toLowerCase();
     let status: "pending" | "active" | "done" | "failed" = "pending";
@@ -218,4 +232,11 @@ export function toPipelineSlotProgressItems(
       label: entry.label,
     };
   });
+}
+
+export function initialRunwaySlotProgressForSlot(slot: number): Record<string, MergedRunwaySlotProgress> {
+  const n = Math.max(1, Math.min(8, slot));
+  return {
+    [String(n)]: { slot: n, step: "queued", percent: 0, label: "Bekleniyor" },
+  };
 }

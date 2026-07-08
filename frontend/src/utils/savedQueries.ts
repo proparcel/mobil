@@ -3,6 +3,7 @@ import RNFS from 'react-native-fs';
 import type { DfaRow } from '../types/reportPayload';
 import {
   buildBackfilledLocationHeader,
+  isLikelyLocationIdField,
   mergeLocationHeader,
   resolveLocationForSavedQueryItem,
 } from './resolveSavedQueryLocation';
@@ -232,7 +233,11 @@ export async function backfillLocalSavedQueryLocationHeaders(
   let changed = false;
   const next = list.map((sq) => {
     const lh = sq.location_header;
-    const needsIlIlce = !normalizeStr(lh?.ilAd) || !normalizeStr(lh?.ilceAd);
+    const needsIlIlce =
+      !normalizeStr(lh?.ilAd) ||
+      !normalizeStr(lh?.ilceAd) ||
+      isLikelyLocationIdField(lh?.ilAd) ||
+      isLikelyLocationIdField(lh?.ilceAd);
     if (!needsIlIlce) return sq;
 
     const resolved = resolveLocationForSavedQueryItem(sq);

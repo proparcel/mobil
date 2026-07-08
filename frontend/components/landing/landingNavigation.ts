@@ -29,7 +29,7 @@ export function navigateLandingCapability(router: Router, id: string) {
       router.push('ai-drone-hub');
       break;
     case 'ai-video':
-      router.push('ai-video-studio');
+      router.push('ai-video-new-editor');
       break;
     case 'uzman-gorusu':
       router.push({ pathname: 'expert-requests', params: { mode: 'mine' } });

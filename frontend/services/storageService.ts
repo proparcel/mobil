@@ -16,9 +16,14 @@ const STORAGE_KEYS = {
   REDIRECT_AFTER_LOGIN: "proparcel_redirect_after_login",
   DEFERRED_REFERRAL_CODE: "proparcel_deferred_referral_code",
   DEFERRED_OPEN_DEEP_LINK: "proparcel_deferred_open_deep_link",
-  /** İlk açılış cinematic intro tamamlandı — sonraki cold start doğrudan haritaya */
-  SKIP_LANDING_INTRO: "proparcel_skip_landing_intro",
+  DEFERRED_SHARE_IMAGE: "proparcel_deferred_share_image",
 } as const;
+
+export type DeferredShareImage = {
+  path: string;
+  mimeType: string;
+  receivedAt: number;
+};
 
 /** Redirect-after-login target. Use "model-editor" to open ShapeDrawingModal after login/register. */
 export const REDIRECT_TARGET_MODEL_EDITOR = "model-editor" as const;
@@ -233,29 +238,34 @@ class StorageService {
     await this.setDeferredOpenDeepLink(null);
   }
 
-  /**
-   * Landing cinematic intro bir kez gösterildi mi (App cold start route seçimi).
-   */
-  async getSkipLandingIntro(): Promise<boolean> {
+  /** Paylaşım intent — giriş öncesi görsel yolu (base64 değil). */
+  async setDeferredShareImage(payload: DeferredShareImage | null): Promise<void> {
     try {
-      const v = await AsyncStorage.getItem(STORAGE_KEYS.SKIP_LANDING_INTRO);
-      return v === "1";
+      if (!payload) {
+        await AsyncStorage.removeItem(STORAGE_KEYS.DEFERRED_SHARE_IMAGE);
+      } else {
+        await AsyncStorage.setItem(STORAGE_KEYS.DEFERRED_SHARE_IMAGE, JSON.stringify(payload));
+      }
     } catch (error) {
-      console.error("[storageService] getSkipLandingIntro error:", error);
-      return false;
+      console.error("[storageService] setDeferredShareImage error:", error);
     }
   }
 
-  async setSkipLandingIntro(skip: boolean): Promise<void> {
+  async getDeferredShareImage(): Promise<DeferredShareImage | null> {
     try {
-      if (skip) {
-        await AsyncStorage.setItem(STORAGE_KEYS.SKIP_LANDING_INTRO, "1");
-      } else {
-        await AsyncStorage.removeItem(STORAGE_KEYS.SKIP_LANDING_INTRO);
-      }
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.DEFERRED_SHARE_IMAGE);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as DeferredShareImage;
+      if (!parsed?.path || !parsed?.mimeType) return null;
+      return parsed;
     } catch (error) {
-      console.error("[storageService] setSkipLandingIntro error:", error);
+      console.error("[storageService] getDeferredShareImage error:", error);
+      return null;
     }
+  }
+
+  async clearDeferredShareImage(): Promise<void> {
+    await this.setDeferredShareImage(null);
   }
 }
 

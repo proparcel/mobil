@@ -42,37 +42,27 @@ for /f "tokens=1" %%a in ('"%ADB_PATH%" devices ^| findstr "device$"') do (
 echo.
 
 REM Setup port forwarding
-echo [2/4] Setting up port forwarding for Metro bundler...
-"%ADB_PATH%" reverse tcp:8081 tcp:8081 >nul 2>&1
+echo [2/4] Setting up port forwarding for Metro bundler (8082)...
+"%ADB_PATH%" reverse tcp:8082 tcp:8082 >nul 2>&1
 if errorlevel 1 (
     echo [WARNING] Port forwarding setup failed, but might already exist.
 ) else (
-    echo [OK] Port forwarding configured (8081 -> 8081).
+    echo [OK] Port forwarding configured (8082 -^> 8082).
 )
 echo.
 
-REM Check if Metro is running
-echo [3/4] Checking Metro bundler...
-netstat -an | findstr ":8081" >nul
+echo [3/4] Checking Metro bundler (8082)...
+netstat -an | findstr ":8082" >nul
 if errorlevel 1 (
-    echo [INFO] Metro bundler is not running. It will start automatically.
+    echo [INFO] Metro kapali — android:dev otomatik acacak.
 ) else (
-    echo [OK] Metro bundler is already running.
+    echo [OK] Metro zaten calisiyor (8082).
 )
 echo.
 
-REM Build and run
-echo [4/4] Building and installing app on device...
+echo [4/4] Build + kurulum (Metro aciksa sadece build)...
 echo.
-echo This will:
-echo   - Build the Android app
-echo   - Install it on your device
-echo   - Start the app
-echo.
-echo Starting build process...
-echo.
-
-npm run android
+npm run start:android_metro
 
 if errorlevel 1 (
     echo.

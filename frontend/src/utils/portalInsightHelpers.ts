@@ -4,6 +4,26 @@
 
 import type { PortalQueryDetail, PortalRoadV2Frontage } from '../types/portal';
 
+const QUERY_TYPE_LABELS: Record<string, string> = {
+  arsa: 'Arsa',
+  tarla: 'Tarla',
+  villa: 'Villa',
+  fabrika: 'Fabrika',
+  bina: 'Bina',
+  konut: 'Konut',
+  konut_daire: 'Konut Daire',
+  mustakil_ev: 'Müstakil Ev',
+  ciftlik_ev: 'Çiftlik Ev',
+  ticari: 'Ticari',
+  commercial: 'Ticari',
+};
+
+export function resolvePortalQueryTypeLabel(queryType: string | null | undefined): string {
+  const key = String(queryType || '').trim().toLowerCase();
+  if (!key) return '—';
+  return QUERY_TYPE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
+}
+
 export type InsightRiskChip = {
   key: 'ramsar' | 'hv' | 'slope' | 'imar' | 'quarter-center';
   label: string;
@@ -16,7 +36,118 @@ type SummaryLike = {
   parameters_data?: Record<string, unknown> | null;
   parametersData?: Record<string, unknown> | null;
   listing_attributes?: Record<string, unknown> | null;
+  context_morphology_json?: Record<string, unknown> | null;
+  slopeSummary?: {
+    morphology_type?: string | null;
+    morphology_label?: string | null;
+  } | null;
+  slope_elevation_json?: {
+    elevation_morphology?: Record<string, unknown> | null;
+  } | null;
+  morphology_type?: string | null;
+  morphology_label?: string | null;
 } | null | undefined;
+
+const MORPHOLOGY_WARNING_TYPES = new Set(['cukur', 'çukur', 'vadi']);
+
+function normalizeMorphologyTypeKey(raw: unknown): string | null {
+  if (raw == null || raw === '') return null;
+  return String(raw).trim().toLocaleLowerCase('tr-TR');
+}
+
+export function formatMorphologyTypeLabel(typeRaw: unknown, labelRaw: unknown): string {
+  const raw = String(labelRaw || typeRaw || '').trim();
+  if (!raw || raw === '—') return '—';
+  return raw.charAt(0).toLocaleUpperCase('tr-TR') + raw.slice(1).toLocaleLowerCase('tr-TR');
+}
+
+export function resolvePortalMorphologyLabel(
+  summary: SummaryLike,
+  slopeSection?: Record<string, unknown> | null,
+): string {
+  if (!summary || typeof summary !== 'object') return '—';
+
+  const slopeSummary =
+    summary.slopeSummary && typeof summary.slopeSummary === 'object' ? summary.slopeSummary : null;
+  const ctxFromSection =
+    slopeSection?.context_morphology_json &&
+    typeof slopeSection.context_morphology_json === 'object'
+      ? (slopeSection.context_morphology_json as Record<string, unknown>)
+      : null;
+  const ctxFromSummary =
+    summary.context_morphology_json && typeof summary.context_morphology_json === 'object'
+      ? summary.context_morphology_json
+      : null;
+  const ctx = ctxFromSection || ctxFromSummary;
+  const morph =
+    ctx?.morphology && typeof ctx.morphology === 'object'
+      ? (ctx.morphology as Record<string, unknown>)
+      : null;
+  const legacy = summary.slope_elevation_json?.elevation_morphology;
+
+  const typeRaw =
+    summary.morphology_type
+    || slopeSummary?.morphology_type
+    || morph?.type
+    || (legacy && typeof legacy === 'object' ? legacy.type || legacy.morphology_type : null);
+  const labelRaw =
+    summary.morphology_label
+    || slopeSummary?.morphology_label
+    || morph?.type_label
+    || morph?.label
+    || (legacy && typeof legacy === 'object' ? legacy.type_label || legacy.label : null);
+
+  return formatMorphologyTypeLabel(typeRaw, labelRaw);
+}
+
+export function resolveInsightMorphologyType(
+  summary: SummaryLike,
+  slopeSection?: Record<string, unknown> | null,
+): string | null {
+  if (!summary || typeof summary !== 'object') return null;
+  const slopeSummary =
+    summary.slopeSummary && typeof summary.slopeSummary === 'object' ? summary.slopeSummary : null;
+  const ctxFromSection =
+    slopeSection?.context_morphology_json &&
+    typeof slopeSection.context_morphology_json === 'object'
+      ? (slopeSection.context_morphology_json as Record<string, unknown>)
+      : null;
+  const ctxFromSummary =
+    summary.context_morphology_json && typeof summary.context_morphology_json === 'object'
+      ? summary.context_morphology_json
+      : null;
+  const ctx = ctxFromSection || ctxFromSummary;
+  const morph =
+    ctx?.morphology && typeof ctx.morphology === 'object'
+      ? (ctx.morphology as Record<string, unknown>)
+      : null;
+  const legacy = summary.slope_elevation_json?.elevation_morphology;
+  const typeRaw =
+    summary.morphology_type
+    || slopeSummary?.morphology_type
+    || morph?.type
+    || (legacy && typeof legacy === 'object' ? legacy.type || legacy.morphology_type : null);
+  return normalizeMorphologyTypeKey(typeRaw);
+}
+
+export function resolveInsightMorphologyVariant(
+  morphType: string | null | undefined,
+): 'normal' | 'alert' {
+  const key = normalizeMorphologyTypeKey(morphType);
+  if (!key) return 'normal';
+  if (MORPHOLOGY_WARNING_TYPES.has(key)) return 'alert';
+  return 'normal';
+}
+
+export function resolveInsightSlopeMetricVariant(
+  slopePct: number | null | undefined,
+): 'normal' | 'alert' | 'danger' {
+  const s = Number(slopePct);
+  if (!Number.isFinite(s)) return 'normal';
+  if (s > 30) return 'danger';
+  if (s > 20) return 'alert';
+  return 'normal';
+}
 
 export function resolveSlopePercentForInsight(
   slopeSectionPayload: Record<string, unknown> | null | undefined,
@@ -471,13 +602,11 @@ export function buildPhysicalSupplementalRows({
 export function buildInsightRiskChips({
   summary,
   analysis,
-  slopePct,
 }: {
   summary: SummaryLike;
   analysis: Record<string, unknown> | null | undefined;
-  slopePct: number | null;
+  slopePct?: number | null;
 }): InsightRiskChip[] {
-  const slopeSteep = slopePct != null && slopePct > 20;
   const imarDist = analysis?.imar_boundary_distance_m;
   const imarFarRisk =
     imarDist != null && imarDist !== '' && !Number.isNaN(Number(imarDist)) && Number(imarDist) > 300;
@@ -503,15 +632,6 @@ export function buildInsightRiskChips({
           ? `Var${analysis.high_voltage_voltage_kv != null ? `, ${analysis.high_voltage_voltage_kv} kV` : ''}`
           : 'Yok',
       risk: Boolean(analysis?.high_voltage_line),
-    },
-    {
-      key: 'slope',
-      label: 'Eğim',
-      value:
-        slopePct != null
-          ? `%${slopePct.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}${slopeSteep ? ' — Çok dik' : ''}`
-          : '—',
-      risk: slopeSteep,
     },
     {
       key: 'imar',

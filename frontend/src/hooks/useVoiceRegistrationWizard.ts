@@ -2,16 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSmartQueryAudioRecorder } from "./useSmartQueryAudioRecorder";
 import { extractVoiceRegistrationField } from "../../services/voiceRegistrationService";
 import type {
+  VoiceRegistrationBatchFailure,
+  VoiceRegistrationBatchResult,
+  VoiceRegistrationBatchSuccess,
   VoiceRegistrationContext,
   VoiceRegistrationField,
   VoiceRegistrationFormPatch,
-  VoiceRegistrationPendingReview,
   VoiceRegistrationStepConfig,
   VoiceRegistrationWizardState,
 } from "../types/voiceRegistration";
 import {
   buildFormPatchFromVoiceField,
-  buildVoiceRegistrationResultSummary,
   buildVoiceRegistrationSteps,
   resolveVoiceRegistrationLocation,
   validateVoiceFieldLocally,
@@ -34,13 +35,21 @@ import {
 } from "../utils/voiceRegistrationDebugLog";
 
 const AUTO_RECORD_DELAY_MS = 400;
-const MIN_WALL_RECORDING_MS = 800;
+const MIN_SEGMENT_MS = 800;
+
+const NETWORK_ERROR_FALLBACK =
+  "Sesli işlem sırasında bağlantı sorunu oluştu. Lütfen tekrar deneyin.";
+
+type SegmentPayload = {
+  field: VoiceRegistrationField;
+  base64: string;
+  mimeType: string;
+};
 
 type UseVoiceRegistrationWizardOptions = {
   visible: boolean;
   context: VoiceRegistrationContext;
-  onFieldResolved: (patch: VoiceRegistrationFormPatch, field: VoiceRegistrationField) => void;
-  onCompleted: () => void;
+  onBatchCompleted: (result: VoiceRegistrationBatchResult) => void;
   onClose: () => void;
 };
 
@@ -51,26 +60,40 @@ function maskValueForLog(field: VoiceRegistrationField, value: unknown): unknown
   return value;
 }
 
-function showErrorReview(message: string): VoiceRegistrationPendingReview {
-  return { status: "error", message };
+function isVoiceStep(step: VoiceRegistrationStepConfig | undefined): boolean {
+  return Boolean(step && step.inputType === "voice");
+}
+
+function lastVoiceStepIndex(steps: VoiceRegistrationStepConfig[]): number {
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    if (steps[i]?.inputType === "voice") return i;
+  }
+  return -1;
+}
+
+function segmentDurationMs(
+  recording: { durationMs?: number | null } | null,
+  fallbackMs: number | null,
+): number {
+  if (recording?.durationMs != null && !Number.isNaN(recording.durationMs)) {
+    return recording.durationMs;
+  }
+  return fallbackMs ?? 0;
 }
 
 export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOptions) {
-  const { visible, context, onFieldResolved, onCompleted, onClose } = options;
+  const { visible, context, onBatchCompleted, onClose } = options;
   const voiceRecorder = useSmartQueryAudioRecorder();
   const steps = useMemo(() => buildVoiceRegistrationSteps(context), [context]);
   const [stepIndex, setStepIndex] = useState(0);
   const [wizardState, setWizardState] = useState<VoiceRegistrationWizardState>("idle");
-  const [pendingReview, setPendingReview] = useState<VoiceRegistrationPendingReview | null>(null);
-  const pendingReviewRef = useRef<VoiceRegistrationPendingReview | null>(null);
+  const [inlineError, setInlineError] = useState<string | null>(null);
   const autoRecordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recordingStartedAtRef = useRef<number | null>(null);
+  const segmentPayloadsRef = useRef<SegmentPayload[]>([]);
+  const flushInProgressRef = useRef(false);
 
   const currentStep: VoiceRegistrationStepConfig | undefined = steps[stepIndex];
-
-  useEffect(() => {
-    pendingReviewRef.current = pendingReview;
-  }, [pendingReview]);
+  const lastVoiceIdx = useMemo(() => lastVoiceStepIndex(steps), [steps]);
 
   const clearAutoRecordTimer = useCallback(() => {
     if (autoRecordTimerRef.current) {
@@ -83,9 +106,9 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
     clearAutoRecordTimer();
     setStepIndex(0);
     setWizardState("idle");
-    pendingReviewRef.current = null;
-    setPendingReview(null);
-    recordingStartedAtRef.current = null;
+    setInlineError(null);
+    segmentPayloadsRef.current = [];
+    flushInProgressRef.current = false;
     void voiceRecorder.clearRecording();
   }, [clearAutoRecordTimer, voiceRecorder]);
 
@@ -96,7 +119,9 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
     }
     setStepIndex(0);
     setWizardState("idle");
-    setPendingReview(null);
+    setInlineError(null);
+    segmentPayloadsRef.current = [];
+    flushInProgressRef.current = false;
     void voiceRecorder.clearRecording();
     void appendVoiceQueryDebugLog("wizard_opened", "voice_registration", {
       memberType: context.memberType,
@@ -110,36 +135,42 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
     });
   }, [visible]);
 
+  const ensureRecording = useCallback(async (): Promise<boolean> => {
+    if (voiceRecorder.isRecording || voiceRecorder.getRecordingDurationMs() != null) {
+      setWizardState("listening");
+      return true;
+    }
+    const started = await voiceRecorder.startRecording(true);
+    if (started) {
+      setWizardState("listening");
+      setInlineError(null);
+      return true;
+    }
+    setWizardState("idle");
+    setInlineError(
+      voiceRecorder.permissionHint ||
+        "Sesli üyelik için mikrofon izni gereklidir. Ayarlardan mikrofon izni verebilirsiniz.",
+    );
+    await appendVoiceQueryDebugLog("permission_denied", "voice_registration", {});
+    return false;
+  }, [voiceRecorder]);
+
   const scheduleAutoRecord = useCallback(
-    (delayMs = AUTO_RECORD_DELAY_MS, force = false) => {
+    (delayMs = AUTO_RECORD_DELAY_MS) => {
       clearAutoRecordTimer();
-      if (!visible || !currentStep) return;
-      if (!force && pendingReviewRef.current) return;
-      if (currentStep.inputType === "manual_password") return;
+      if (!visible || !isVoiceStep(currentStep)) return;
 
       autoRecordTimerRef.current = setTimeout(async () => {
-        if (!force && pendingReviewRef.current) return;
-        const started = await voiceRecorder.startRecording();
-        if (started) {
-          recordingStartedAtRef.current = Date.now();
-          setWizardState("listening");
+        const ok = await ensureRecording();
+        if (ok) {
           await appendVoiceQueryDebugLog("recording_auto_started", "voice_registration", {
-            field: currentStep.field,
+            field: currentStep?.field,
             stepIndex,
           });
-        } else {
-          setWizardState("idle");
-          setPendingReview(
-            showErrorReview(
-              voiceRecorder.permissionHint ||
-                "Sesli üyelik için mikrofon izni gereklidir. Ayarlardan mikrofon izni verebilirsiniz.",
-            ),
-          );
-          await appendVoiceQueryDebugLog("permission_denied", "voice_registration", {});
         }
       }, delayMs);
     },
-    [clearAutoRecordTimer, visible, currentStep, voiceRecorder, stepIndex],
+    [clearAutoRecordTimer, visible, currentStep, ensureRecording, stepIndex],
   );
 
   useEffect(() => {
@@ -155,78 +186,89 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
     });
 
     if (currentStep.inputType === "manual_password") {
-      clearAutoRecordTimer();
-      setWizardState("completed");
       return;
     }
 
-    if (!pendingReview) {
+    if (!inlineError && wizardState !== "processing") {
       scheduleAutoRecord();
     }
     return () => clearAutoRecordTimer();
   }, [visible, stepIndex, currentStep?.field, currentStep?.inputType]);
 
   const goToNextStep = useCallback(() => {
-    setPendingReview(null);
+    setInlineError(null);
     setStepIndex((prev) => {
       const next = prev + 1;
       if (next >= steps.length) return prev;
       return next;
     });
-    setWizardState("idle");
+    setWizardState("listening");
   }, [steps.length]);
 
-  const presentSuccessReview = useCallback(
-    (
+  const resolveFieldFromApi = useCallback(
+    async (
       field: VoiceRegistrationField,
-      resolvedValue: unknown,
-      patch: VoiceRegistrationFormPatch,
-      locationResolved?: Parameters<typeof buildFormPatchFromVoiceField>[2],
-    ) => {
-      clearAutoRecordTimer();
-      void voiceRecorder.clearRecording();
-      setWizardState("idle");
-      setPendingReview({
-        status: "success",
-        summary: buildVoiceRegistrationResultSummary(
-          field,
-          field === "location" ? locationResolved ?? resolvedValue : resolvedValue,
-        ),
-        patch,
-        field,
-      });
-    },
-    [clearAutoRecordTimer, voiceRecorder],
-  );
-
-  const presentErrorReview = useCallback(
-    (message: string) => {
-      clearAutoRecordTimer();
-      void voiceRecorder.clearRecording();
-      setWizardState("idle");
-      setPendingReview(showErrorReview(message));
-    },
-    [clearAutoRecordTimer, voiceRecorder],
-  );
-
-  const processFieldResult = useCallback(
-    async (field: VoiceRegistrationField, apiData: { value?: unknown; raw_text?: string; message?: string | null }) => {
+      apiData: {
+        value?: unknown;
+        raw_text?: string;
+        message?: string | null;
+        debug_normalized?: string | null;
+        ok?: boolean;
+        is_valid?: boolean;
+        error?: string;
+      },
+    ): Promise<
+      | { ok: true; patch: VoiceRegistrationFormPatch; resolvedValue: unknown }
+      | { ok: false; message: string }
+    > => {
       let resolvedValue = apiData.value;
 
       if (field === "phone") {
         resolvedValue = resolveVoiceRegistrationPhoneValue(
           apiData.value,
           apiData.raw_text,
-          (apiData as { debug_normalized?: string | null }).debug_normalized,
+          apiData.debug_normalized,
         );
+        if (validateVoiceRegistrationPhone(resolvedValue)) {
+          if (!apiData.is_valid || apiData.ok === false) {
+            await logVoiceRegistrationRecovery("phone", {
+              rawText: apiData.raw_text || "",
+              recoveredValue: resolvedValue,
+            });
+          }
+        } else {
+          return {
+            ok: false,
+            message:
+              apiData.message ||
+              apiData.error ||
+              "Telefon numarası doğru algılanamadı. Lütfen numaranızı tekrar söyleyin.",
+          };
+        }
       }
 
       if (field === "email") {
         resolvedValue = resolveVoiceRegistrationEmailValue(
           apiData.value,
           apiData.raw_text,
-          (apiData as { debug_normalized?: string | null }).debug_normalized,
+          apiData.debug_normalized,
         );
+        if (validateVoiceRegistrationEmail(resolvedValue)) {
+          if (!apiData.is_valid || apiData.ok === false) {
+            await logVoiceRegistrationRecovery("email", {
+              rawText: apiData.raw_text || "",
+              recoveredValue: resolvedValue,
+            });
+          }
+        } else {
+          return {
+            ok: false,
+            message:
+              apiData.message ||
+              apiData.error ||
+              "E-posta adresi doğru algılanamadı. Lütfen tekrar söyleyin.",
+          };
+        }
       }
 
       let locationResolved: Parameters<typeof buildFormPatchFromVoiceField>[2];
@@ -239,30 +281,32 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
           raw_text: apiData.raw_text,
         });
         if (!locResult.ok) {
-          presentErrorReview(locResult.error);
-          await appendVoiceQueryDebugLog("field_invalid", "voice_registration", {
-            field,
-            error: locResult.error,
-          });
-          return;
+          return { ok: false, message: locResult.error };
         }
         resolvedValue = locResult.location;
         locationResolved = locResult.location;
       }
 
+      if (field !== "phone" && field !== "email") {
+        if (!apiData.is_valid || apiData.ok === false) {
+          return {
+            ok: false,
+            message:
+              apiData.message ||
+              apiData.error ||
+              "Alan doğrulanamadı. Lütfen tekrar söyleyin.",
+          };
+        }
+      }
+
       const localCheck = validateVoiceFieldLocally(field, resolvedValue, context);
       if (!localCheck.ok) {
-        presentErrorReview(localCheck.message);
-        await appendVoiceQueryDebugLog("field_invalid", "voice_registration", {
-          field,
-          error: localCheck.message,
-        });
         await logVoiceRegistrationLocalValidationFailed(field, {
           value: resolvedValue,
           rawText: apiData.raw_text,
           error: localCheck.message,
         });
-        return;
+        return { ok: false, message: localCheck.message };
       }
 
       const patch = buildFormPatchFromVoiceField(
@@ -274,215 +318,252 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
       await appendVoiceQueryDebugLog("field_resolved", "voice_registration", {
         field,
         value: maskValueForLog(field, resolvedValue),
+        batch: true,
       });
 
-      presentSuccessReview(field, resolvedValue, patch, locationResolved);
+      return { ok: true, patch, resolvedValue };
     },
-    [context, presentErrorReview, presentSuccessReview],
+    [context],
   );
 
-  const handleAcceptReview = useCallback(() => {
-    if (pendingReview?.status !== "success") return;
-    onFieldResolved(pendingReview.patch, pendingReview.field);
-    void appendVoiceQueryDebugLog("step_completed", "voice_registration", {
-      field: pendingReview.field,
-      stepIndex,
-    });
-    goToNextStep();
-  }, [pendingReview, onFieldResolved, stepIndex, goToNextStep]);
-
-  const handleConfirm = useCallback(async () => {
-    if (!currentStep || wizardState === "processing") return;
-    if (currentStep.inputType === "manual_password") return;
-
-    if (pendingReview?.status === "success") {
-      handleAcceptReview();
-      return;
-    }
-
-    if (pendingReview?.status === "error") {
-      return;
-    }
-
+  const flushVoiceBatch = useCallback(async () => {
+    if (flushInProgressRef.current) return;
+    flushInProgressRef.current = true;
     clearAutoRecordTimer();
+    setWizardState("processing");
+    setInlineError(null);
 
-    let recording = null;
-    if (voiceRecorder.isRecording) {
-      const wallStart = recordingStartedAtRef.current;
-      recording = await voiceRecorder.stopRecording();
-      await appendVoiceQueryDebugLog("recording_stopped_by_confirm", "voice_registration", {
-        field: currentStep.field,
-      });
-      const wallDuration = wallStart != null ? Date.now() - wallStart : null;
-      if (wallDuration != null && wallDuration < MIN_WALL_RECORDING_MS) {
-        presentErrorReview("Ses çok kısa algılandı. Lütfen cevabınızı tekrar söyleyin.");
-        await appendVoiceQueryDebugLog("audio_too_short", "voice_registration", {
-          field: currentStep.field,
-          wallDurationMs: wallDuration,
-        });
-        return;
-      }
-    } else {
-      recording = await voiceRecorder.getRecordingPayload();
+    const payloads = [...segmentPayloadsRef.current];
+    await appendVoiceRegistrationDebugLog("batch_flush_start", {
+      payloadCount: payloads.length,
+      fields: payloads.map((p) => p.field),
+    });
+
+    const successes: VoiceRegistrationBatchSuccess[] = [];
+    const failures: VoiceRegistrationBatchFailure[] = [];
+
+    if (payloads.length === 0) {
+      flushInProgressRef.current = false;
+      setWizardState("idle");
+      setInlineError("Ses kaydı bulunamadı. Lütfen soruları sesli yanıtlayın.");
+      return;
     }
+
+    try {
+      const apiResponses = await Promise.all(
+        payloads.map((payload) =>
+          extractVoiceRegistrationField(
+            payload.field,
+            payload.base64,
+            payload.mimeType,
+            context,
+          ),
+        ),
+      );
+
+      for (let i = 0; i < payloads.length; i += 1) {
+        const payload = payloads[i];
+        const response = apiResponses[i];
+
+        if (!response.ok || !response.data) {
+          failures.push({
+            field: payload.field,
+            message: response.error || NETWORK_ERROR_FALLBACK,
+          });
+          continue;
+        }
+
+        const resolved = await resolveFieldFromApi(payload.field, response.data);
+        if (!resolved.ok) {
+          failures.push({ field: payload.field, message: resolved.message });
+          await appendVoiceQueryDebugLog("field_invalid", "voice_registration", {
+            field: payload.field,
+            error: resolved.message,
+            batch: true,
+          });
+          continue;
+        }
+
+        successes.push({ field: payload.field, patch: resolved.patch });
+        await appendVoiceQueryDebugLog("step_completed", "voice_registration", {
+          field: payload.field,
+          batch: true,
+        });
+      }
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Ses işlenirken bir hata oluştu.";
+      await appendVoiceRegistrationDebugLog("batch_flush_failed", { message });
+      payloads.forEach((payload) => {
+        failures.push({ field: payload.field, message });
+      });
+    }
+
+    await appendVoiceRegistrationDebugLog("batch_flush_done", {
+      successCount: successes.length,
+      failureCount: failures.length,
+    });
+
+    flushInProgressRef.current = false;
+    onBatchCompleted({ successes, failures });
+  }, [clearAutoRecordTimer, context, resolveFieldFromApi, onBatchCompleted]);
+
+  const captureCurrentSegment = useCallback(async (): Promise<
+    { ok: true; payload: SegmentPayload } | { ok: false; message: string }
+  > => {
+    if (!currentStep) {
+      return { ok: false, message: "Geçerli adım bulunamadı." };
+    }
+
+    const preStopDuration = voiceRecorder.getRecordingDurationMs();
+    const recording = await voiceRecorder.stopRecording();
+    const duration = segmentDurationMs(recording, preStopDuration);
 
     if (!recording?.base64) {
-      presentErrorReview("Lütfen cevabınızı söyleyin ve Tamam'a basın.");
-      return;
+      await ensureRecording();
+      return { ok: false, message: "Lütfen cevabınızı söyleyin ve Tamam'a basın." };
     }
 
-    setWizardState("processing");
-    setPendingReview(null);
-
-    const response = await extractVoiceRegistrationField(
-      currentStep.field,
-      recording.base64,
-      recording.mimeType,
-      context,
-    );
-
-    if (!response.ok || !response.data) {
-      presentErrorReview(response.error || NETWORK_ERROR_FALLBACK);
-      return;
-    }
-
-    if (currentStep.field === "phone") {
-      const resolved = resolveVoiceRegistrationPhoneValue(
-        response.data.value,
-        response.data.raw_text,
-        response.data.debug_normalized,
-      );
-      if (validateVoiceRegistrationPhone(resolved)) {
-        if (!response.data.is_valid || response.data.ok === false) {
-          await logVoiceRegistrationRecovery("phone", {
-            rawText: response.data.raw_text || "",
-            recoveredValue: resolved,
-          });
-        }
-        await processFieldResult("phone", {
-          value: resolved,
-          raw_text: response.data.raw_text,
-        });
-        return;
-      }
-
-      presentErrorReview(
-        response.data.message ||
-          response.data.error ||
-          "Telefon numarası doğru algılanamadı. Lütfen numaranızı tekrar söyleyin.",
-      );
-      await appendVoiceQueryDebugLog("field_invalid", "voice_registration", {
+    if (duration < MIN_SEGMENT_MS) {
+      await ensureRecording();
+      await appendVoiceQueryDebugLog("audio_too_short", "voice_registration", {
         field: currentStep.field,
-        error: response.data.error,
-        raw_text: response.data.raw_text,
-        message: response.data.message,
-        debug_normalized: response.data.debug_normalized,
+        segmentDurationMs: duration,
       });
+      return { ok: false, message: "Ses çok kısa algılandı. Lütfen cevabınızı tekrar söyleyin." };
+    }
+
+    const payload: SegmentPayload = {
+      field: currentStep.field,
+      base64: recording.base64,
+      mimeType: recording.mimeType,
+    };
+
+    await appendVoiceQueryDebugLog("segment_captured", "voice_registration", {
+      field: currentStep.field,
+      durationMs: duration,
+      stepIndex,
+      base64Length: recording.base64.length,
+    });
+
+    return { ok: true, payload };
+  }, [currentStep, voiceRecorder, ensureRecording, stepIndex]);
+
+  const handleConfirm = useCallback(async () => {
+    if (!currentStep || wizardState === "processing" || flushInProgressRef.current) return;
+    if (currentStep.inputType === "manual_password") return;
+
+    const sessionBlocked =
+      inlineError &&
+      (inlineError.includes("mikrofon") ||
+        inlineError.includes("Kayıt") ||
+        inlineError.includes("Ses kaydı"));
+    if (sessionBlocked) return;
+
+    clearAutoRecordTimer();
+    setInlineError(null);
+
+    const captured = await captureCurrentSegment();
+    if (!captured.ok) {
+      setInlineError(captured.message);
       return;
     }
 
-    if (currentStep.field === "email") {
-      const resolved = resolveVoiceRegistrationEmailValue(
-        response.data.value,
-        response.data.raw_text,
-        response.data.debug_normalized,
-      );
-      if (validateVoiceRegistrationEmail(resolved)) {
-        if (!response.data.is_valid || response.data.ok === false) {
-          await logVoiceRegistrationRecovery("email", {
-            rawText: response.data.raw_text || "",
-            recoveredValue: resolved,
-          });
-        }
-        await processFieldResult("email", {
-          value: resolved,
-          raw_text: response.data.raw_text,
-          debug_normalized: response.data.debug_normalized,
-        });
-        return;
-      }
+    segmentPayloadsRef.current.push(captured.payload);
 
-      presentErrorReview(
-        response.data.message ||
-          response.data.error ||
-          "E-posta adresi doğru algılanamadı. Lütfen tekrar söyleyin.",
-      );
-      await appendVoiceQueryDebugLog("field_invalid", "voice_registration", {
-        field: currentStep.field,
-        error: response.data.error,
-        raw_text: response.data.raw_text,
-        message: response.data.message,
-        debug_normalized: response.data.debug_normalized,
-      });
+    const isLastVoice = stepIndex >= lastVoiceIdx;
+
+    if (isLastVoice) {
+      await flushVoiceBatch();
       return;
     }
 
-    if (!response.data.is_valid || response.data.ok === false) {
-
-      presentErrorReview(
-        response.data.message ||
-          response.data.error ||
-          "Alan doğrulanamadı. Lütfen tekrar söyleyin.",
+    const restarted = await voiceRecorder.startRecording(true);
+    if (!restarted) {
+      segmentPayloadsRef.current.pop();
+      setInlineError(
+        voiceRecorder.permissionHint ||
+          "Sonraki soru için kayıt başlatılamadı. Lütfen tekrar deneyin.",
       );
-      await appendVoiceQueryDebugLog("field_invalid", "voice_registration", {
-        field: currentStep.field,
-        error: response.data.error,
-        raw_text: response.data.raw_text,
-        message: response.data.message,
-        debug_normalized: (response.data as { debug_normalized?: string }).debug_normalized,
-      });
       return;
     }
 
-    await processFieldResult(currentStep.field, response.data);
+    setWizardState("listening");
+    goToNextStep();
   }, [
     currentStep,
     wizardState,
-    pendingReview,
+    inlineError,
     clearAutoRecordTimer,
+    captureCurrentSegment,
+    stepIndex,
+    lastVoiceIdx,
+    flushVoiceBatch,
     voiceRecorder,
-    context,
-    processFieldResult,
-    handleAcceptReview,
-    presentErrorReview,
+    goToNextStep,
   ]);
 
   const handleSkip = useCallback(async () => {
     if (!currentStep?.optional) return;
     clearAutoRecordTimer();
-    if (voiceRecorder.isRecording) {
+    setInlineError(null);
+
+    if (voiceRecorder.isRecording || voiceRecorder.getRecordingDurationMs() != null) {
       await voiceRecorder.clearRecording();
     }
-    if (currentStep.field === "phone") {
-      onFieldResolved({}, "phone");
+
+    const isLastVoice = stepIndex >= lastVoiceIdx;
+    if (isLastVoice) {
+      await flushVoiceBatch();
+      return;
     }
-    if (currentStep.field === "company_name") {
-      onFieldResolved({ companyName: "" }, "company_name");
+
+    const restarted = await voiceRecorder.startRecording(true);
+    if (!restarted) {
+      setInlineError(
+        voiceRecorder.permissionHint ||
+          "Sonraki soru için kayıt başlatılamadı. Lütfen tekrar deneyin.",
+      );
+      return;
     }
-    setPendingReview(null);
+
     goToNextStep();
-  }, [currentStep, clearAutoRecordTimer, voiceRecorder, onFieldResolved, goToNextStep]);
+  }, [
+    currentStep,
+    clearAutoRecordTimer,
+    stepIndex,
+    lastVoiceIdx,
+    flushVoiceBatch,
+    goToNextStep,
+    voiceRecorder,
+  ]);
 
   const handleRetry = useCallback(async () => {
     clearAutoRecordTimer();
-    if (voiceRecorder.isRecording) {
-      await voiceRecorder.clearRecording();
-    }
-    pendingReviewRef.current = null;
-    setPendingReview(null);
+    setInlineError(null);
     setWizardState("idle");
-    scheduleAutoRecord(200, true);
+    segmentPayloadsRef.current = [];
+    await voiceRecorder.clearRecording();
+    scheduleAutoRecord(200);
   }, [voiceRecorder, scheduleAutoRecord, clearAutoRecordTimer]);
 
   const handleBack = useCallback(async () => {
+    if (stepIndex <= 0) return;
     clearAutoRecordTimer();
-    if (voiceRecorder.isRecording) {
+    setInlineError(null);
+
+    if (segmentPayloadsRef.current.length > 0) {
+      segmentPayloadsRef.current.pop();
+    }
+
+    if (voiceRecorder.isRecording || voiceRecorder.getRecordingDurationMs() != null) {
       await voiceRecorder.clearRecording();
     }
-    setPendingReview(null);
+
     setStepIndex((prev) => Math.max(0, prev - 1));
-    setWizardState("idle");
-  }, [clearAutoRecordTimer, voiceRecorder]);
+    setWizardState("listening");
+    await ensureRecording();
+  }, [stepIndex, clearAutoRecordTimer, ensureRecording, voiceRecorder]);
 
   const handleCancel = useCallback(async () => {
     clearAutoRecordTimer();
@@ -499,10 +580,9 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
     stepIndex,
     currentStep,
     wizardState,
-    pendingReview,
+    inlineError,
     voiceRecorder,
     handleConfirm,
-    handleAcceptReview,
     handleSkip,
     handleRetry,
     handleBack,
@@ -510,6 +590,3 @@ export function useVoiceRegistrationWizard(options: UseVoiceRegistrationWizardOp
     totalSteps: steps.length,
   };
 }
-
-const NETWORK_ERROR_FALLBACK =
-  "Sesli işlem sırasında bağlantı sorunu oluştu. Lütfen tekrar deneyin.";

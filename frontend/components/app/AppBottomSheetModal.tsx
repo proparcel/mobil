@@ -91,6 +91,8 @@ export default function AppBottomSheetModal({
   const sheetBottomInset = flushToScreenBottom ? 0 : sheetModalBottomInset(insets.bottom);
   const animationConfigs = useBottomSheetTimingConfigs({ duration: 160 });
   const dismissNotifiedRef = useRef(false);
+  /** visible=false ile başlatılan dismiss'te onClose tekrar tetiklenmesin (Android'de sheet yeniden açılabiliyor). */
+  const programmaticClosingRef = useRef(false);
 
   const finalSnapPoints = useMemo<(string | number)[]>(
     () => (snapPoints && snapPoints.length ? snapPoints : ["70%", "90%"]),
@@ -98,8 +100,9 @@ export default function AppBottomSheetModal({
   );
 
   // Default: open at the first snap point
-  const desiredIndex =
-    typeof index === "number" ? index : typeof initialIndex === "number" ? initialIndex : 0;
+  const openIndex =
+    typeof initialIndex === "number" ? initialIndex : 0;
+  const sheetIndex = typeof index === "number" ? index : openIndex;
 
   // prevVisibleRef'i false ile başlat ki ilk render'da visible true ise değişiklik algılansın
   const prevVisibleRef = useRef(false);
@@ -113,12 +116,13 @@ export default function AppBottomSheetModal({
     }
 
     if (visible) {
+      programmaticClosingRef.current = false;
       dismissNotifiedRef.current = false;
       const frame = requestAnimationFrame(() => {
         try {
           ref.current?.present();
-          if (desiredIndex >= 0) {
-            ref.current?.snapToIndex(desiredIndex);
+          if (sheetIndex >= 0 && typeof index === "number") {
+            ref.current?.snapToIndex(sheetIndex);
           }
         } catch {
           // ignore
@@ -127,12 +131,13 @@ export default function AppBottomSheetModal({
       return () => cancelAnimationFrame(frame);
     }
 
+    programmaticClosingRef.current = true;
     try {
       ref.current?.dismiss();
     } catch {
       // ignore
     }
-  }, [visible, desiredIndex]);
+  }, [visible, sheetIndex, index]);
 
   /** Kontrollü `index` prop'u değişince (modal açıkken) senkronize et. */
   const indexProp = index;
@@ -165,7 +170,11 @@ export default function AppBottomSheetModal({
   const notifyDismiss = useCallback(() => {
     if (dismissNotifiedRef.current) return;
     dismissNotifiedRef.current = true;
-    onClose();
+    const wasProgrammatic = programmaticClosingRef.current;
+    programmaticClosingRef.current = false;
+    if (!wasProgrammatic) {
+      onClose();
+    }
   }, [onClose]);
 
   const handleSheetChange = useCallback(
@@ -197,6 +206,7 @@ export default function AppBottomSheetModal({
   return (
     <BottomSheetModal
       ref={ref}
+      index={sheetIndex}
       snapPoints={finalSnapPoints}
       animationConfigs={animationConfigs}
       // IMPORTANT: Dynamic sizing can collapse to header-only when content is a ScrollView.

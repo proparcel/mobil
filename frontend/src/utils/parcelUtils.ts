@@ -26,11 +26,23 @@ export const SHARE_CAPTURE_MAX_ZOOM = 20;
 export const SHARE_CAPTURE_PADDING_PX = 56;
 export const SHARE_CAPTURE_BBOX_MARGIN = 1.18;
 
+/** Pro sorgu Son 30 gün thumbnail — liste kartında cover kırpımına karşı geniş güvenli alan */
+export const PRO_QUERY_THUMBNAIL_PADDING_PX = 88;
+export const PRO_QUERY_THUMBNAIL_BBOX_MARGIN = 1.35;
+
 /** Pratik drone harita kareleri — 60° pitch + dikey kadraj (720×1280) */
 export const DRONE_CAPTURE_MIN_ZOOM = 2;
 export const DRONE_CAPTURE_MAX_ZOOM = 18;
-export const DRONE_CAPTURE_PADDING_PX = 88;
-export const DRONE_CAPTURE_BBOX_MARGIN = 1.5;
+export const DRONE_CAPTURE_PADDING_PX = 128;
+export const DRONE_CAPTURE_BBOX_MARGIN = 1.72;
+/** 4 bearing (0/90/180/270) — ek fitBounds padding ölçeği */
+export const DRONE_CAPTURE_MULTI_BEARING_PADDING_SCALE = 1.55;
+/** fitBounds sonrası tek adımda geri çekilme (dönüş + pitch payı) */
+export const DRONE_CAPTURE_SAFETY_ZOOM_OUT = 0.65;
+export const DRONE_CAPTURE_SAFETY_ZOOM_OUT_SINGLE = 0.35;
+/** Coğrafi bbox genişletme — çokgen köşeleri axis-aligned kutudan taşmasın */
+export const DRONE_CAPTURE_BBOX_EXPAND = 1.14;
+export const DRONE_CAPTURE_MULTI_BEARING_BBOX_EXPAND = 1.22;
 
 export type CalculateBoundsOptions = {
   viewport?: MapOverlayViewport;
@@ -479,6 +491,87 @@ export async function fitParcelForShareCapture({
   return true;
 }
 
+/**
+ * Pro sorgu bitince Son 30 gün thumbnail için kamerayı sığdırır.
+ * Canlı MapView kadrajı ile aynı viewport kullanılır; pitch sıfırlanır.
+ */
+export async function fitParcelForProQueryThumbnailCapture({
+  mapRef,
+  cameraRef,
+  camRef,
+  geometry,
+  viewport,
+  animationDuration = 400,
+  isProgrammaticMoveRef,
+  programmaticTimerRef,
+}: {
+  mapRef: RefObject<any>;
+  cameraRef: RefObject<any>;
+  camRef?: RefObject<{ pitch?: number; zoom?: number; heading?: number }>;
+  geometry: any;
+  viewport: MapOverlayViewport;
+  animationDuration?: number;
+  isProgrammaticMoveRef?: RefObject<boolean>;
+  programmaticTimerRef?: RefObject<ReturnType<typeof setTimeout> | null>;
+}): Promise<boolean> {
+  if (!geometry || !cameraRef?.current) return false;
+
+  const normalizedGeometry = normalizeGeometryCoordinates(geometry);
+  const padding = PRO_QUERY_THUMBNAIL_PADDING_PX;
+  const resolvedViewport = resolveMapViewport(viewport);
+
+  if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = true;
+  if (programmaticTimerRef?.current) clearTimeout(programmaticTimerRef.current);
+
+  const settings = calculateBoundsAndCamera(normalizedGeometry, {
+    viewport: resolvedViewport,
+    paddingPx: padding,
+    minZoom: SHARE_CAPTURE_MIN_ZOOM,
+    maxZoom: SHARE_CAPTURE_MAX_ZOOM,
+    bboxMargin: PRO_QUERY_THUMBNAIL_BBOX_MARGIN,
+  });
+  if (!settings || !cameraRef.current?.setCamera) {
+    if (isProgrammaticMoveRef) isProgrammaticMoveRef.current = false;
+    return false;
+  }
+
+  let targetZoom = settings.zoom;
+  const center = settings.center;
+  const heading = camRef?.current?.heading ?? 0;
+
+  const applyThumbnailCamera = async (zoom: number, animMs: number) => {
+    cameraRef.current?.setCamera?.({
+      centerCoordinate: center,
+      zoomLevel: zoom,
+      pitch: 0,
+      heading,
+      animationDuration: animMs,
+    });
+    if (camRef?.current) {
+      camRef.current.zoom = zoom;
+      camRef.current.pitch = 0;
+    }
+    await delayMs(Math.max(animMs, 0) + 120);
+  };
+
+  await applyThumbnailCamera(targetZoom, animationDuration);
+
+  while (targetZoom > SHARE_CAPTURE_MIN_ZOOM) {
+    const fullyVisible = await isParcelGeometryFullyVisible(
+      mapRef,
+      normalizedGeometry,
+      resolvedViewport,
+      padding,
+    );
+    if (fullyVisible !== false) break;
+    targetZoom -= 1;
+    await applyThumbnailCamera(targetZoom, 220);
+  }
+
+  finishProgrammaticMove(isProgrammaticMoveRef, programmaticTimerRef);
+  return true;
+}
+
 export type ApplyDroneCaptureCameraFitArgs = {
   cameraRef: RefObject<any>;
   mapRef: RefObject<any>;
@@ -491,10 +584,109 @@ export type ApplyDroneCaptureCameraFitArgs = {
   heading?: number;
   paddingPx?: number;
   animationDuration?: number;
+  /** Verilirse tüm heading'lerde parsel kadrajda kalana kadar hafif sığdırma yapılır. */
+  verifyHeadings?: number[];
 };
+
+function expandGeometryBoundingBox(
+  bbox: { minLon: number; minLat: number; maxLon: number; maxLat: number },
+  scale: number,
+): { minLon: number; minLat: number; maxLon: number; maxLat: number } {
+  if (scale <= 1) return bbox;
+  const centerLon = (bbox.minLon + bbox.maxLon) / 2;
+  const centerLat = (bbox.minLat + bbox.maxLat) / 2;
+  const halfLon = ((bbox.maxLon - bbox.minLon) / 2) * scale;
+  const halfLat = ((bbox.maxLat - bbox.minLat) / 2) * scale;
+  return {
+    minLon: centerLon - halfLon,
+    maxLon: centerLon + halfLon,
+    minLat: centerLat - halfLat,
+    maxLat: centerLat + halfLat,
+  };
+}
+
+function buildDroneCapturePadding(base: number, pitch: number) {
+  const topScale = pitch >= 45 ? 1.52 : 1.34;
+  return {
+    paddingTop: Math.round(base * topScale),
+    paddingBottom: Math.round(base * 0.94),
+    paddingLeft: Math.round(base * 1.16),
+    paddingRight: Math.round(base * 1.16),
+  };
+}
+
+function scaleCapturePaddingToMapLayout(
+  capturePadding: number,
+  captureViewport: MapOverlayViewport,
+  mapViewport: MapOverlayViewport,
+): number {
+  const resolvedMap = resolveMapViewport(mapViewport);
+  const resolvedCapture = resolveMapViewport(captureViewport);
+  const scale =
+    resolvedCapture.width > 0 ? resolvedMap.width / resolvedCapture.width : 1;
+  return Math.max(8, Math.round(capturePadding * scale));
+}
+
+/**
+ * MapView piksel projeksiyonunu snapshot hedef boyutuna ölçekleyerek doğrular.
+ */
+async function isParcelGeometryFullyVisibleAtCaptureViewport(
+  mapRef: RefObject<any>,
+  geometry: any,
+  captureViewport: MapOverlayViewport,
+  mapViewport: MapOverlayViewport,
+  edgeMarginPx = 32,
+): Promise<boolean | null> {
+  if (!geometry) return null;
+  const coords = collectParcelRingCoords(geometry);
+  if (!coords.length) return null;
+
+  const resolvedCapture = resolveMapViewport(captureViewport);
+  const resolvedMap = resolveMapViewport(mapViewport);
+  const scaleX = resolvedMap.width > 0 ? resolvedCapture.width / resolvedMap.width : 1;
+  const scaleY = resolvedMap.height > 0 ? resolvedCapture.height / resolvedMap.height : 1;
+
+  const projected = await projectLngLatsBatch(mapRef, coords);
+  const insetViewport: MapOverlayViewport = {
+    width: Math.max(0, resolvedCapture.width - edgeMarginPx * 2),
+    height: Math.max(0, resolvedCapture.height - edgeMarginPx * 2),
+  };
+  if (insetViewport.width <= 0 || insetViewport.height <= 0) return null;
+
+  let validCount = 0;
+  for (const p of projected) {
+    if (!isFiniteScreenPoint(p)) continue;
+    validCount += 1;
+    const adjusted: [number, number] = [
+      p[0] * scaleX - edgeMarginPx,
+      p[1] * scaleY - edgeMarginPx,
+    ];
+    if (!isScreenPointInsideViewport(adjusted, insetViewport)) return false;
+  }
+  if (validCount === 0) return null;
+  return true;
+}
+
+function readDroneCaptureCameraState(
+  cameraRef: RefObject<any>,
+  fallback: { center: [number, number]; zoom: number },
+): { center: [number, number]; zoom: number } {
+  const camState = cameraRef.current?.getCamera?.() ?? cameraRef.current;
+  const zoom = Number(camState?.zoomLevel ?? camState?.zoom ?? fallback.zoom);
+  const centerCoord = camState?.centerCoordinate;
+  const center: [number, number] =
+    Array.isArray(centerCoord) && centerCoord.length >= 2
+      ? [Number(centerCoord[0]), Number(centerCoord[1])]
+      : fallback.center;
+  return {
+    center,
+    zoom: Number.isFinite(zoom) ? zoom : fallback.zoom,
+  };
+}
 
 /**
  * Pratik drone referans kareleri: parsel sınırları kadraj içinde (60° pitch, dikey oran).
+ * Tek fitBounds + güvenlik zoom — iterasyon yok (ileri-geri zoom atlamasını önler).
  */
 export async function applyDroneCaptureCameraFit({
   cameraRef,
@@ -506,20 +698,34 @@ export async function applyDroneCaptureCameraFit({
   heading = 0,
   paddingPx = DRONE_CAPTURE_PADDING_PX,
   animationDuration = 0,
+  verifyHeadings,
 }: ApplyDroneCaptureCameraFitArgs): Promise<{ center: [number, number]; zoom: number } | null> {
+  void animationDuration;
   if (!geometry || !cameraRef?.current) return null;
 
   const normalizedGeometry = normalizeGeometryCoordinates(geometry);
-  const bbox = getGeometryBoundingBox(normalizedGeometry);
-  if (!bbox) return null;
+  const rawBbox = getGeometryBoundingBox(normalizedGeometry);
+  if (!rawBbox) return null;
+
+  const headingsToVerify =
+    verifyHeadings && verifyHeadings.length > 0 ? verifyHeadings : [heading];
+  const multiBearing = headingsToVerify.length > 1;
+  const fitPadding = multiBearing
+    ? Math.round(paddingPx * DRONE_CAPTURE_MULTI_BEARING_PADDING_SCALE)
+    : paddingPx;
+  const bboxExpand = multiBearing
+    ? DRONE_CAPTURE_MULTI_BEARING_BBOX_EXPAND
+    : DRONE_CAPTURE_BBOX_EXPAND;
+  const bbox = expandGeometryBoundingBox(rawBbox, bboxExpand);
 
   const fallbackSettings = calculateBoundsAndCamera(normalizedGeometry, {
     viewport: captureViewport,
-    paddingPx,
+    paddingPx: fitPadding,
     minZoom: DRONE_CAPTURE_MIN_ZOOM,
     maxZoom: DRONE_CAPTURE_MAX_ZOOM,
     bboxMargin: DRONE_CAPTURE_BBOX_MARGIN,
   });
+  if (!fallbackSettings) return null;
 
   const sw: [number, number] = [bbox.minLon, bbox.minLat];
   const ne: [number, number] = [bbox.maxLon, bbox.maxLat];
@@ -527,59 +733,47 @@ export async function applyDroneCaptureCameraFit({
     typeof cameraRef.current?.setCamera === 'function'
       ? cameraRef.current.setCamera.bind(cameraRef.current)
       : null;
+  if (!setCamera) return fallbackSettings;
 
-  const buildPadding = (base: number) => ({
-    paddingTop: Math.round(base * 1.3),
-    paddingBottom: Math.round(base * 0.9),
-    paddingLeft: base,
-    paddingRight: base,
+  const layoutBase = scaleCapturePaddingToMapLayout(
+    fitPadding,
+    captureViewport,
+    mapViewport,
+  );
+  const pad = buildDroneCapturePadding(layoutBase, pitch);
+  const targetHeading = headingsToVerify[0];
+
+  setCamera({
+    bounds: { ne, sw },
+    padding: pad,
+    pitch,
+    heading: targetHeading,
+    animationDuration: 0,
   });
+  await delayMs(480);
 
-  const fitWithPadding = (base: number, animMs: number) => {
-    const pad = buildPadding(base);
-    if (setCamera) {
-      setCamera({
-        bounds: { ne, sw },
-        padding: pad,
-        pitch,
-        heading,
-        animationDuration: animMs,
-        animationMode: 'easeTo',
-      });
-      return;
-    }
-    if (typeof cameraRef.current?.fitBounds === 'function') {
-      cameraRef.current.fitBounds(sw, ne, base, animMs);
-      cameraRef.current.setCamera?.({ pitch, heading, animationDuration: 0 });
-    }
+  const fittedState = readDroneCaptureCameraState(cameraRef, fallbackSettings);
+  const zoomOut = multiBearing
+    ? DRONE_CAPTURE_SAFETY_ZOOM_OUT
+    : DRONE_CAPTURE_SAFETY_ZOOM_OUT_SINGLE;
+  const safeZoom = Math.max(
+    DRONE_CAPTURE_MIN_ZOOM,
+    fittedState.zoom - zoomOut,
+  );
+
+  setCamera({
+    centerCoordinate: fittedState.center,
+    zoomLevel: safeZoom,
+    pitch,
+    heading: targetHeading,
+    animationDuration: 0,
+  });
+  await delayMs(120);
+
+  return {
+    center: fittedState.center,
+    zoom: safeZoom,
   };
-
-  let activePadding = paddingPx;
-  fitWithPadding(activePadding, animationDuration);
-
-  await delayMs(animationDuration + 120);
-
-  const resolvedMapViewport = resolveMapViewport(mapViewport);
-  const layoutScale =
-    captureViewport.width > 0 ? resolvedMapViewport.width / captureViewport.width : 1;
-
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const layoutPadding = Math.max(12, Math.round(activePadding * layoutScale));
-    const fullyVisible = await isParcelGeometryFullyVisible(
-      mapRef,
-      normalizedGeometry,
-      resolvedMapViewport,
-      layoutPadding,
-    );
-    if (fullyVisible !== false) break;
-    activePadding = Math.round(activePadding * 1.12);
-    fitWithPadding(activePadding, 220);
-    await delayMs(260);
-  }
-
-  return fallbackSettings
-    ? { center: fallbackSettings.center, zoom: fallbackSettings.zoom }
-    : null;
 }
 
 /**

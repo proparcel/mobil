@@ -12,9 +12,8 @@ import VoiceSearchListeningAnimation from "../app/VoiceSearchListeningAnimation"
 import { useVoiceRegistrationWizard } from "../../src/hooks/useVoiceRegistrationWizard";
 import type { RegistrationCompanyItem } from "../../src/types/auth";
 import type {
+  VoiceRegistrationBatchResult,
   VoiceRegistrationCorporateType,
-  VoiceRegistrationField,
-  VoiceRegistrationFormPatch,
   VoiceRegistrationMemberType,
 } from "../../src/types/voiceRegistration";
 
@@ -25,8 +24,7 @@ export type VoiceRegistrationWizardProps = {
   memberType: VoiceRegistrationMemberType;
   corporateType: VoiceRegistrationCorporateType | null;
   selectedCompany: RegistrationCompanyItem | null;
-  onFieldResolved: (patch: VoiceRegistrationFormPatch, field: VoiceRegistrationField) => void;
-  onCompleted: () => void;
+  onBatchCompleted: (result: VoiceRegistrationBatchResult) => void;
   onClose: () => void;
 };
 
@@ -36,8 +34,7 @@ export default function VoiceRegistrationWizard(props: VoiceRegistrationWizardPr
     memberType,
     corporateType,
     selectedCompany,
-    onFieldResolved,
-    onCompleted,
+    onBatchCompleted,
     onClose,
   } = props;
   const insets = useSafeAreaInsets();
@@ -59,35 +56,38 @@ export default function VoiceRegistrationWizard(props: VoiceRegistrationWizardPr
   const wizard = useVoiceRegistrationWizard({
     visible,
     context,
-    onFieldResolved,
-    onCompleted,
+    onBatchCompleted,
     onClose,
   });
 
   const {
     currentStep,
     wizardState,
-    pendingReview,
+    inlineError,
     voiceRecorder,
     handleConfirm,
     handleRetry,
     handleBack,
     handleCancel,
+    handleSkip,
     stepIndex,
   } = wizard;
 
-  const isManualPassword = currentStep?.inputType === "manual_password";
   const isProcessing = wizardState === "processing";
   const isListening = wizardState === "listening" || voiceRecorder.isRecording;
-  const isSuccessReview = pendingReview?.status === "success";
-  const isErrorReview = pendingReview?.status === "error";
-  const isReviewing = isSuccessReview || isErrorReview;
+  const hasInlineError = Boolean(inlineError);
+  const isSessionFailure = Boolean(
+    inlineError &&
+      (inlineError.includes("mikrofon") ||
+        inlineError.includes("Kayıt") ||
+        inlineError.includes("Ses kaydı") ||
+        voiceRecorder.permissionHint),
+  );
   const animMode = isProcessing ? "processing" : isListening ? "listening" : "idle";
 
   const hintText = (() => {
-    if (isManualPassword) return null;
-    if (isProcessing) return "İşleniyor…";
-    if (isReviewing) return null;
+    if (isProcessing) return "Sesler işleniyor…";
+    if (hasInlineError) return null;
     if (isListening) return "Dinliyorum…";
     return "Cevabınızı söyleyin ve Tamam'a basın.";
   })();
@@ -98,99 +98,88 @@ export default function VoiceRegistrationWizard(props: VoiceRegistrationWizardPr
     <Modal visible={visible} animationType="slide" transparent onRequestClose={handleCancel}>
       <View style={[styles.overlay, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12 }]}>
         <View style={styles.sheet}>
-          {currentStep ? (
+          {currentStep && currentStep.inputType === "voice" ? (
             <>
               <Text style={styles.prompt}>{currentStep.prompt}</Text>
-              {currentStep.helper && !isReviewing ? (
+              {currentStep.helper ? (
                 <Text style={styles.helper}>{currentStep.helper}</Text>
               ) : null}
 
-              {!isManualPassword && !isReviewing ? (
-                <View style={styles.animWrap}>
-                  <VoiceSearchListeningAnimation
-                    mode={animMode}
-                    audioLevel={voiceRecorder.isRecording ? voiceRecorder.audioLevel : 0}
-                    size={WIZARD_ANIM_SIZE}
-                    mapOrbBackground
-                    compactLabel
-                  />
-                </View>
-              ) : null}
+              <View style={styles.animWrap}>
+                <VoiceSearchListeningAnimation
+                  mode={animMode}
+                  audioLevel={voiceRecorder.isRecording ? voiceRecorder.audioLevel : 0}
+                  size={WIZARD_ANIM_SIZE}
+                  mapOrbBackground
+                  compactLabel
+                />
+              </View>
 
               {hintText ? <Text style={styles.hint}>{hintText}</Text> : null}
 
-              {isSuccessReview ? (
-                <View style={styles.resultCard}>
-                  <Text style={styles.resultLabel}>Algılanan sonuç</Text>
-                  <Text style={styles.resultText}>{pendingReview.summary}</Text>
-                </View>
-              ) : null}
-
-              {isErrorReview ? (
+              {hasInlineError ? (
                 <View style={styles.errorCard}>
-                  <Text style={styles.errorText}>{pendingReview.message}</Text>
+                  <Text style={styles.errorText}>{inlineError}</Text>
                 </View>
               ) : null}
 
-              {voiceRecorder.permissionHint && !isReviewing ? (
+              {voiceRecorder.permissionHint && !hasInlineError ? (
                 <Text style={styles.permissionHint}>{voiceRecorder.permissionHint}</Text>
               ) : null}
 
-              {isManualPassword ? (
-                <View style={styles.manualBlock}>
-                  <Text style={styles.manualText}>
-                    Şifrenizi ve onay kutularını kayıt formundan elle tamamlayın.
-                  </Text>
-                  <TouchableOpacity style={styles.primaryBtn} onPress={onCompleted}>
-                    <Text style={styles.primaryBtnText}>Forma dön</Text>
+              <View style={styles.actions}>
+                {isSessionFailure ? (
+                  <TouchableOpacity style={styles.primaryBtn} onPress={handleRetry}>
+                    <Text style={styles.primaryBtnText}>Tekrar Dene</Text>
                   </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.actions}>
-                  {isSuccessReview ? (
-                    <>
-                      <TouchableOpacity style={styles.primaryBtn} onPress={handleConfirm}>
-                        <Text style={styles.primaryBtnText}>Tamam</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.secondaryBtn} onPress={handleRetry}>
-                        <Text style={styles.secondaryBtnText}>Tekrar Dene</Text>
-                      </TouchableOpacity>
-                    </>
-                  ) : isErrorReview ? (
-                    <TouchableOpacity style={styles.primaryBtn} onPress={handleRetry}>
-                      <Text style={styles.primaryBtnText}>Tekrar Dene</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={[styles.primaryBtn, isProcessing && styles.btnDisabled]}
-                      onPress={handleConfirm}
-                      disabled={isProcessing}
-                    >
-                      {isProcessing ? (
-                        <ActivityIndicator color="#fff" />
-                      ) : (
-                        <Text style={styles.primaryBtnText}>Tamam</Text>
-                      )}
-                    </TouchableOpacity>
-                  )}
-
-                  {!isReviewing && currentStep.optional ? (
-                    <TouchableOpacity style={styles.secondaryBtn} onPress={wizard.handleSkip}>
-                      <Text style={styles.secondaryBtnText}>Geç</Text>
-                    </TouchableOpacity>
-                  ) : null}
-
-                  {!isReviewing && stepIndex > 0 ? (
-                    <TouchableOpacity style={styles.linkBtn} onPress={handleBack}>
-                      <Text style={styles.linkBtnText}>Geri</Text>
-                    </TouchableOpacity>
-                  ) : null}
-
-                  <TouchableOpacity style={styles.linkBtn} onPress={handleCancel}>
-                    <Text style={styles.linkBtnText}>İptal</Text>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.primaryBtn, isProcessing && styles.btnDisabled]}
+                    onPress={handleConfirm}
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.primaryBtnText}>Tamam</Text>
+                    )}
                   </TouchableOpacity>
-                </View>
-              )}
+                )}
+
+                {!hasInlineError && currentStep.optional ? (
+                  <TouchableOpacity
+                    style={[styles.secondaryBtn, isProcessing && styles.btnDisabled]}
+                    onPress={handleSkip}
+                    disabled={isProcessing}
+                  >
+                    <Text style={styles.secondaryBtnText}>Geç</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                {!isProcessing && stepIndex > 0 ? (
+                  <TouchableOpacity style={styles.linkBtn} onPress={handleBack}>
+                    <Text style={styles.linkBtnText}>Geri</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity style={styles.linkBtn} onPress={handleCancel} disabled={isProcessing}>
+                  <Text style={styles.linkBtnText}>İptal</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : isProcessing ? (
+            <>
+              <Text style={styles.prompt}>Sesler işleniyor…</Text>
+              <View style={styles.animWrap}>
+                <VoiceSearchListeningAnimation
+                  mode="processing"
+                  audioLevel={0}
+                  size={WIZARD_ANIM_SIZE}
+                  mapOrbBackground
+                  compactLabel
+                />
+              </View>
+              <ActivityIndicator color="#2563eb" style={{ marginTop: 12 }} />
             </>
           ) : null}
         </View>
@@ -238,30 +227,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 4,
     marginBottom: 4,
-  },
-  resultCard: {
-    marginTop: 16,
-    marginBottom: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: "rgba(37, 99, 235, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.45)",
-  },
-  resultLabel: {
-    color: "#93c5fd",
-    fontSize: 12,
-    fontWeight: "600",
-    marginBottom: 6,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  resultText: {
-    color: "#f8fafc",
-    fontSize: 16,
-    fontWeight: "600",
-    lineHeight: 22,
   },
   errorCard: {
     marginTop: 16,
@@ -324,15 +289,5 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.7,
-  },
-  manualBlock: {
-    marginTop: 16,
-    gap: 12,
-  },
-  manualText: {
-    color: "#cbd5e1",
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
   },
 });

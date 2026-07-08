@@ -48,7 +48,19 @@ const COMPONENT_LABELS: Record<string, string> = {
   split_divisibility: "Bölünebilirlik (imarlı arsa)",
   wetland_risk: "Sulak alan cezası (RAMSAR)",
   high_voltage_risk: "Yüksek gerilim hattı cezası",
+  development: "Gelişim Alanı",
+  development_area: "Gelişim Alanı",
+  morphology_context: "Morfolojik Tip",
 };
+
+function resolveLandScoreComponentLabel(key: string): string {
+  const direct = COMPONENT_LABELS[key];
+  if (direct) return direct;
+  const normalized = key.trim().toLowerCase().replace(/\s+/g, "_");
+  if (COMPONENT_LABELS[normalized]) return COMPONENT_LABELS[normalized];
+  const underscored = normalized.replace(/-/g, "_");
+  return COMPONENT_LABELS[underscored] || key;
+}
 
 const STRUCTURE_EMPTY_MESSAGES: Record<string, string> = {
   not_structure_leaf: "Bu sorgu / kategori için yapı skoru uygulanmıyor.",
@@ -332,7 +344,7 @@ export function PortalAraziScoreDetailCard({ detail, loading, fetchError, invPay
               return (
                 <ScoreBar
                   key={key}
-                  label={COMPONENT_LABELS[key] || key}
+                  label={resolveLandScoreComponentLabel(key)}
                   pct={pct}
                   valueText={formatScore(val)}
                 />

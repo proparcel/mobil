@@ -92,10 +92,6 @@ export function AiCreditPurchaseModalLayout({
                       {priceTry != null ? `${Math.round(priceTry)} ₺` : "—"}
                     </Text>
                   </View>
-                  <View style={styles.creditsRow}>
-                    <Text style={styles.creditsLabel}>Ödeme:</Text>
-                    <Text style={styles.creditsValue}>App Store / Google Play</Text>
-                  </View>
                   {requiredCredits != null && requiredCredits > 0 ? (
                     <View style={styles.creditsRow}>
                       <Text style={styles.creditsLabel}>Ek kare (Tepe Kredi):</Text>

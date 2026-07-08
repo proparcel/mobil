@@ -2,9 +2,14 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const STORAGE_KEY = "proparcel_active_portrait_export_job";
 
+export type PortraitExportJobPhase = "polling" | "downloading" | "done";
+
 export type ActivePortraitExportJobRecord = {
   jobId: string;
   startedAt: number;
+  exportId?: string;
+  phase?: PortraitExportJobPhase;
+  completedExportId?: string;
   lastStatus?: string;
 };
 
@@ -42,5 +47,16 @@ export async function updateActivePortraitExportJobStatus(status: string): Promi
   await setActivePortraitExportJob({
     ...current,
     lastStatus: status,
+  });
+}
+
+export async function patchActivePortraitExportJob(
+  patch: Partial<ActivePortraitExportJobRecord>,
+): Promise<void> {
+  const current = await getActivePortraitExportJob();
+  if (!current) return;
+  await setActivePortraitExportJob({
+    ...current,
+    ...patch,
   });
 }

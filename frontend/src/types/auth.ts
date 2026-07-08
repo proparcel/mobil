@@ -24,6 +24,8 @@ export type CorporateType = 'emlak' | 'lihkab' | 'spk' | 'editor' | 'none';
 /** Özellik kapıları — GET /api/profile/read/ → data.features */
 export interface CustomerFeatureFlags {
   smart_query?: boolean;
+  /** VIP Doğrulama — mahalle birim fiyat durumu modalı */
+  quarter_verification?: boolean;
 }
 
 // Kullanıcı temel bilgileri
@@ -42,10 +44,6 @@ export interface User {
   created_at: string;
   // VIP üyelik
   vip_started_at?: string | null;
-  // İlk üyelik hoşgeldin modalı
-  has_seen_welcome?: boolean;
-  // İlk giriş tour overlay (ekran görüntüsü + Pro Sorgu)
-  has_seen_app_tour?: boolean;
   /** Admin — is_admin || is_staff || is_superuser || member_type=admin */
   is_admin?: boolean;
   is_staff?: boolean;
@@ -172,6 +170,8 @@ export interface UserProfile {
 /** Kurumsal firma alt kullanıcısı — GET /api/profile/ */
 export interface ProfileSubUser {
   id?: number;
+  /** Kanonik Mongo users.id — API çağrılarında tercih edin */
+  user_id?: number;
   email?: string;
   first_name?: string;
   last_name?: string;
@@ -197,6 +197,10 @@ export interface CompanyCreditAllocationItem {
 export interface CompanyCreditAllocationsData {
   items: CompanyCreditAllocationItem[];
   company_balance: number;
+  seat_limit?: number | null;
+  seats_used?: number;
+  over_limit?: boolean;
+  credit_distribution_mode?: 'monthly_allocation' | 'shared_pool' | string;
 }
 
 export interface ProviderCoverageDistrict {

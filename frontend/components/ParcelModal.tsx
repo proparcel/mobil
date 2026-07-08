@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -18,10 +18,15 @@ import {
   LOCATION_ILCE_KEYS,
   LOCATION_MAHALLE_KEYS,
 } from '../src/utils/mergeParcelDisplayProperties';
+import { formatParcelAreaDisplay, pickParcelAreaRaw, resolveParcelAreaM2 } from '../src/utils/dfaRows';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
 import { sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import { fetchAdaparselParcelDetail } from '../services/adaparselAlertService';
+import { getOrFetchAdaparselParcelDetail } from '../src/utils/adaparselDetailCache';
+import { resolveTkgmParcelLookupParams } from '../src/utils/tkgmParcelIdentifiers';
+import { logSimpleQuery } from '../src/utils/simpleQueryLogger';
 
 interface ParcelModalProps {
   visible: boolean;
@@ -34,6 +39,7 @@ interface ParcelModalProps {
   onToggle3D?: () => void;
   is3DMode?: boolean;
   onSwitchToProMode?: () => void;
+  showAdaparselDetail?: boolean;
 }
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -87,21 +93,6 @@ const pickRaw = (source: Record<string, any>, keys: string[]): any => {
   return null;
 };
 
-const parseAreaToNumber = (value: any): number => {
-  if (value === null || value === undefined || value === '') return 0;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const s = String(value).replace(/\s/g, '').replace(/m²|m2/gi, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, '');
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const formatArea = (value: any): string => {
-  if (value === null || value === undefined || value === '') return '-';
-  const n = typeof value === 'string' ? Number(value.replace(',', '.')) : Number(value);
-  if (!Number.isFinite(n)) return `${String(value)} m²`;
-  return `${n.toLocaleString('tr-TR')} m²`;
-};
-
 const formatPriceMaybe = (raw: any, showDecimals: boolean = false): string => {
   if (raw === null || raw === undefined) return '-';
   if (typeof raw === 'string') {
@@ -138,8 +129,17 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
   onToggle3D,
   is3DMode = false,
   onSwitchToProMode,
+  showAdaparselDetail = false,
 }) => {
   const insets = useSafeAreaInsets();
+  const [adaparselLoading, setAdaparselLoading] = useState(false);
+  const [adaparselDetail, setAdaparselDetail] = useState<{
+    Adi?: string | null;
+    HissePay?: string | null;
+    HissePayda?: string | null;
+    EdinmeSebebi?: string | null;
+  } | null>(null);
+  const [adaparselFound, setAdaparselFound] = useState<boolean | null>(null);
 
   const mergedProperties = useMemo(
     () => mergeParcelDisplayProperties({ properties, analysisData }),
@@ -152,8 +152,8 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
     const mahalle = pickParcelDisplayValue(mergedProperties, LOCATION_MAHALLE_KEYS);
     const ada = pickValue(mergedProperties, ['adaNo', 'ada', 'Ada']);
     const parsel = pickValue(mergedProperties, ['parselNo', 'parsel', 'Parsel']);
-    const alanRaw = mergedProperties.alan ?? mergedProperties.area ?? mergedProperties.Area ?? mergedProperties.area_m2;
-    const alan = formatArea(alanRaw);
+    const alanRaw = pickParcelAreaRaw(mergedProperties);
+    const alan = formatParcelAreaDisplay(alanRaw, '-');
     const nitelik = pickValue(mergedProperties, ['nitelik', 'Nitelik']);
     const mevkii = pickValue(mergedProperties, ['mevkii']);
     const parcelShapeRaw = pickValue(mergedProperties, ['parcel_shape_type_label', 'parcel_shape_type']);
@@ -165,7 +165,7 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
     let totalRaw = pickRaw(mergedProperties, PRICE_KEYS_TOTAL);
     if (totalRaw === null) {
       const unitNum = parseTurkishPrice(unitRaw as any);
-      const areaNum = parseAreaToNumber(alanRaw);
+      const areaNum = resolveParcelAreaM2(alanRaw);
       if (unitNum > 0 && areaNum > 0) totalRaw = unitNum * areaNum;
     }
     return {
@@ -183,7 +183,81 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
     };
   }, [mergedProperties]);
 
+  const lookupParams = useMemo(
+    () => resolveTkgmParcelLookupParams(mergedProperties),
+    [
+      mergedProperties?.adaNo,
+      mergedProperties?.ada,
+      mergedProperties?.parselNo,
+      mergedProperties?.parsel,
+      mergedProperties?.mahalleId,
+      mergedProperties?.mahalleAd,
+      mergedProperties?.proparcel_value,
+      mergedProperties?.Proparcel_value,
+      mergedProperties?.ilAd,
+      mergedProperties?.il,
+    ],
+  );
+
+  useEffect(() => {
+    if (!visible || !showAdaparselDetail) {
+      setAdaparselLoading(false);
+      setAdaparselDetail(null);
+      setAdaparselFound(null);
+      return;
+    }
+
+    if (!lookupParams) {
+      setAdaparselLoading(false);
+      setAdaparselDetail(null);
+      setAdaparselFound(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAdaparselLoading(true);
+    setAdaparselDetail(null);
+    setAdaparselFound(null);
+
+    const fetchStart = performance.now();
+    void getOrFetchAdaparselParcelDetail(lookupParams)
+      .then((result) => {
+        if (cancelled) return;
+        const detailFetchMs = Math.round(performance.now() - fetchStart);
+        logSimpleQuery('adaparsel_detail_modal_result', {
+          found: result.found,
+          detailFetchMs,
+          lookupParams,
+          error: result.error,
+          httpStatus: result.httpStatus,
+        });
+        setAdaparselFound(result.found);
+        setAdaparselDetail(result.detail ?? null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        logSimpleQuery('adaparsel_detail_modal_error', {
+          errorMessage: error instanceof Error ? error.message : String(error),
+          lookupParams,
+        });
+        setAdaparselFound(false);
+        setAdaparselDetail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAdaparselLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, showAdaparselDetail, lookupParams]);
+
   const locationLine = [summary.il, summary.ilce].filter(v => v !== '-').join(' / ');
+
+  const formatDetailValue = (value?: string | null) => {
+    if (value === null || value === undefined || String(value).trim() === '') return '-';
+    return String(value).trim();
+  };
 
   if (!visible) return null;
 
@@ -302,6 +376,40 @@ const ParcelModal: React.FC<ParcelModalProps> = ({
                     <Text style={styles.footerText}>{new Date().toLocaleDateString('tr-TR')}</Text>
                   </View>
                 </View>
+
+                {showAdaparselDetail ? (
+                  <View style={styles.adaparselSection}>
+                    <Text style={styles.adaparselSectionTitle}>Tapu Kayıt Bilgisi</Text>
+                    {adaparselLoading ? (
+                      <View style={styles.adaparselSkeleton}>
+                        <View style={styles.adaparselSkeletonLine} />
+                        <View style={styles.adaparselSkeletonLine} />
+                        <View style={[styles.adaparselSkeletonLine, { width: '60%' }]} />
+                      </View>
+                    ) : adaparselFound && adaparselDetail ? (
+                      <View style={styles.adaparselRows}>
+                        <View style={styles.adaparselRow}>
+                          <Text style={styles.adaparselLabel}>Malik Adı</Text>
+                          <Text style={styles.adaparselValue}>{formatDetailValue(adaparselDetail.Adi)}</Text>
+                        </View>
+                        <View style={styles.adaparselRow}>
+                          <Text style={styles.adaparselLabel}>Hisse Pay</Text>
+                          <Text style={styles.adaparselValue}>{formatDetailValue(adaparselDetail.HissePay)}</Text>
+                        </View>
+                        <View style={styles.adaparselRow}>
+                          <Text style={styles.adaparselLabel}>Hisse Payda</Text>
+                          <Text style={styles.adaparselValue}>{formatDetailValue(adaparselDetail.HissePayda)}</Text>
+                        </View>
+                        <View style={styles.adaparselRow}>
+                          <Text style={styles.adaparselLabel}>Edinme Sebebi</Text>
+                          <Text style={styles.adaparselValue}>{formatDetailValue(adaparselDetail.EdinmeSebebi)}</Text>
+                        </View>
+                      </View>
+                    ) : (
+                      <Text style={styles.adaparselEmpty}>Tapu kayıt bilgisi bulunamadı.</Text>
+                    )}
+                  </View>
+                ) : null}
 
                 {onShare ? (
                   <TouchableOpacity
@@ -538,6 +646,57 @@ const styles = StyleSheet.create({
     borderRadius: 1.5,
     backgroundColor: '#94a3b8',
     marginHorizontal: 8,
+  },
+  adaparselSection: {
+    marginTop: 16,
+    paddingHorizontal: 4,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.2)',
+  },
+  adaparselSectionTitle: {
+    color: '#3b82f6',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 12,
+    textTransform: 'uppercase',
+  },
+  adaparselRows: {
+    gap: 10,
+  },
+  adaparselRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  adaparselLabel: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+  adaparselValue: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    flex: 1.2,
+    textAlign: 'right',
+  },
+  adaparselEmpty: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  adaparselSkeleton: {
+    gap: 8,
+  },
+  adaparselSkeletonLine: {
+    height: 14,
+    borderRadius: 6,
+    backgroundColor: 'rgba(148, 163, 184, 0.15)',
+    width: '100%',
   },
   shareButton: {
     flexDirection: 'row',

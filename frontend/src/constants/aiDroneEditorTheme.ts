@@ -1,7 +1,8 @@
 /** Web `ai-drone-video-editor.css` + `drone-editor.css` renkleri (mobil basit editör). */
 import {
+  DEFAULT_PORTRAIT_SUBTITLE_EXPORT_FONT_SIZE,
   defaultPortraitSubtitleExportFontSize,
-  normalizePortraitSubtitleExportFontSize,
+  portraitSubtitlePreviewFontSize,
   PORTRAIT_PREVIEW_REF_WIDTH,
 } from "../utils/portraitOverlayContract";
 
@@ -43,9 +44,15 @@ function portraitProParcelBadgeBottomPx(): number {
 /** ProParcel etiketi altı + küçük boşluk, alt yazı kutusu merkezi. */
 export function defaultPortraitSubtitleY(): number {
   const badgeBottom = portraitProParcelBadgeBottomPx();
-  const subtitleGapPx = 6;
-  const subtitleHalfPx = 28;
-  return (badgeBottom + subtitleGapPx + subtitleHalfPx) / PORTRAIT_PREVIEW_REF_HEIGHT;
+  const subtitleGapPx = 8;
+  const previewFontPx = portraitSubtitlePreviewFontSize(
+    DEFAULT_PORTRAIT_SUBTITLE_EXPORT_FONT_SIZE,
+    PORTRAIT_PREVIEW_REF_HEIGHT,
+  );
+  const lineHeight = previewFontPx * 1.18;
+  const boxHeight = lineHeight + 8;
+  const centerY = badgeBottom + subtitleGapPx + boxHeight / 2;
+  return centerY / PORTRAIT_PREVIEW_REF_HEIGHT;
 }
 
 /** Alt güvenli çizgi üstünde, kullanıcı kartı merkezi. */
@@ -69,8 +76,11 @@ export const DEFAULT_PORTRAIT_SUBTITLE = {
   shadowEnabled: true,
   shadowColor: "#020617",
   shadowStrength: 0.85,
-  fontSize: normalizePortraitSubtitleExportFontSize(defaultPortraitSubtitleExportFontSize()),
+  fontSize: defaultPortraitSubtitleExportFontSize(),
   maxWords: 5,
   textAlign: "center" as const,
   visibilityRanges: [] as unknown[],
 };
+
+/** Basit editör — ~40 sn videoya sığacak seslendirme metni üst sınırı. */
+export const DRONE_SIMPLE_NARRATION_TEXT_MAX = 400;

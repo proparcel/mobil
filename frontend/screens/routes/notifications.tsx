@@ -22,6 +22,15 @@ import {
   markNotificationRead,
   type NotificationItem,
 } from "../../services/notificationService";
+import { notifyProQueryJobComplete } from "../../services/proQueryJobTracker";
+import {
+  buildProQueryCompletePayload,
+  handleSocialNotificationTap,
+  normalizeNotificationDataJson,
+  openPortalDetailFromProQueryData,
+  pushPortalDetailViaRouter,
+  resolvePortalDetailTarget,
+} from "../../src/utils/notificationNavigation";
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -98,20 +107,29 @@ export default function NotificationsScreen() {
           await load();
         }
       }
+      if (n.type === "youtube_live") {
+        router.push("nasil-yapilir", { tab: "live" });
+        return;
+      }
       if (n.type === "pro_query_complete") {
-        const data = (n.data_json || {}) as { dfa_snapshot_id?: number | string; snapshotId?: number | string };
-        const snapshotIdRaw = data.dfa_snapshot_id ?? data.snapshotId;
-        const sid = String(snapshotIdRaw || "").trim();
-        if (sid) {
-          router.push("son-30-gun-detay", { snapshotId: sid });
+        const data = normalizeNotificationDataJson(n.data_json);
+        const target = resolvePortalDetailTarget(data);
+        if (target && pushPortalDetailViaRouter(router, target, { fromProQuery: true })) {
           return;
         }
+        const opened = await openPortalDetailFromProQueryData(router, data);
+        if (opened) return;
+        notifyProQueryJobComplete(buildProQueryCompletePayload(data));
+        return;
+      }
+      if (handleSocialNotificationTap(router, n.type, n.data_json)) {
+        return;
       }
       if (n.type === "listing_ai_video_ready") {
         const data = (n.data_json || {}) as { job_id?: string; video_id?: string; source?: string };
         const jobId = String(data.job_id || data.video_id || "").trim();
         if (jobId) {
-          router.push("ai-video-studio", { tab: "videos", jobId });
+          router.push("ai-video-new-editor", { jobId });
           return;
         }
       }

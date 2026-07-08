@@ -238,15 +238,24 @@ export function isCreditProductId(productId: string): boolean {
   return isConsumableProductId(productId);
 }
 
-/** Paket için App Store Product ID döndürür; yoksa null. */
-export function resolveIapProductId(pkg: CreditPackage): string | null {
+/** Paket için Google Play Product ID döndürür; yoksa null. */
+export function resolvePlayProductId(pkg: CreditPackage): string | null {
   const slug = (pkg.slug || "").toLowerCase();
   for (const map of ALL_SLUG_MAPS) {
     if (slug && map[slug]) {
       return map[slug];
     }
   }
-  return pkg.ios_product_id ?? null;
+  const android = (pkg.android_product_id || "").trim();
+  if (android) return android;
+  const ios = (pkg.ios_product_id || "").trim();
+  if (ios) return ios;
+  return null;
+}
+
+/** @deprecated resolvePlayProductId kullanın */
+export function resolveIapProductId(pkg: CreditPackage): string | null {
+  return resolvePlayProductId(pkg);
 }
 
 export function packageHasIapProduct(pkg: CreditPackage): boolean {
@@ -278,12 +287,16 @@ export function licenseActionForProductId(productId: string): string | null {
 
 export function resolveLicenseProductId(
   actionType: string,
-  pricing?: { ios_product_id?: string; google_product_id?: string } | null,
+  pricing?: {
+    ios_product_id?: string;
+    google_product_id?: string;
+    android_product_id?: string;
+  } | null,
   platform: "ios" | "android" = "ios",
 ): string | null {
   const fromApi =
     platform === "android"
-      ? (pricing?.google_product_id || "").trim()
+      ? (pricing?.google_product_id || pricing?.android_product_id || "").trim()
       : (pricing?.ios_product_id || "").trim();
   if (fromApi) return fromApi;
   return LICENSE_ACTION_TO_IAP_SKU[actionType] ?? null;

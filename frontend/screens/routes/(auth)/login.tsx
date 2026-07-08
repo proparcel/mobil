@@ -13,7 +13,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   StatusBar,
-  ScrollView,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
@@ -23,7 +22,8 @@ import { authService } from "../../../services/authService";
 import { parsePortalDetailLoginReturn } from "../../../src/utils/portalDetailAuth";
 import { KeyboardAwareScrollScreen } from "../../../components/app/KeyboardAwareScrollScreen";
 import { LandingLegalFooter } from "../../../components/landing/LandingLegalFooter";
-import { useScrollInputIntoView } from "../../../src/keyboard";
+import { useKeyboardHeight } from "../../../src/keyboard";
+import { scrollContentBottomPadding } from "../../../src/utils/sheetSafeArea";
 import {
   INPUT_TEXT_COLOR,
   securePasswordInputProps,
@@ -83,23 +83,8 @@ export default function LoginScreen() {
     };
   }, [isLoading, isAuthenticated, goAfterLogin]);
   const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView>(null);
-  const emailWrapRef = useRef<View>(null);
-  const passwordWrapRef = useRef<View>(null);
-  const phoneWrapRef = useRef<View>(null);
-
-  const { handleFocus: scrollEmailIntoView, handleBlur: scrollEmailBlur } = useScrollInputIntoView({
-    scrollRef,
-    inputWrapRef: emailWrapRef,
-  });
-  const { handleFocus: scrollPasswordIntoView, handleBlur: scrollPasswordBlur } = useScrollInputIntoView({
-    scrollRef,
-    inputWrapRef: passwordWrapRef,
-  });
-  const { handleFocus: scrollPhoneIntoView, handleBlur: scrollPhoneBlur } = useScrollInputIntoView({
-    scrollRef,
-    inputWrapRef: phoneWrapRef,
-  });
+  const keyboardHeight = useKeyboardHeight();
+  const scrollBottomPadding = scrollContentBottomPadding(insets.bottom, 24, keyboardHeight);
 
   // State
   const [mode, setMode] = useState<LoginMode>("email");
@@ -170,12 +155,12 @@ export default function LoginScreen() {
         <View style={styles.headerRight} />
       </View>
       <KeyboardAwareScrollScreen
-        ref={scrollRef}
         behaviorContext="auth"
+        safeAreaTopHandledExternally
         headerHeight={56}
         backgroundColor="#fff"
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + insets.bottom }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: scrollBottomPadding }]}
       >
         {/* Logo / Title */}
         <View style={styles.formHeader}>
@@ -215,7 +200,7 @@ export default function LoginScreen() {
         {/* Email Login Form */}
         {mode === "email" && (
           <View style={styles.form}>
-            <View ref={emailWrapRef} collapsable={false}>
+            <View>
               <TextInput
                 style={styles.input}
                 placeholder="E-posta adresi"
@@ -227,11 +212,9 @@ export default function LoginScreen() {
                 textContentType="emailAddress"
                 value={email}
                 onChangeText={setEmail}
-                onFocus={scrollEmailIntoView}
-                onBlur={scrollEmailBlur}
               />
             </View>
-            <View ref={passwordWrapRef} collapsable={false} style={styles.passwordRow}>
+            <View style={styles.passwordRow}>
               <TextInput
                 style={[styles.input, styles.passwordInput, securePasswordInputStyle]}
                 placeholder="Şifre"
@@ -241,8 +224,6 @@ export default function LoginScreen() {
                 onChangeText={setPassword}
                 textContentType="password"
                 autoComplete="password"
-                onFocus={scrollPasswordIntoView}
-                onBlur={scrollPasswordBlur}
                 {...securePasswordInputProps}
               />
               <TouchableOpacity
@@ -283,7 +264,7 @@ export default function LoginScreen() {
         {/* Phone Login Form */}
         {mode === "phone" && (
           <View style={styles.form}>
-            <View ref={phoneWrapRef} collapsable={false} style={styles.phoneInputContainer}>
+            <View style={styles.phoneInputContainer}>
               <Text style={styles.phonePrefix}>+90</Text>
               <TextInput
                 style={[styles.input, styles.phoneInput]}
@@ -296,11 +277,9 @@ export default function LoginScreen() {
                   setPhoneNumber(text.replace(/\D/g, ""));
                   setError("");
                 }}
-                onFocus={scrollPhoneIntoView}
-                onBlur={scrollPhoneBlur}
               />
             </View>
-            <View ref={passwordWrapRef} collapsable={false} style={styles.passwordRow}>
+            <View style={styles.passwordRow}>
               <TextInput
                 style={[styles.input, styles.passwordInput, securePasswordInputStyle]}
                 placeholder="Şifre"
@@ -313,8 +292,6 @@ export default function LoginScreen() {
                 }}
                 textContentType="password"
                 autoComplete="password"
-                onFocus={scrollPasswordIntoView}
-                onBlur={scrollPasswordBlur}
                 {...securePasswordInputProps}
               />
               <TouchableOpacity

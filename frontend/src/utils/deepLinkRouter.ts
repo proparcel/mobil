@@ -8,7 +8,12 @@ export type SimpleQueryDeepLinkPayload =
 
 export type DeepLinkNavigationTarget =
   | { screen: 'index'; params: { deepLinkSimpleQuery: SimpleQueryDeepLinkPayload } }
-  | { screen: 'son-30-gun-detay'; params: { snapshotId?: string; listingId?: string } };
+  | {
+      screen: 'son-30-gun-detay';
+      params: { snapshotId?: string; listingId?: string; commentId?: string; ratingId?: string };
+    }
+  | { screen: 'listing-wizard'; params: { listingId: string; mode?: 'create' | 'edit'; forceEidsFirst?: string; returnSnapshotId?: string; eids?: string; eids_error?: string } }
+  | { screen: 'nasil-yapilir'; params: { tab?: 'videos' | 'live' } | undefined };
 
 const PROPARCEL_HOSTS = new Set(['proparcel.com', 'www.proparcel.com']);
 
@@ -28,6 +33,23 @@ function normalizeIncomingUrl(raw: string): URL | null {
   } catch {
     return null;
   }
+}
+
+function positiveQueryParam(params: URLSearchParams, key: string): string | undefined {
+  const raw = params.get(key);
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return String(Math.trunc(n));
+}
+
+function snapshotDetailParams(snapshotId: string, params: URLSearchParams) {
+  const out: { snapshotId: string; commentId?: string; ratingId?: string } = { snapshotId };
+  const commentId = positiveQueryParam(params, 'comment');
+  const ratingId = positiveQueryParam(params, 'rating');
+  if (commentId) out.commentId = commentId;
+  if (ratingId) out.ratingId = ratingId;
+  return out;
 }
 
 function parseSimpleQuerySearchParams(params: URLSearchParams): SimpleQueryDeepLinkPayload | null {
@@ -77,6 +99,10 @@ export function webUrlToAppDeepLink(webUrl: string): string | null {
     return `proparcel://portal/recent-queries/${snapshotMatch[1]}${qs ? `?${qs}` : ''}`;
   }
 
+  if (path === '/nasil-yapilir') {
+    return qs ? `proparcel://nasil-yapilir?${qs}` : 'proparcel://nasil-yapilir';
+  }
+
   return null;
 }
 
@@ -119,7 +145,31 @@ export function parseProParcelDeepLink(rawUrl: string): DeepLinkNavigationTarget
   if (snapshotMatch) {
     return {
       screen: 'son-30-gun-detay',
-      params: { snapshotId: snapshotMatch[1] },
+      params: snapshotDetailParams(snapshotMatch[1], params),
+    };
+  }
+
+  if (path === '/nasil-yapilir') {
+    const tab = params.get('tab');
+    if (tab === 'live' || tab === 'videos') {
+      return { screen: 'nasil-yapilir', params: { tab } };
+    }
+    return { screen: 'nasil-yapilir', params: undefined };
+  }
+
+  if (path === '/listing-wizard' || path.endsWith('/listing-wizard')) {
+    const listingId = params.get('listingId') || params.get('listing_id') || '';
+    if (!listingId.trim()) return null;
+    return {
+      screen: 'listing-wizard',
+      params: {
+        listingId: listingId.trim(),
+        mode: params.get('mode') === 'edit' ? 'edit' : 'create',
+        forceEidsFirst: params.get('forceEidsFirst') || undefined,
+        returnSnapshotId: params.get('returnSnapshotId') || undefined,
+        eids: params.get('eids') || undefined,
+        eids_error: params.get('eids_error') || undefined,
+      },
     };
   }
 

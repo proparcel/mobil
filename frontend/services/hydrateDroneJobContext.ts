@@ -18,6 +18,10 @@ import {
   DEFAULT_USER_CARD_SCALE,
   userCardExportPointToUiCenter,
 } from "../src/utils/portraitOverlayContract";
+import {
+  fetchTkgmParcelByAdaParsel,
+  type TkgmParcelResponse,
+} from "../src/utils/tkgmParcelQuery";
 
 export type ParsedReferenceId = {
   mahalle: string;
@@ -72,24 +76,58 @@ export function buildParcelSummaryFromContext(
   return parts.join(" · ");
 }
 
+function parseMahalleTkgmCode(meta: Record<string, unknown>, ref: ParsedReferenceId): number {
+  const refCode = Number(ref.mahalle);
+  if (Number.isFinite(refCode) && refCode > 0) return refCode;
+
+  const rawMeta = meta.mahalle;
+  const metaNum = Number(rawMeta);
+  if (
+    Number.isFinite(metaNum) &&
+    metaNum > 0 &&
+    String(rawMeta ?? "").trim() !== "" &&
+    /^\d+$/.test(String(rawMeta).trim())
+  ) {
+    return metaNum;
+  }
+  return 0;
+}
+
 export function buildParcelFromArchive(
   meta: Record<string, unknown>,
   referenceId: string,
 ): DroneParcelQuery | null {
   const ref = parseReferenceId(referenceId);
-  const mahalleCode = Number(meta.mahalle || ref.mahalle);
+  const mahalleCode = parseMahalleTkgmCode(meta, ref);
   const ada = String(meta.ada || ref.ada || "").trim();
   const parsel = String(meta.parsel || ref.parsel || "").trim();
   if (!ada && !parsel && !mahalleCode) return null;
 
   return {
-    mahalleTkgmValue: Number.isFinite(mahalleCode) ? mahalleCode : 0,
+    mahalleTkgmValue: mahalleCode,
     mahalle: String(meta.runway_quarter || meta.quarter || ref.mahalle || "").trim(),
     ada: ada || "0",
     parsel: parsel || "",
     city: String(meta.city || meta.runway_city || "").trim(),
     town: String(meta.district || meta.runway_district || "").trim(),
   };
+}
+
+export async function resolveTkgmDataForParcel(
+  parcel: DroneParcelQuery,
+): Promise<{ ok: true; data: TkgmParcelResponse } | { ok: false; error: string }> {
+  const mahalleTkgmValue = Number(parcel.mahalleTkgmValue) || 0;
+  const ada = String(parcel.ada || "0").trim() || "0";
+  const parsel = String(parcel.parsel || "").trim();
+  if (mahalleTkgmValue <= 0 || !parsel) {
+    return { ok: false, error: "Parsel bilgisi eksik." };
+  }
+  const res = await fetchTkgmParcelByAdaParsel({ mahalleTkgmValue, ada, parsel });
+  if (!res.ok) return res;
+  if (!res.data?.geometry) {
+    return { ok: false, error: "Parsel geometrisi bulunamadı." };
+  }
+  return res;
 }
 
 function numOrNull(value: unknown): number | null {

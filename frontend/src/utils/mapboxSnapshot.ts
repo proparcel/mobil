@@ -134,6 +134,20 @@ export const tryMapboxSnap = async (
  * MapView'da görünen piksel kadrajını yakalar (boyut zorlaması yok — önizleme WYSIWYG).
  * takeSnap(true) öncelikli; şablon en-boy oranına zorlanmış snap kadrajı kaydırır.
  */
+/**
+ * Drone referans kareleri: önce canlı MapView kadrajı (WYSIWYG), gerekirse boyutlu snap.
+ * takeSnap(720×1280) tek başına önizlemeden farklı kadraj üretebilir.
+ */
+export async function tryDroneMapReferenceSnap(
+  mapRef: React.RefObject<any>,
+  fallbackDimensions: { mapWidth: number; mapHeight: number },
+  options?: { format?: 'png' | 'jpeg' },
+): Promise<string | null> {
+  const liveUri = await tryMapboxSnapLiveView(mapRef, options);
+  if (liveUri) return liveUri;
+  return tryMapboxSnap(mapRef, fallbackDimensions, options);
+}
+
 export async function tryMapboxSnapLiveView(
   mapRef: React.RefObject<any>,
   options?: { format?: 'png' | 'jpeg' },

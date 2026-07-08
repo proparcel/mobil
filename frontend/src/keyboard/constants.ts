@@ -26,6 +26,7 @@ export function getKeyboardAvoidingBehavior(
   context: 'screen' | 'auth' | 'modal' | 'form',
 ): 'padding' | 'height' | undefined {
   if (Platform.OS !== 'ios') return undefined;
-  if (context === 'form') return 'height';
+  // auth/form: height — padding klavye üstünde beyaz boş şerit bırakır
+  if (context === 'form' || context === 'auth') return 'height';
   return 'padding';
 }

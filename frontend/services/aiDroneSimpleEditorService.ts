@@ -5,6 +5,7 @@ import { fetchRunwayJobStatus, pollRunwayUntilDone } from "./droneRunwayService"
 import { absoluteDroneApiUrl } from "./imageAnimationService";
 import type { MobileUploadImage } from "./imageAnimationService";
 import { appendOpenAiPreflightFormFields, openAiPreflightPrepJsonFields } from "./openAiPreflightApi";
+import { DRONE_SCENE_INITIAL_COUNT } from "./droneSceneService";
 import {
   appendRunwayPortraitClientFormFields,
   runwayPortraitClientJsonFields,
@@ -17,7 +18,10 @@ import {
   normalizeApiMusicTrack,
   UPLOAD_MUSIC_PROVIDER,
 } from "./droneMusicLibraryContract";
-import { DEFAULT_PORTRAIT_USER_CARD_POS } from "../src/constants/aiDroneEditorTheme";
+import {
+  DEFAULT_PORTRAIT_USER_CARD_POS,
+  DRONE_SIMPLE_NARRATION_TEXT_MAX,
+} from "../src/constants/aiDroneEditorTheme";
 import {
   DEFAULT_USER_CARD_SCALE,
   userCardExportPointToUiCenter,
@@ -34,12 +38,14 @@ export {
   finalizeAllRunwaySlots,
   formatRunwaySlotProgressSummary,
   initialRunwaySlotProgressMap,
+  initialRunwaySlotProgressForSlot,
   mergeRunwaySlotProgressEntry,
   mergeRunwaySlotProgressFromPoll,
   normalizeRunwayProgressPercent,
   parseRunwayFrameCounts,
   shouldFinalizeRunwaySlotsFromPoll,
   toPipelineSlotProgressItems,
+  toPipelineSlotProgressItemsForSlots,
 } from "./runwaySlotProgress";
 
 export type DroneParcelQuery = {
@@ -328,7 +334,7 @@ export async function runwayPrepStartSimple(payload: {
   parcel?: DroneParcelQuery;
 }): Promise<{ ok: true; jobId: string } | { ok: false; error: string }> {
   const json: Record<string, unknown> = {
-    ref_frame_count: Math.max(2, Math.min(8, payload.refFrameCount || 3)),
+    ref_frame_count: Math.max(2, Math.min(8, payload.refFrameCount || DRONE_SCENE_INITIAL_COUNT)),
     editor_mode: "ai_drone",
     prompt_text: (payload.promptText || "").slice(0, 2000),
     ...runwayPortraitClientJsonFields(),
@@ -540,9 +546,18 @@ export async function resolveDroneNarrationInputs(
   };
 }
 
+export function clampDroneSimpleNarrationText(
+  text: string,
+  maxChars: number = DRONE_SIMPLE_NARRATION_TEXT_MAX,
+): string {
+  return String(text || "").slice(0, Math.max(1, maxChars));
+}
+
 export async function generateRunwayNarration(
   payload: DroneNarrationInputs,
+  options?: { maxChars?: number },
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const maxChars = Math.max(1, Number(options?.maxChars) || DRONE_SIMPLE_NARRATION_TEXT_MAX);
   const form = new FormData();
   form.append("city", payload.city || "");
   form.append("district", payload.district || "");
@@ -564,6 +579,7 @@ export async function generateRunwayNarration(
     form.append("town_center_dist_km", "");
   }
   form.append("price_input", payload.priceInput || "");
+  form.append("max_chars", String(maxChars));
   const res = await authFormFetch<{ success?: boolean; narration_text?: string; text?: string }>(
     "/api/drone-runway-narration/",
     form,
@@ -571,7 +587,9 @@ export async function generateRunwayNarration(
   if (!res.ok || (res.data as any)?.success === false) {
     return { ok: false, error: errMessage(res.error || (res.data as any)?.error, "Anlatım metni üretilemedi.") };
   }
-  const text = String((res.data as any)?.narration_text || (res.data as any)?.text || "").trim();
+  const raw = String((res.data as any)?.narration_text || (res.data as any)?.text || "").trim();
+  if (!raw) return { ok: false, error: "Boş anlatım metni döndü." };
+  const text = clampDroneSimpleNarrationText(raw, maxChars).trim();
   if (!text) return { ok: false, error: "Boş anlatım metni döndü." };
   return { ok: true, text };
 }
@@ -583,7 +601,7 @@ export async function saveNarrationDraft(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const json: Record<string, unknown> = {
     job_id: jobId,
-    narration_draft_text: narrationDraftText.slice(0, 8000),
+    narration_draft_text: clampDroneSimpleNarrationText(narrationDraftText),
   };
   if (context) {
     if (context.city) json.city = context.city.slice(0, 64);
@@ -883,31 +901,77 @@ export function droneMusicFileUrl(jobId: string): string {
   return absoluteDroneApiUrl(`/api/drone-editor/music/file/?job_id=${encodeURIComponent(jobId)}`);
 }
 
-export async function startPortraitExport(jobId: string): Promise<{ ok: true; status: string } | { ok: false; error: string }> {
-  const res = await authJsonFetch<{ status?: string; success?: boolean }>("/api/drone-editor/export/", {
+export async function startPortraitExport(
+  jobId: string,
+): Promise<{ ok: true; status: string; exportId: string } | { ok: false; error: string }> {
+  const res = await authJsonFetch<{
+    status?: string;
+    success?: boolean;
+    export_id?: string;
+    active_export_id?: string;
+  }>("/api/drone-editor/export/", {
     method: "POST",
     json: { job_id: jobId, orientation: "portrait" },
   });
   if (!res.ok || (res.data as any)?.success === false) {
     return { ok: false, error: errMessage(res.error, "Dışa aktarma başlatılamadı.") };
   }
-  return { ok: true, status: String((res.data as any)?.status || "queued") };
+  const data = res.data as { status?: string; export_id?: string; active_export_id?: string };
+  const exportId = String(data?.export_id || data?.active_export_id || "").trim();
+  return { ok: true, status: String(data?.status || "queued"), exportId };
 }
 
-export async function getPortraitExportStatus(jobId: string): Promise<string> {
-  const res = await authJsonFetch<{ status?: string; effective_status?: string }>(
+export type PortraitExportStatusSnapshot = {
+  status: string;
+  exportId: string;
+  outputFile: string;
+  finishedAt: string;
+  transient?: boolean;
+};
+
+export async function fetchPortraitExportStatus(jobId: string): Promise<PortraitExportStatusSnapshot> {
+  const res = await authJsonFetch<{
+    status?: string;
+    effective_status?: string;
+    active_export_id?: string;
+    export?: {
+      export_id?: string;
+      output_file?: string;
+      finished_at?: string;
+      effective_status?: string;
+      status?: string;
+    };
+    latest_output_files?: Record<string, string>;
+  }>(
     `/api/drone-editor/export/status/?job_id=${encodeURIComponent(jobId)}&orientation=portrait`,
     { method: "GET" },
   );
-  if (!res.ok) return "error";
-  const data = res.data as { status?: string; effective_status?: string };
-  return String(data?.effective_status || data?.status || "idle");
+  if (!res.ok) {
+    return { status: "pending", exportId: "", outputFile: "", finishedAt: "", transient: true };
+  }
+  const data = res.data || {};
+  const exp = (data.export || {}) as Record<string, unknown>;
+  const latest = (data.latest_output_files || {}) as Record<string, string>;
+  return {
+    status: String(
+      exp.effective_status || exp.status || data.effective_status || data.status || "idle",
+    ),
+    exportId: String(exp.export_id || data.active_export_id || "").trim(),
+    outputFile: String(exp.output_file || latest.portrait || "").trim(),
+    finishedAt: String(exp.finished_at || "").trim(),
+    transient: false,
+  };
+}
+
+export async function getPortraitExportStatus(jobId: string): Promise<string> {
+  const snap = await fetchPortraitExportStatus(jobId);
+  return snap.status;
 }
 
 export function classifyPortraitExportStatus(status: string): { isReady: boolean; isFailed: boolean } {
   const s = String(status || "").trim().toLowerCase();
   const isReady = s === "success" || s === "ready" || s === "done";
-  const isFailed = s === "failed" || s === "cancelled" || s === "error";
+  const isFailed = s === "failed" || s === "cancelled" || s === "enqueue_failed";
   return { isReady, isFailed };
 }
 
@@ -1126,8 +1190,10 @@ export async function upsertUserCardAnnotation(
   return createUserCardAnnotation(jobId, normalized, centerPoint, cardScale);
 }
 
-export function portraitExportDownloadUrl(jobId: string): string {
+export function portraitExportDownloadUrl(jobId: string, outputFile?: string): string {
+  const file = String(outputFile || "").trim();
+  const fileQuery = file ? `&output_file=${encodeURIComponent(file)}` : "";
   return absoluteDroneApiUrl(
-    `/api/drone-recording-runway/file/${encodeURIComponent(jobId)}/?orientation=portrait&download=1`,
+    `/api/drone-recording-runway/file/${encodeURIComponent(jobId)}/?orientation=portrait&download=1${fileQuery}`,
   );
 }

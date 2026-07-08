@@ -3,10 +3,14 @@ import { describe, it } from 'node:test';
 
 import type { PortalQueryDetail } from '../types/portal';
 import {
+  buildInsightRiskChips,
   buildPhysicalSupplementalRows,
+  formatMorphologyTypeLabel,
   formatRoadFrontageMeters,
   resolveImportantFrontageM,
+  resolveInsightMorphologyVariant,
   resolveLongestFrontageM,
+  resolvePortalMorphologyLabel,
 } from './portalInsightHelpers';
 
 function baseDetail(overrides: Partial<PortalQueryDetail> = {}): PortalQueryDetail {
@@ -148,5 +152,55 @@ describe('buildPhysicalSupplementalRows', () => {
     assert.equal(rows[1].value, '95 m');
     assert.equal(rows[2].value, '180 m');
     assert.equal(rows[3].value, '3 / Yarım Ada');
+  });
+});
+
+describe('formatMorphologyTypeLabel', () => {
+  it('title-cases tr-TR morphology labels', () => {
+    assert.equal(formatMorphologyTypeLabel('tepe', 'TEPE'), 'Tepe');
+    assert.equal(formatMorphologyTypeLabel('vadi', null), 'Vadi');
+    assert.equal(formatMorphologyTypeLabel(null, null), '—');
+  });
+});
+
+describe('resolvePortalMorphologyLabel', () => {
+  it('prefers slope section context_morphology_json', () => {
+    const detail = baseDetail();
+    const label = resolvePortalMorphologyLabel(detail, {
+      context_morphology_json: {
+        morphology: { type: 'tepe', type_label: 'Tepe' },
+      },
+    });
+    assert.equal(label, 'Tepe');
+  });
+
+  it('falls back to summary slopeSummary morphology fields', () => {
+    const detail = baseDetail({
+      slopeSummary: { morphology_type: 'vadi', morphology_label: 'Vadi' },
+    });
+    assert.equal(resolvePortalMorphologyLabel(detail), 'Vadi');
+  });
+});
+
+describe('resolveInsightMorphologyVariant', () => {
+  it('marks cukur and vadi as alert', () => {
+    assert.equal(resolveInsightMorphologyVariant('cukur'), 'alert');
+    assert.equal(resolveInsightMorphologyVariant('vadi'), 'alert');
+    assert.equal(resolveInsightMorphologyVariant('tepe'), 'normal');
+  });
+});
+
+describe('buildInsightRiskChips', () => {
+  it('does not include slope chip', () => {
+    const chips = buildInsightRiskChips({
+      summary: baseDetail(),
+      analysis: { ramsar_wetland: false, high_voltage_line: false },
+      slopePct: 25,
+    });
+    assert.equal(
+      chips.some((chip) => chip.key === 'slope'),
+      false,
+    );
+    assert.equal(chips.length, 4);
   });
 });

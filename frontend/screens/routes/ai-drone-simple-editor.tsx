@@ -2,7 +2,7 @@
  * AI Drone — basit dikey video editörü (web ai-drone-video-editor + drone-editor portrait).
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -65,6 +65,7 @@ import {
   isRunwayCleanPreviewVideoUrl,
   resolveDroneRunwayPreviewVideoUrl,
   enrichDroneNarrationInputs,
+  clampDroneSimpleNarrationText,
   fetchProfileUserCardInfo,
   generateRunwayNarration,
   resolveDroneNarrationInputs,
@@ -90,9 +91,11 @@ import {
   type SubtitleSettings,
   type UserCardInfo,
   initialRunwaySlotProgressMap,
+  initialRunwaySlotProgressForSlot,
   mergeRunwaySlotProgressFromPoll,
   formatRunwaySlotProgressSummary,
   toPipelineSlotProgressItems,
+  toPipelineSlotProgressItemsForSlots,
   type MergedRunwaySlotProgress,
 } from "../../services/aiDroneSimpleEditorService";
 import { beginDronePortraitExportJob } from "../../services/dronePortraitExportJobTracker";
@@ -102,7 +105,8 @@ import {
   listDroneMyVideos,
   type DroneMyVideoItem,
 } from "../../services/droneRunwayService";
-import { loadJobEditorContext } from "../../services/hydrateDroneJobContext";
+import { droneVideoMatchesEditorMode } from "../../src/utils/droneVideoEditorMode";
+import { loadJobEditorContext, resolveTkgmDataForParcel } from "../../services/hydrateDroneJobContext";
 import { getDroneMusicLibrary, buildMusicSelectSettings } from "../../services/droneMusicLibraryService";
 import {
   clearActiveDroneJob,
@@ -110,17 +114,23 @@ import {
 } from "../../services/droneRunwayActiveJobStorage";
 import { startDroneRunwayBackgroundPoll, subscribeDroneRunwayJobReady } from "../../services/droneRunwayJobTracker";
 import {
-  buildSceneTimelineFromSlots,
+  buildCanonicalTimeline,
+  buildMergeTimelineFromStripOrder,
   computeNextAppendSlot,
   defaultSceneRights,
-  deleteRunwayReferenceSlots,
+  deleteRunwaySceneEntry,
   fetchRunwaySegments,
   finalizeSegmentTimeline,
-  maxCaptureCountForRights,
+  getSceneRights,
+  maxAppendCountForSession,
+  moveSceneTimelineByStep,
+  countExistingScenes,
+  needsExtraScenePurchaseForAppend,
+  resolveEkSahneActionForCount,
+  DRONE_SCENE_INITIAL_COUNT,
+  DRONE_SCENE_PACKAGE_ALLOWANCE,
   preflightRunwaySegment,
   regenerateRunwaySegment,
-  segmentFileUrl,
-  segmentVideoAbsoluteUrl,
   updateSegmentTimeline,
   type RunwaySegmentItem,
   type RunwaySegmentTimelineEntry,
@@ -128,9 +138,16 @@ import {
   type SceneGenerationRights,
 } from "../../services/droneSceneService";
 import {
+  buildScenePreviewSource,
+  resolveScenePreviewSourceAsync,
+  scenePreviewSourceToPlayerSource,
+  type ScenePreviewSource,
+} from "../../services/droneScenePreview";
+import {
   AI_DRONE_EDITOR_THEME,
   DEFAULT_PORTRAIT_SUBTITLE,
   DEFAULT_PORTRAIT_USER_CARD_POS,
+  DRONE_SIMPLE_NARRATION_TEXT_MAX,
 } from "../../src/constants/aiDroneEditorTheme";
 import {
   DEFAULT_USER_CARD_SCALE,
@@ -159,6 +176,12 @@ const MEDIA_TABS: readonly MediaTabDef[] = [
 ];
 
 const PROPARCEL_LABEL_CREDIT_ACTION = "proparcel_video_etiket";
+
+function stripVideoCacheBust(url: string): string {
+  return String(url || "")
+    .replace(/([?&])t=\d+(?=&|$)/g, "$1")
+    .replace(/[?&]$/, "");
+}
 
 type PendingProduction = {
   preparedJobId: string;
@@ -192,7 +215,7 @@ export default function AiDroneSimpleEditorScreen() {
   const [pipelineDetail, setPipelineDetail] = useState("");
   const [pipelineError, setPipelineError] = useState("");
   const [pipelineSheetOpen, setPipelineSheetOpen] = useState(false);
-  const [refFrameCount, setRefFrameCount] = useState(3);
+  const [refFrameCount, setRefFrameCount] = useState(DRONE_SCENE_INITIAL_COUNT);
   const [pipelineSlotByKey, setPipelineSlotByKey] = useState<Record<string, MergedRunwaySlotProgress>>({});
   const [pipelineBackgroundMode, setPipelineBackgroundMode] = useState(false);
 
@@ -215,7 +238,6 @@ export default function AiDroneSimpleEditorScreen() {
   const [previewDuration, setPreviewDuration] = useState(0);
   const [userCardBusy, setUserCardBusy] = useState(false);
   const [showSubtitles, setShowSubtitles] = useState(true);
-  const [useOpenAiPreflight, setUseOpenAiPreflight] = useState(false);
   const [subtitlePos, setSubtitlePos] = useState({
     x: DEFAULT_PORTRAIT_SUBTITLE.x,
     y: DEFAULT_PORTRAIT_SUBTITLE.y,
@@ -242,6 +264,16 @@ export default function AiDroneSimpleEditorScreen() {
   const [mapCaptureMode, setMapCaptureMode] = useState<MapCaptureMode>("initial");
   const [extraScenePurchaseVisible, setExtraScenePurchaseVisible] = useState(false);
   const [sceneSegmentCacheBust, setSceneSegmentCacheBust] = useState(0);
+  const [selectedSceneSegment, setSelectedSceneSegment] = useState<RunwaySegmentItem | null>(null);
+  const [scenePreviewFallback, setScenePreviewFallback] = useState<ScenePreviewSource | null>(null);
+  const [sceneThumbCacheBust, setSceneThumbCacheBust] = useState(0);
+  const [appendSceneProduction, setAppendSceneProduction] = useState<{
+    runwaySlot: number;
+    cardIndex: number;
+  } | null>(null);
+  const [pendingNewSceneCapture, setPendingNewSceneCapture] =
+    useState<DroneMapCaptureContinuePayload | null>(null);
+  const videoSourceErrorAtRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -377,9 +409,10 @@ export default function AiDroneSimpleEditorScreen() {
 
   const applyHydratedContext = useCallback(
     (ctx: Awaited<ReturnType<typeof loadJobEditorContext>>) => {
-      setNarrationText(ctx.narrationText);
+      setNarrationText(clampDroneSimpleNarrationText(ctx.narrationText));
       setNarrationInputs(ctx.narrationInputs);
       if (ctx.parcel) setParcel(ctx.parcel);
+      else setParcel(null);
       setParcelSummary(ctx.parcelSummary);
       setParcelAreaM2(ctx.parcelAreaM2);
       setSavedMusic(ctx.savedMusic);
@@ -394,6 +427,34 @@ export default function AiDroneSimpleEditorScreen() {
     [],
   );
 
+  const ensureTkgmDataForCapture = useCallback(async (): Promise<boolean> => {
+    if (tkgmData?.geometry) return true;
+    if (!parcel) return false;
+    const res = await resolveTkgmDataForParcel(parcel);
+    if (!res.ok) return false;
+    setTkgmData(res.data);
+    return Boolean(res.data.geometry);
+  }, [tkgmData, parcel]);
+
+  const applyResolvedPreviewVideo = useCallback((resolved: string) => {
+    const next = String(resolved || "").trim();
+    if (!next) return;
+    setPreviewMode("full");
+    setVideoUri((prev) => (stripVideoCacheBust(prev) === stripVideoCacheBust(next) ? prev : next));
+  }, []);
+
+  const refreshCurrentJobPreview = useCallback(
+    async (targetJobId: string) => {
+      const trimmed = String(targetJobId || "").trim();
+      if (!trimmed) return;
+      await refreshScenes(trimmed);
+      const resolved = await resolveDroneRunwayPreviewVideoUrl(trimmed);
+      if (resolved) applyResolvedPreviewVideo(resolved);
+      markEditorVideoReady();
+    },
+    [refreshScenes, applyResolvedPreviewVideo, markEditorVideoReady],
+  );
+
   const hydrateAndSelectJob = useCallback(
     async (id: string, archiveItem?: DroneMyVideoItem | null) => {
       const trimmed = String(id || "").trim();
@@ -403,26 +464,35 @@ export default function AiDroneSimpleEditorScreen() {
       setPreviewDuration(0);
       setPreviewMode("none");
       setActiveSceneSlot(null);
+      setSelectedSceneSegment(null);
+      setScenePreviewFallback(null);
       setVideoUri("");
+      setSceneSegments([]);
+      setSceneTimeline([]);
+      setSceneRights(defaultSceneRights());
+      setMergeSelectedSlots(new Set());
+      setAppendSceneProduction(null);
+      setPipelineSlotByKey({});
       markEditorVideoReady();
       try {
         const ctx = await loadJobEditorContext(trimmed, archiveItem);
         applyHydratedContext(ctx);
+        if (ctx.parcel) {
+          const tkgmRes = await resolveTkgmDataForParcel(ctx.parcel);
+          setTkgmData(tkgmRes.ok ? tkgmRes.data : null);
+        } else {
+          setTkgmData(null);
+        }
       } catch {
+        setTkgmData(null);
         /* önizleme bağlam yüklemesinden bağımsız */
       }
-      const segData = await refreshScenes(trimmed);
-      const readyCount = segData?.segments.filter((s) => s.exists).length ?? 0;
+      await refreshScenes(trimmed);
+      setSceneThumbCacheBust(Date.now());
       const resolved = await resolveDroneRunwayPreviewVideoUrl(trimmed);
-      if (resolved && readyCount === 0) {
-        setPreviewMode("full");
-        setVideoUri(resolved);
-      } else if (resolved && readyCount > 0) {
-        setPreviewMode("full");
-        setVideoUri(resolved);
-      }
+      if (resolved) applyResolvedPreviewVideo(resolved);
     },
-    [applyHydratedContext, markEditorVideoReady, refreshScenes],
+    [applyHydratedContext, markEditorVideoReady, refreshScenes, applyResolvedPreviewVideo],
   );
 
   const selectReadyVideo = useCallback(
@@ -439,7 +509,11 @@ export default function AiDroneSimpleEditorScreen() {
       const listRes = await listDroneMyVideos();
       const item =
         listRes.ok
-          ? listRes.videos.find((v) => String(v.job_id || "").trim() === id)
+          ? listRes.videos.find(
+              (v) =>
+                String(v.job_id || "").trim() === id &&
+                droneVideoMatchesEditorMode(v, "ai_drone"),
+            )
           : undefined;
       await hydrateAndSelectJob(id, item);
     })();
@@ -452,23 +526,43 @@ export default function AiDroneSimpleEditorScreen() {
       setSceneRights(defaultSceneRights());
       setMergeSelectedSlots(new Set());
       setActiveSceneSlot(null);
+      setSelectedSceneSegment(null);
+      setScenePreviewFallback(null);
       setPreviewMode("none");
-      return;
+      setTkgmData(null);
     }
-    void refreshScenes(jobId);
-  }, [jobId, refreshScenes]);
+  }, [jobId]);
 
   useEffect(() => {
     return subscribeDroneRunwayJobReady((readyJobId) => {
       const id = String(readyJobId || "").trim();
       if (!id) return;
-      if (!jobId || jobId === id || pipelineBackgroundMode) {
-        void hydrateAndSelectJob(id);
-        void refreshScenes(id);
-        setReadyVideosRefreshToken((n) => n + 1);
+      if (!jobId) {
+        void (async () => {
+          const listRes = await listDroneMyVideos();
+          const item =
+            listRes.ok
+              ? listRes.videos.find(
+                  (v) =>
+                    String(v.job_id || "").trim() === id &&
+                    droneVideoMatchesEditorMode(v, "ai_drone"),
+                )
+              : undefined;
+          if (!item) {
+            setReadyVideosRefreshToken((n) => n + 1);
+            return;
+          }
+          await hydrateAndSelectJob(id, item);
+          setReadyVideosRefreshToken((n) => n + 1);
+        })();
+        return;
       }
+      if (jobId !== id) return;
+      setAppendSceneProduction(null);
+      void refreshCurrentJobPreview(id);
+      setReadyVideosRefreshToken((n) => n + 1);
     });
-  }, [jobId, pipelineBackgroundMode, hydrateAndSelectJob, refreshScenes]);
+  }, [jobId, hydrateAndSelectJob, refreshCurrentJobPreview]);
 
   const resetPipeline = useCallback(() => {
     setPipelineBusy(false);
@@ -481,7 +575,49 @@ export default function AiDroneSimpleEditorScreen() {
     setRefFrameCount(3);
     setPipelineSlotByKey({});
     setPipelineBackgroundMode(false);
+    setAppendSceneProduction(null);
+    setPendingNewSceneCapture(null);
   }, []);
+
+  const resetEditorForNewProject = useCallback(() => {
+    setJobId("");
+    setVideoUri("");
+    setPreviewMode("none");
+    setPreviewPlaybackTime(0);
+    setPreviewDuration(0);
+    setParcel(null);
+    setTkgmData(null);
+    setParcelSummary("");
+    setParcelAreaM2("");
+    setNarrationText("");
+    setNarrationInputs(null);
+    setPendingProduction(null);
+    setMapCaptureVisible(false);
+    setMapCaptureMode("initial");
+    setShowUserCard(false);
+    setUserCardInfo(null);
+    setUserCardAnnotationId(null);
+    setUserCardPos(DEFAULT_PORTRAIT_USER_CARD_POS);
+    setSubtitlePos({
+      x: DEFAULT_PORTRAIT_SUBTITLE.x,
+      y: DEFAULT_PORTRAIT_SUBTITLE.y,
+    });
+    setSubtitleSettings(DEFAULT_PORTRAIT_SUBTITLE);
+    setActiveTab("video");
+    resetPipeline();
+  }, [resetPipeline]);
+
+  const startNewProject = useCallback(() => {
+    if (!isAuthenticated) {
+      Alert.alert("Giriş", "Video oluşturmak için giriş yapın.", [
+        { text: "İptal", style: "cancel" },
+        { text: "Giriş", onPress: () => router.push("login") },
+      ]);
+      return;
+    }
+    resetEditorForNewProject();
+    setQueryVisible(true);
+  }, [isAuthenticated, resetEditorForNewProject, router]);
 
   const cancelPipeline = useCallback(() => {
     setMapCaptureVisible(false);
@@ -519,6 +655,10 @@ export default function AiDroneSimpleEditorScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (!isAuthenticated) {
+        if (!cancelled) setAuthHeader(undefined);
+        return;
+      }
       let token = await storageService.getAccessToken();
       if (!token) {
         const refreshed = await authService.refreshToken();
@@ -529,26 +669,51 @@ export default function AiDroneSimpleEditorScreen() {
     return () => {
       cancelled = true;
     };
-  }, [jobId, previewMode, activeSceneSlot, sceneSegmentCacheBust]);
+  }, [isAuthenticated]);
+
+  const scenePreviewRemoteRetryRef = useRef(0);
+
+  const scenePreviewSource = useMemo((): ScenePreviewSource | null => {
+    if (previewMode !== "scene" || activeSceneSlot == null || !jobId) return null;
+    if (scenePreviewFallback?.uri) return scenePreviewFallback;
+    return buildScenePreviewSource({
+      jobId,
+      slot: Number(activeSceneSlot),
+      segment: selectedSceneSegment,
+      authHeader,
+      cacheBust: sceneSegmentCacheBust || Date.now(),
+    });
+  }, [
+    previewMode,
+    activeSceneSlot,
+    jobId,
+    selectedSceneSegment,
+    authHeader,
+    sceneSegmentCacheBust,
+    scenePreviewFallback,
+  ]);
 
   const previewVideoUri = useMemo(() => {
-    if (previewMode === "scene" && activeSceneSlot != null && jobId) {
-      const seg = sceneSegments.find((s) => s.slot === activeSceneSlot && s.exists);
-      if (seg?.url) return segmentVideoAbsoluteUrl(seg.url);
-      return segmentFileUrl(jobId, activeSceneSlot, sceneSegmentCacheBust || Date.now());
+    if (previewMode === "scene") {
+      return String(scenePreviewSource?.uri || "").trim();
     }
     if (previewMode === "full") return String(videoUri || "").trim();
     return "";
-  }, [previewMode, activeSceneSlot, sceneSegments, jobId, videoUri, sceneSegmentCacheBust]);
+  }, [previewMode, scenePreviewSource, videoUri]);
 
   const videoSource = useMemo(() => {
+    if (previewMode === "scene") {
+      return scenePreviewSourceToPlayerSource(scenePreviewSource);
+    }
     if (!previewVideoUri) return null;
     if (previewVideoUri.startsWith("file:") || previewVideoUri.startsWith("content:")) {
       return { uri: previewVideoUri };
     }
-    if (!authHeader?.Authorization) return null;
-    return { uri: previewVideoUri, headers: authHeader };
-  }, [previewVideoUri, authHeader]);
+    if (authHeader?.Authorization) {
+      return { uri: previewVideoUri, headers: authHeader };
+    }
+    return { uri: previewVideoUri };
+  }, [previewMode, scenePreviewSource, previewVideoUri, authHeader]);
 
   const videoPreviewLoading = Boolean(previewVideoUri && !videoSource && !pipelineBusy);
 
@@ -605,7 +770,8 @@ export default function AiDroneSimpleEditorScreen() {
     setNarrationInputs(narrCtx);
     completePipelineStep("context");
 
-    goPipelineStep("map_capture", "Haritadan 3 referans karesi alın");
+    goPipelineStep("map_capture", `Haritadan ${DRONE_SCENE_INITIAL_COUNT} referans karesi alın`);
+    setMapCaptureMode("initial");
     setMapCaptureVisible(true);
   }, [startPipeline, goPipelineStep, completePipelineStep, resetPipeline]);
 
@@ -741,7 +907,7 @@ export default function AiDroneSimpleEditorScreen() {
         setReadyVideosRefreshToken((n) => n + 1);
         Alert.alert(
           "Hazır",
-          "3 sahne üretildi. Bir sahneye dokunarak önizleyin veya sahneleri birleştirin.",
+          `${DRONE_SCENE_INITIAL_COUNT} sahne üretildi. Bir sahneye dokunarak önizleyin veya sahneleri birleştirin.`,
         );
       } catch (e: unknown) {
         if (!leftToBackground) {
@@ -774,6 +940,11 @@ export default function AiDroneSimpleEditorScreen() {
     void continueRunwayProduction(pending);
   }, [pendingProduction, continueRunwayProduction, completePipelineStep]);
 
+  const handleDronePurchaseDismiss = useCallback(() => {
+    setPendingProduction(null);
+    cancelPipeline();
+  }, [cancelPipeline]);
+
   const ensureDroneVideoLicenseOrPrompt = useCallback(
     async (pending: PendingProduction): Promise<boolean> => {
       const referenceId = parcelReferenceId.trim();
@@ -796,8 +967,11 @@ export default function AiDroneSimpleEditorScreen() {
   );
 
   const runPipelineAfterCapture = useCallback(
-    async (images: { uri: string; name: string; type: string }[]) => {
+    async (payload: DroneMapCaptureContinuePayload) => {
       if (!parcel) return;
+      const images = payload.images || [];
+      if (images.length < 1) return;
+      const usePreflight = Boolean(payload.useOpenAiPreflight);
       setRefFrameCount(Math.max(2, Math.min(8, images.length)));
       setPipelineBusy(true);
       setPipelineVisible(true);
@@ -809,9 +983,11 @@ export default function AiDroneSimpleEditorScreen() {
           (await resolveDroneNarrationInputs(parcel, tkgmData, parcelAreaM2));
         setNarrationInputs(narrCtx);
 
-        let narr = narrationText;
+        let narr = clampDroneSimpleNarrationText(narrationText);
         if (!narr.trim()) {
-          const gen = await generateRunwayNarration(narrCtx);
+          const gen = await generateRunwayNarration(narrCtx, {
+            maxChars: DRONE_SIMPLE_NARRATION_TEXT_MAX,
+          });
           if (gen.ok) {
             narr = gen.text;
             setNarrationText(gen.text);
@@ -822,8 +998,8 @@ export default function AiDroneSimpleEditorScreen() {
         goPipelineStep("prep", "Video hazırlanıyor…");
         const prep = await runwayPrepStartSimple({
           refFrameCount: images.length,
-          promptText: narr,
-          useOpenAiPreflight,
+          promptText: payload.promptText?.trim() || narr,
+          useOpenAiPreflight: usePreflight,
           parcel,
         });
         if (!prep.ok) throw new Error(prep.error);
@@ -842,7 +1018,7 @@ export default function AiDroneSimpleEditorScreen() {
           refFrameCount: images.length,
           narrationText: narr,
           narrCtx,
-          useOpenAiPreflight,
+          useOpenAiPreflight: usePreflight,
         };
         const licensed = await ensureDroneVideoLicenseOrPrompt(productionPending);
         if (!licensed) return;
@@ -862,13 +1038,21 @@ export default function AiDroneSimpleEditorScreen() {
       goPipelineStep,
       completePipelineStep,
       continueRunwayProduction,
-      useOpenAiPreflight,
       ensureDroneVideoLicenseOrPrompt,
     ],
   );
 
   const pollSegmentJob = useCallback(
-    async (targetJobId: string, pollMs: number, slotHint?: number) => {
+    async (
+      targetJobId: string,
+      pollMs: number,
+      options?: { slotHint?: number; trackSlotProgress?: boolean; cardOnly?: boolean },
+    ) => {
+      const slotHint = Math.max(0, Number(options?.slotHint || 0));
+      const trackSlotProgress = options?.trackSlotProgress !== false && slotHint > 0;
+      const cardOnly = Boolean(options?.cardOnly);
+      const progressSlotCount = trackSlotProgress ? slotHint : refFrameCount;
+
       const pollResult = await pollRunwayUntilDone({
         jobId: targetJobId,
         pollMs,
@@ -878,17 +1062,52 @@ export default function AiDroneSimpleEditorScreen() {
         onPoll: (status) => {
           const slot = Number(status.progress?.segment_slot || slotHint || 0);
           const label = runwayProgressLabel(status);
-          setPipelineDetail(slot > 0 ? `Sahne ${slot}: ${label}` : label);
+          if (trackSlotProgress && slotHint > 0) {
+            const poll = {
+              ...status,
+              segmentSlotProgress: status.segment_slot_progress,
+            };
+            setPipelineSlotByKey((prev) =>
+              mergeRunwaySlotProgressFromPoll(prev, poll, progressSlotCount),
+            );
+          } else if (!cardOnly) {
+            setPipelineDetail(slot > 0 ? `Sahne ${slot}: ${label}` : label);
+          }
+        },
+        onSoftUiTimeout: () => {
+          if (cardOnly) return;
+          setPipelineBackgroundMode(true);
+          setPipelineDetail("Sahne arka planda üretiliyor. Süreci alttaki panelden izleyebilirsiniz.");
+          setPipelineBusy(false);
+          setPipelineSheetOpen(true);
         },
       });
       if (!pollResult.ok) {
         if ("background" in pollResult && pollResult.background) {
-          Alert.alert("Kuyruk", "Sahne arka planda üretiliyor. Bir süre sonra yenileyin.");
+          startDroneRunwayBackgroundPoll(targetJobId);
+          if (!cardOnly) {
+            setPipelineVisible(true);
+            setPipelineSheetOpen(true);
+          }
           return false;
         }
         throw new Error("error" in pollResult ? pollResult.error : "Sahne üretilemedi.");
       }
       return true;
+    },
+    [refFrameCount],
+  );
+
+  const beginAppendSceneProduction = useCallback((runwaySlot: number, cardIndex: number) => {
+    setAppendSceneProduction({ runwaySlot, cardIndex });
+    setPipelineSlotByKey(initialRunwaySlotProgressForSlot(runwaySlot));
+  }, []);
+
+  const resolveAppendPlaceholderIndex = useCallback(
+    (segments: RunwaySegmentItem[], timeline: RunwaySegmentTimelineEntry[], rights: SceneGenerationRights) => {
+      const cards = buildSceneStripCards(segments, timeline, rights);
+      const idx = cards.findIndex((card) => card.slot == null && card.placeholder);
+      return idx >= 0 ? idx : Math.max(0, cards.length - 1);
     },
     [],
   );
@@ -898,10 +1117,17 @@ export default function AiDroneSimpleEditorScreen() {
       targetJobId: string,
       image: { uri: string; name: string; type: string },
       options?: { promptText?: string; usePreflight?: boolean },
-    ) => {
+    ): Promise<{ slot: number; background?: boolean }> => {
       const segRes = await fetchRunwaySegments(targetJobId);
       if (!segRes.ok) throw new Error(segRes.error);
       const slot = computeNextAppendSlot(segRes.data);
+      const cardIndex = resolveAppendPlaceholderIndex(
+        segRes.data.segments,
+        segRes.data.timeline,
+        segRes.data.scene_rights,
+      );
+      beginAppendSceneProduction(slot, cardIndex);
+
       const promptText = String(options?.promptText || "").trim();
       const usePreflight = Boolean(options?.usePreflight);
 
@@ -912,12 +1138,15 @@ export default function AiDroneSimpleEditorScreen() {
           image,
           promptText: promptText || undefined,
           append: true,
+          clientSource: MOBILE_DRONE_RUNWAY_CLIENT_SOURCE,
         });
         if (!pf.ok) throw new Error(pf.error);
-        setPipelineVisible(true);
-        setPipelineDetail("Resim canlandırılıyor…");
-        const pfDone = await pollSegmentJob(targetJobId, pf.pollMs, slot);
-        if (!pfDone) return slot;
+        const pfDone = await pollSegmentJob(targetJobId, pf.pollMs, {
+          slotHint: slot,
+          trackSlotProgress: true,
+          cardOnly: true,
+        });
+        if (!pfDone) return { slot, background: true };
       }
 
       const reg = await regenerateRunwaySegment({
@@ -927,21 +1156,28 @@ export default function AiDroneSimpleEditorScreen() {
         promptText: promptText || undefined,
         usePreflight,
         append: true,
+        clientSource: MOBILE_DRONE_RUNWAY_CLIENT_SOURCE,
       });
       if (!reg.ok) {
         if (reg.licenseRequired) {
-          setExtraScenePurchaseVisible(true);
-          throw new Error("Sahne hakkınız bitti. Ek paket satın alın.");
+          throw new Error("Sahne hakkınız bitti. Lütfen tekrar deneyin.");
         }
         throw new Error(reg.error);
       }
-      setPipelineVisible(true);
-      setPipelineDetail(`Sahne ${slot} üretiliyor…`);
-      const done = await pollSegmentJob(targetJobId, reg.pollMs, slot);
-      if (!done) return slot;
-      return slot;
+      const done = await pollSegmentJob(targetJobId, reg.pollMs, {
+        slotHint: slot,
+        trackSlotProgress: true,
+        cardOnly: true,
+      });
+      if (!done) return { slot, background: true };
+
+      setPipelineSlotByKey((prev) => ({
+        ...prev,
+        [String(slot)]: { slot, step: "done", percent: 100, label: "Tamamlandı" },
+      }));
+      return { slot, background: false };
     },
-    [pollSegmentJob],
+    [pollSegmentJob, beginAppendSceneProduction, resolveAppendPlaceholderIndex],
   );
 
   const runNewSceneAfterCapture = useCallback(
@@ -957,8 +1193,6 @@ export default function AiDroneSimpleEditorScreen() {
         return;
       }
       setSceneBusy(true);
-      setPipelineBusy(true);
-      setPipelineVisible(true);
       setPipelineError("");
       try {
         let lastSlot: number | null = null;
@@ -966,47 +1200,136 @@ export default function AiDroneSimpleEditorScreen() {
           const image = images[i]!;
           const promptText = i === 0 && images.length === 1 ? payload.promptText : undefined;
           const usePreflight = i === 0 ? payload.useOpenAiPreflight : false;
-          lastSlot = await produceAppendedScene(targetJobId, image, { promptText, usePreflight });
+          const result = await produceAppendedScene(targetJobId, image, { promptText, usePreflight });
+          if (result.background) {
+            const remainingImages = images.slice(i + 1);
+            if (remainingImages.length > 0) {
+              setPendingNewSceneCapture({ ...payload, images: remainingImages });
+            }
+            return;
+          }
+          lastSlot = result.slot;
+          await refreshScenes(targetJobId);
+          const rights = await getSceneRights(targetJobId);
+          setSceneRights(rights);
         }
         await refreshScenes(targetJobId);
         setSceneSegmentCacheBust(Date.now());
+        setSceneThumbCacheBust(Date.now());
         if (lastSlot != null) {
           setActiveSceneSlot(lastSlot);
           setPreviewMode("scene");
         }
-        setPipelineVisible(false);
+        setAppendSceneProduction(null);
+        setPipelineSlotByKey({});
         Alert.alert("Hazır", "Yeni sahne eklendi.");
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Sahne eklenemedi.";
-        setPipelineError(msg);
+        setAppendSceneProduction(null);
+        setPipelineSlotByKey({});
         Alert.alert("Sahne", msg);
       } finally {
         setSceneBusy(false);
-        setPipelineBusy(false);
       }
     },
-    [jobId, produceAppendedScene, refreshScenes],
+    [jobId, produceAppendedScene, refreshScenes, getSceneRights],
   );
+
+  const handleExtraScenePurchaseDismiss = useCallback(() => {
+    setExtraScenePurchaseVisible(false);
+    setPendingNewSceneCapture(null);
+    setAppendSceneProduction(null);
+    setPipelineSlotByKey({});
+  }, []);
 
   const handleMapCaptureContinue = useCallback(
     (payload: DroneMapCaptureContinuePayload) => {
       setMapCaptureVisible(false);
       if (mapCaptureMode === "new_scene") {
         setMapCaptureMode("initial");
-        void runNewSceneAfterCapture(payload);
+        void (async () => {
+          const targetJobId = String(jobId || "").trim();
+          if (!targetJobId) {
+            Alert.alert("Sahne", "Önce video oluşturun.");
+            return;
+          }
+          const imageCount = Math.max(1, payload.images?.length ?? 0);
+          await refreshScenes(targetJobId);
+          const rights = await getSceneRights(targetJobId);
+          setSceneRights(rights);
+          if (needsExtraScenePurchaseForAppend(rights, imageCount)) {
+            setPendingNewSceneCapture(payload);
+            setExtraScenePurchaseVisible(true);
+            return;
+          }
+          void runNewSceneAfterCapture(payload);
+        })();
         return;
       }
       setPipelineBusy(true);
-      void runPipelineAfterCapture(payload.images);
+      void runPipelineAfterCapture(payload);
     },
-    [mapCaptureMode, runPipelineAfterCapture, runNewSceneAfterCapture],
+    [mapCaptureMode, runPipelineAfterCapture, runNewSceneAfterCapture, jobId, refreshScenes],
   );
 
-  const handleSelectScene = useCallback((slot: number) => {
-    setActiveSceneSlot(slot);
-    setPreviewMode("scene");
-    setSceneSegmentCacheBust(Date.now());
+  const handleSelectScene = useCallback(
+    (slot: number, segment?: RunwaySegmentItem | null) => {
+      const normalizedSlot = Number(slot);
+      if (!Number.isFinite(normalizedSlot) || normalizedSlot < 1) return;
+      const seg =
+        segment ??
+        sceneSegments.find((s) => Number(s.slot) === normalizedSlot && s.exists) ??
+        null;
+      videoSourceErrorAtRef.current = 0;
+      scenePreviewRemoteRetryRef.current = 0;
+      setScenePreviewFallback(null);
+      setSelectedSceneSegment(seg);
+      setActiveSceneSlot(normalizedSlot);
+      setPreviewMode("scene");
+      setSceneSegmentCacheBust(Date.now());
+    },
+    [sceneSegments],
+  );
+
+  const handleSelectFullVideo = useCallback(() => {
+    videoSourceErrorAtRef.current = 0;
+    scenePreviewRemoteRetryRef.current = 0;
+    setScenePreviewFallback(null);
+    setSelectedSceneSegment(null);
+    setActiveSceneSlot(null);
+    setPreviewMode("full");
   }, []);
+
+  const handleMoveActiveScene = useCallback(
+    (direction: -1 | 1) => {
+      const targetJobId = String(jobId || "").trim();
+      const slot = Number(activeSceneSlot);
+      if (!targetJobId || !Number.isFinite(slot) || slot < 1) return;
+
+      void (async () => {
+        const canonical = buildCanonicalTimeline(sceneSegments, sceneTimeline);
+        const entry = canonical.find((item) => Number(item.slot) === slot);
+        if (!entry?.id) return;
+
+        const next = moveSceneTimelineByStep(canonical, entry.id, direction);
+        if (!next) return;
+
+        setSceneBusy(true);
+        try {
+          const res = await updateSegmentTimeline(targetJobId, next);
+          if (!res.ok) throw new Error(res.error);
+          setSceneTimeline(next);
+          await refreshScenes(targetJobId);
+        } catch (e: unknown) {
+          Alert.alert("Sıra", e instanceof Error ? e.message : "Sahne sırası kaydedilemedi.");
+          await refreshScenes(targetJobId);
+        } finally {
+          setSceneBusy(false);
+        }
+      })();
+    },
+    [jobId, activeSceneSlot, sceneSegments, sceneTimeline, refreshScenes],
+  );
 
   const handleToggleMergeSlot = useCallback((slot: number) => {
     setMergeSelectedSlots((prev) => {
@@ -1018,9 +1341,14 @@ export default function AiDroneSimpleEditorScreen() {
   }, []);
 
   const handleDeleteScene = useCallback(
-    (slot: number) => {
+    (entryId: string, slot: number) => {
       const targetJobId = String(jobId || "").trim();
       if (!targetJobId) return;
+      const readyCount = sceneSegments.filter((s) => s.exists && s.slot > 0).length;
+      if (readyCount <= 1) {
+        Alert.alert("Silme", "En az bir sahne kalmalı.");
+        return;
+      }
       Alert.alert("Sahneyi sil", `Sahne ${slot} silinsin mi? Hak iade edilmez.`, [
         { text: "Vazgeç", style: "cancel" },
         {
@@ -1030,18 +1358,35 @@ export default function AiDroneSimpleEditorScreen() {
             void (async () => {
               setSceneBusy(true);
               try {
-                const res = await deleteRunwayReferenceSlots(targetJobId, [slot]);
+                const res = await deleteRunwaySceneEntry(
+                  targetJobId,
+                  entryId,
+                  sceneSegments,
+                  sceneTimeline,
+                );
                 if (!res.ok) throw new Error(res.error);
-                if (activeSceneSlot === slot) {
-                  setActiveSceneSlot(null);
-                  setPreviewMode("none");
+                const deletedSlot = res.deletedSlot;
+                const data = await refreshScenes(targetJobId);
+                const stillExists = Boolean(
+                  data?.segments.some((s) => s.slot === deletedSlot && s.exists),
+                );
+                if (stillExists) {
+                  Alert.alert("Silme", "Sahne sunucudan silinemedi. Lütfen tekrar deneyin.");
+                  return;
                 }
                 setMergeSelectedSlots((prev) => {
                   const next = new Set(prev);
-                  next.delete(slot);
+                  next.delete(deletedSlot);
                   return next;
                 });
-                await refreshScenes(targetJobId);
+                if (activeSceneSlot === deletedSlot) {
+                  setActiveSceneSlot(null);
+                  setPreviewMode("full");
+                  const resolved = await resolveDroneRunwayPreviewVideoUrl(targetJobId);
+                  if (resolved) applyResolvedPreviewVideo(resolved);
+                }
+                setSceneThumbCacheBust(Date.now());
+                setSceneSegmentCacheBust(Date.now());
               } catch (e: unknown) {
                 Alert.alert("Silme", e instanceof Error ? e.message : "Sahne silinemedi.");
               } finally {
@@ -1052,14 +1397,29 @@ export default function AiDroneSimpleEditorScreen() {
         },
       ]);
     },
-    [jobId, activeSceneSlot, refreshScenes],
+    [
+      jobId,
+      activeSceneSlot,
+      refreshScenes,
+      sceneTimeline,
+      sceneSegments,
+      applyResolvedPreviewVideo,
+    ],
   );
 
   const handleMergeScenes = useCallback(async () => {
     const targetJobId = String(jobId || "").trim();
     if (!targetJobId) return;
-    const selected = Array.from(mergeSelectedSlots).sort((a, b) => a - b);
-    if (selected.length < 2) {
+    if (mergeSelectedSlots.size < 2) {
+      Alert.alert("Birleştir", "En az iki sahne seçin.");
+      return;
+    }
+    const timeline = buildMergeTimelineFromStripOrder(
+      sceneSegments,
+      sceneTimeline,
+      mergeSelectedSlots,
+    );
+    if (timeline.length < 2) {
       Alert.alert("Birleştir", "En az iki sahne seçin.");
       return;
     }
@@ -1069,7 +1429,6 @@ export default function AiDroneSimpleEditorScreen() {
     setPipelineVisible(true);
     setPipelineDetail("Videolar birleştiriliyor…");
     try {
-      const timeline = buildSceneTimelineFromSlots(selected, mergeSelectedSlots);
       const patchRes = await updateSegmentTimeline(targetJobId, timeline);
       if (!patchRes.ok) throw new Error(patchRes.error);
       const finRes = await finalizeSegmentTimeline(targetJobId, timeline);
@@ -1079,6 +1438,11 @@ export default function AiDroneSimpleEditorScreen() {
       const resolved = await resolveDroneRunwayPreviewVideoUrl(targetJobId);
       setPreviewMode("full");
       setVideoUri(resolved || droneRunwayRawPreviewVideoUrl(targetJobId, Date.now()));
+      setActiveSceneSlot(null);
+      setSelectedSceneSegment(null);
+      setScenePreviewFallback(null);
+      setMergeSelectedSlots(new Set());
+      await refreshScenes(targetJobId);
       setPipelineVisible(false);
       Alert.alert("Hazır", "Sahneler birleştirildi. Tam video önizlemesi açıldı.");
     } catch (e: unknown) {
@@ -1088,7 +1452,7 @@ export default function AiDroneSimpleEditorScreen() {
       setSceneBusy(false);
       setPipelineBusy(false);
     }
-  }, [jobId, mergeSelectedSlots, pollSegmentJob]);
+  }, [jobId, mergeSelectedSlots, pollSegmentJob, refreshScenes, sceneSegments, sceneTimeline]);
 
   const handleNewScenePress = useCallback(() => {
     const targetJobId = String(jobId || "").trim();
@@ -1096,33 +1460,65 @@ export default function AiDroneSimpleEditorScreen() {
       Alert.alert("Sahne", "Önce video oluşturun.");
       return;
     }
-    if ((sceneRights.remaining ?? 0) <= 0) {
-      setExtraScenePurchaseVisible(true);
+    const readyCount = sceneSegments.filter((s) => s.exists && s.slot > 0).length;
+    if (readyCount >= DRONE_SCENE_PACKAGE_ALLOWANCE) {
+      Alert.alert("Sahne limiti", "En fazla 5 sahne görseli alınabilir.");
       return;
     }
-    if (!tkgmData) {
-      Alert.alert("Harita", "Parsel haritası bulunamadı.");
-      return;
-    }
-    setMapCaptureMode("new_scene");
-    setMapCaptureVisible(true);
-  }, [jobId, sceneRights.remaining, tkgmData]);
+    void (async () => {
+      setSceneBusy(true);
+      try {
+        const ready = await ensureTkgmDataForCapture();
+        if (!ready) {
+          Alert.alert("Harita", "Parsel geometrisi TKGM'den alınamadı.");
+          return;
+        }
+        setMapCaptureMode("new_scene");
+        setMapCaptureVisible(true);
+      } finally {
+        setSceneBusy(false);
+      }
+    })();
+  }, [jobId, sceneSegments, ensureTkgmDataForCapture]);
 
   const handleExtraScenePurchaseSuccess = useCallback(async () => {
+    setExtraScenePurchaseVisible(false);
+    const pending = pendingNewSceneCapture;
+    if (pending) {
+      setPendingNewSceneCapture(null);
+      await refreshScenes();
+      void runNewSceneAfterCapture(pending);
+      return;
+    }
     await refreshScenes();
-    if (tkgmData) {
+    const ready = await ensureTkgmDataForCapture();
+    if (ready) {
       setMapCaptureMode("new_scene");
       setMapCaptureVisible(true);
     }
-  }, [refreshScenes, tkgmData]);
+  }, [refreshScenes, ensureTkgmDataForCapture, pendingNewSceneCapture, runNewSceneAfterCapture]);
 
-  const sceneStripCards = useMemo(
-    () => buildSceneStripCards(sceneSegments, sceneTimeline, sceneRights),
-    [sceneSegments, sceneTimeline, sceneRights],
+  const sceneStripCards = useMemo(() => {
+    const sceneCards = buildSceneStripCards(sceneSegments, sceneTimeline, sceneRights);
+    const trimmedJobId = String(jobId || "").trim();
+    const hasFullVideo = Boolean(trimmedJobId && String(videoUri || "").trim());
+    if (!hasFullVideo) return sceneCards;
+    return [{ slot: null, fullVideo: true }, ...sceneCards];
+  }, [sceneSegments, sceneTimeline, sceneRights, jobId, videoUri]);
+
+  const showSceneStrip = Boolean(jobId);
+  const existingSceneCount = useMemo(
+    () => countExistingScenes(sceneSegments),
+    [sceneSegments],
   );
+  const mapCaptureSessionMax =
+    mapCaptureMode === "new_scene"
+      ? maxAppendCountForSession(sceneRights, existingSceneCount)
+      : DRONE_SCENE_INITIAL_COUNT;
 
-  const showSceneStrip = Boolean(jobId && sceneSegments.some((s) => s.exists));
-  const captureMaxFrames = maxCaptureCountForRights(sceneRights);
+  const onNarrationTextChange = useCallback((raw: string) => {
+    setNarrationText(clampDroneSimpleNarrationText(raw));
+  }, []);
 
   const onGenerateNarration = useCallback(async () => {
     if (!parcel && !narrationInputs) {
@@ -1141,7 +1537,9 @@ export default function AiDroneSimpleEditorScreen() {
       if (jobId) {
         await saveNarrationDraft(jobId, narrationText, narrCtx);
       }
-      const gen = await generateRunwayNarration(narrCtx);
+      const gen = await generateRunwayNarration(narrCtx, {
+        maxChars: DRONE_SIMPLE_NARRATION_TEXT_MAX,
+      });
       if (!gen.ok) {
         Alert.alert("Metin", gen.error);
         return;
@@ -1160,7 +1558,7 @@ export default function AiDroneSimpleEditorScreen() {
       Alert.alert("Kayıt", "Önce video oluşturun.");
       return;
     }
-    const text = narrationText.trim();
+    const text = clampDroneSimpleNarrationText(narrationText.trim());
     if (!text) {
       Alert.alert("Kayıt", "Seslendirme metni boş.");
       return;
@@ -1469,7 +1867,7 @@ export default function AiDroneSimpleEditorScreen() {
       const started = await startPortraitExport(jobId);
       if (!started.ok) throw new Error(started.error);
 
-      await beginDronePortraitExportJob(jobId);
+      await beginDronePortraitExportJob(jobId, started.exportId);
       Alert.alert(
         "Dışa aktarma",
         "Video arka planda hazırlanıyor. Tamamlandığında galeriye kaydedilecek ve bildirim alacaksınız.",
@@ -1541,26 +1939,70 @@ export default function AiDroneSimpleEditorScreen() {
     const trimmed = String(jobId || "").trim();
     if (!trimmed) return;
     if (previewMode === "scene" && activeSceneSlot != null) {
-      setSceneSegmentCacheBust(Date.now());
+      const now = Date.now();
+      if (now - videoSourceErrorAtRef.current < 2500) return;
+      videoSourceErrorAtRef.current = now;
+
+      if (scenePreviewRemoteRetryRef.current < 1) {
+        scenePreviewRemoteRetryRef.current += 1;
+        setScenePreviewFallback(null);
+        setSceneSegmentCacheBust(Date.now());
+        return;
+      }
+
+      const slot = Number(activeSceneSlot);
+      const bust = sceneSegmentCacheBust || Date.now();
+      void resolveScenePreviewSourceAsync({
+        jobId: trimmed,
+        slot,
+        segment: selectedSceneSegment,
+        authHeader,
+        cacheBust: bust,
+      }).then((fallback) => {
+        if (fallback.uri) setScenePreviewFallback(fallback);
+      });
       return;
     }
+    const now = Date.now();
+    if (now - videoSourceErrorAtRef.current < 4000) return;
+    videoSourceErrorAtRef.current = now;
     void resolveDroneRunwayPreviewVideoUrl(trimmed).then((resolved) => {
-      if (resolved) {
-        setPreviewMode("full");
-        setVideoUri(resolved);
-      }
+      if (resolved) applyResolvedPreviewVideo(resolved);
     });
-  }, [jobId, previewMode, activeSceneSlot]);
+  }, [
+    jobId,
+    previewMode,
+    activeSceneSlot,
+    sceneSegmentCacheBust,
+    selectedSceneSegment,
+    authHeader,
+    applyResolvedPreviewVideo,
+  ]);
 
   useEffect(() => {
     setPreviewPlaybackTime(0);
     setPreviewDuration(0);
   }, [previewVideoUri]);
 
-  const pipelineSlotProgress = useMemo(
-    () => toPipelineSlotProgressItems(pipelineSlotByKey, refFrameCount),
-    [pipelineSlotByKey, refFrameCount],
-  );
+  const pipelineSlotProgress = useMemo(() => {
+    if (appendSceneProduction) {
+      return toPipelineSlotProgressItemsForSlots(pipelineSlotByKey, [appendSceneProduction.runwaySlot]);
+    }
+    return toPipelineSlotProgressItems(pipelineSlotByKey, refFrameCount);
+  }, [pipelineSlotByKey, refFrameCount, appendSceneProduction]);
+
+  const scenePlaceholderProgress = useMemo(() => {
+    if (!appendSceneProduction) return null;
+    const entry = pipelineSlotByKey[String(appendSceneProduction.runwaySlot)];
+    const fullVideoOffset =
+      Boolean(String(jobId || "").trim() && String(videoUri || "").trim()) ? 1 : 0;
+    return {
+      cardIndex: appendSceneProduction.cardIndex + fullVideoOffset,
+      runwaySlot: appendSceneProduction.runwaySlot,
+      percent: entry?.percent ?? 0,
+      label: userFacingPipelineDetail(entry?.label || "Sahne hazırlanıyor…", "Sahne hazırlanıyor…"),
+    };
+  }, [appendSceneProduction, pipelineSlotByKey, jobId, videoUri]);
 
   const displayMusicTracks = useMemo(() => {
     if (!savedMusic) return musicTracks;
@@ -1620,20 +2062,6 @@ export default function AiDroneSimpleEditorScreen() {
     subtitleSettings.mode,
   ]);
 
-  const animationSettingRows = useMemo((): SettingsPanelRow[] => [
-    {
-      key: "image-animation",
-      icon: "sparkles-outline",
-      label: "Resim canlandırma",
-      description: useOpenAiPreflight
-        ? "Harita kareleri video öncesi işlenir (web editör gibi, daha uzun sürer)."
-        : "Harita kareleri doğrudan videoya dönüştürülür (daha hızlı).",
-      value: useOpenAiPreflight,
-      onValueChange: setUseOpenAiPreflight,
-      switchDisabled: pipelineBusy,
-    },
-  ], [useOpenAiPreflight, pipelineBusy]);
-
   return (
     <MobileAiScreenShell
       title="Pratik Video"
@@ -1664,11 +2092,15 @@ export default function AiDroneSimpleEditorScreen() {
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
         >
-        {parcelSummary ? (
-          <Text style={styles.meta} numberOfLines={2}>
-            {parcelSummary}
-          </Text>
-        ) : null}
+        <TouchableOpacity
+          style={[styles.newProjectBtn, pipelineBusy && styles.createBtnDisabled]}
+          disabled={pipelineBusy}
+          onPress={startNewProject}
+          accessibilityLabel="Yeni proje başlat"
+        >
+          <Ionicons name="add-circle-outline" size={20} color="#fff" />
+          <Text style={styles.createBtnText}>Yeni proje</Text>
+        </TouchableOpacity>
 
         {isAuthenticated ? (
           <CompletedDroneVideoPicker
@@ -1696,8 +2128,10 @@ export default function AiDroneSimpleEditorScreen() {
         >
           {videoSource ? (
             <PortraitVideoPlayer
+              key={`${previewMode}-${activeSceneSlot ?? "full"}-${previewVideoUri}`}
               source={videoSource}
-              musicSource={musicSource}
+              musicSource={previewMode === "scene" ? null : musicSource}
+              autoPlay={previewMode === "scene"}
               onPlaybackProgress={handlePreviewPlaybackProgress}
               onSourceError={handleVideoSourceError}
             />
@@ -1714,9 +2148,11 @@ export default function AiDroneSimpleEditorScreen() {
                 </>
               ) : (
                 <Text style={styles.previewHint}>
-                  {showSceneStrip
-                    ? "Sahne seçin veya birleştirin"
-                    : "Video önizlemesi (9:16)"}
+                  {previewMode === "scene" && activeSceneSlot != null && !previewVideoUri
+                    ? "Sahne videosu yüklenemedi"
+                    : showSceneStrip
+                      ? "Sahne seçin veya birleştirin"
+                      : "Video önizlemesi (9:16)"}
                 </Text>
               )}
             </View>
@@ -1727,17 +2163,25 @@ export default function AiDroneSimpleEditorScreen() {
         {showSceneStrip ? (
           <View style={styles.sceneStripWrap}>
             <DroneSceneStrip
+              jobId={jobId}
+              authHeader={authHeader}
+              thumbCacheBust={sceneThumbCacheBust}
               cards={sceneStripCards}
               activeSlot={activeSceneSlot}
+              fullVideoActive={previewMode === "full"}
+              fullVideoUri={videoUri}
               mergeSelectedSlots={mergeSelectedSlots}
               sceneRights={sceneRights}
               busy={sceneBusy || pipelineBusy}
               merging={mergingScenes}
+              onSelectFullVideo={handleSelectFullVideo}
               onSelectScene={handleSelectScene}
               onToggleMerge={handleToggleMergeSlot}
               onDeleteScene={handleDeleteScene}
+              onMoveActiveScene={handleMoveActiveScene}
               onMergeScenes={() => void handleMergeScenes()}
               onNewScene={handleNewScenePress}
+              placeholderProgress={scenePlaceholderProgress}
             />
           </View>
         ) : null}
@@ -1769,24 +2213,6 @@ export default function AiDroneSimpleEditorScreen() {
               disabled={pipelineBusy || !jobId}
               onPress={onPressRemoveProparcelLabel}
             />
-            <SettingsPanel title="Animasyon" rows={animationSettingRows} />
-            <TouchableOpacity
-              style={[styles.createBtn, pipelineBusy && styles.createBtnDisabled]}
-              disabled={pipelineBusy}
-              onPress={() => {
-                if (!isAuthenticated) {
-                  Alert.alert("Giriş", "Video oluşturmak için giriş yapın.", [
-                    { text: "İptal", style: "cancel" },
-                    { text: "Giriş", onPress: () => router.push("login") },
-                  ]);
-                  return;
-                }
-                setQueryVisible(true);
-              }}
-            >
-              <Ionicons name="videocam" size={20} color="#fff" />
-              <Text style={styles.createBtnText}>Video Oluştur</Text>
-            </TouchableOpacity>
             <Text style={styles.panelHint}>
               Dikey (9:16) dışa aktarım. Güvenli alan çizgileri web editör ile aynıdır; altyazıyı üstte sürükleyebilirsiniz.
             </Text>
@@ -1800,10 +2226,19 @@ export default function AiDroneSimpleEditorScreen() {
               style={styles.textArea}
               multiline
               value={narrationText}
-              onChangeText={setNarrationText}
+              onChangeText={onNarrationTextChange}
+              maxLength={DRONE_SIMPLE_NARRATION_TEXT_MAX}
               placeholder="Anlatım metni…"
               placeholderTextColor={AI_DRONE_EDITOR_THEME.mutedOnDark}
             />
+            <Text
+              style={[
+                styles.charCount,
+                narrationText.length >= DRONE_SIMPLE_NARRATION_TEXT_MAX && styles.charCountAtLimit,
+              ]}
+            >
+              {narrationText.length} / {DRONE_SIMPLE_NARRATION_TEXT_MAX}
+            </Text>
             <View style={styles.rowBtns}>
               <TouchableOpacity style={styles.secondaryBtn} onPress={() => void onGenerateNarration()} disabled={narrationBusy}>
                 {narrationBusy ? (
@@ -1906,7 +2341,7 @@ export default function AiDroneSimpleEditorScreen() {
       </View>
 
       <DroneProductionPipelineSheet
-        active={pipelineVisible}
+        active={pipelineVisible && !appendSceneProduction}
         open={pipelineSheetOpen}
         onOpenChange={setPipelineSheetOpen}
         busy={pipelineBusy}
@@ -1929,7 +2364,9 @@ export default function AiDroneSimpleEditorScreen() {
           visible
           tkgmData={tkgmData}
           mode={mapCaptureMode}
-          maxFrames={mapCaptureMode === "new_scene" ? captureMaxFrames : undefined}
+          sessionMaxFrames={mapCaptureSessionMax}
+          totalMaxFrames={DRONE_SCENE_PACKAGE_ALLOWANCE}
+          minFrames={mapCaptureMode === "new_scene" ? 1 : DRONE_SCENE_INITIAL_COUNT}
           onCancel={() => {
             setMapCaptureVisible(false);
             setMapCaptureMode("initial");
@@ -1944,6 +2381,7 @@ export default function AiDroneSimpleEditorScreen() {
       <DroneVideoPurchaseModal
         visible={purchaseModalVisible}
         onClose={() => setPurchaseModalVisible(false)}
+        onDismiss={handleDronePurchaseDismiss}
         referenceId={parcelReferenceId}
         parcel={parcel}
         parcelSummary={parcelSummary}
@@ -1952,9 +2390,15 @@ export default function AiDroneSimpleEditorScreen() {
 
       <DroneExtraScenePurchaseModal
         visible={extraScenePurchaseVisible}
-        onClose={() => setExtraScenePurchaseVisible(false)}
+        onClose={handleExtraScenePurchaseDismiss}
+        onDismiss={handleExtraScenePurchaseDismiss}
         referenceId={parcelReferenceId}
         jobId={jobId}
+        preferredActionType={
+          pendingNewSceneCapture
+            ? resolveEkSahneActionForCount(pendingNewSceneCapture.images?.length ?? 1)
+            : undefined
+        }
         onPurchaseSuccess={() => void handleExtraScenePurchaseSuccess()}
       />
 
@@ -1988,7 +2432,18 @@ const styles = StyleSheet.create({
   },
   headerBtnDisabled: { opacity: 0.45 },
   scroll: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32 + 24 + 72, gap: 0 },
-  meta: { color: AI_DRONE_EDITOR_THEME.mutedOnDark, fontSize: 12, marginBottom: 12 },
+  newProjectBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: DRONE_SETTINGS_THEME.ctaBg,
+    height: 50,
+    borderRadius: 14,
+    marginBottom: 12,
+  },
+  createBtnDisabled: { opacity: 0.6 },
+  createBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 17 },
   previewWrap: {
     marginBottom: 4,
   },
@@ -2002,18 +2457,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   previewHint: { color: AI_DRONE_EDITOR_THEME.mutedOnDark, fontSize: 14 },
-  createBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: DRONE_SETTINGS_THEME.ctaBg,
-    height: 50,
-    borderRadius: 14,
-    marginTop: 12,
-  },
-  createBtnDisabled: { opacity: 0.6 },
-  createBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 17 },
   panel: {
     backgroundColor: DRONE_SETTINGS_THEME.panelBg,
     borderRadius: 16,
@@ -2038,6 +2481,15 @@ const styles = StyleSheet.create({
     padding: 12,
     color: AI_DRONE_EDITOR_THEME.textOnDark,
     textAlignVertical: "top",
+  },
+  charCount: {
+    alignSelf: "flex-end",
+    color: AI_DRONE_EDITOR_THEME.mutedOnDark,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  charCountAtLimit: {
+    color: "#fbbf24",
   },
   rowBtns: { flexDirection: "row", gap: 8 },
   musicUploadBtn: { marginBottom: 12 },

@@ -85,9 +85,9 @@ export default function IlanlarimScreen() {
 
   const openEdit = useCallback(
     (listingId: string) => {
-      router.push("portal-webview", {
-        path: `/portal/ilan/${encodeURIComponent(listingId)}/duzenle/`,
-        title: "İlan düzenle",
+      router.push("listing-wizard", {
+        listingId,
+        mode: "edit",
       });
     },
     [router],

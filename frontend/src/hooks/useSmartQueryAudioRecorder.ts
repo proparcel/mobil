@@ -16,6 +16,7 @@ export type SmartQueryRecordingPayload = {
   base64: string;
   mimeType: string;
   uri: string;
+  durationMs?: number | null;
 };
 
 const METERING_POLL_MS = 80;
@@ -91,8 +92,23 @@ export function useSmartQueryAudioRecorder() {
     setAudioLevel(normalizeMetering(status.metering));
   }, []);
 
-  const startRecording = useCallback(async (): Promise<boolean> => {
+  const getRecordingDurationMs = useCallback((): number | null => {
+    if (!recordingRef.current) return null;
+    const duration = lastStatusDurationMsRef.current;
+    if (typeof duration === 'number' && !Number.isNaN(duration)) return duration;
+    if (recordingStartedAtMsRef.current != null) {
+      return Date.now() - recordingStartedAtMsRef.current;
+    }
+    return null;
+  }, []);
+
+  const startRecording = useCallback(async (force = true): Promise<boolean> => {
     setPermissionHint(null);
+
+    if (recordingRef.current && !force) {
+      return true;
+    }
+
     setAudioLevel(0);
 
     const permission = await ensureMicrophonePermission();
@@ -198,7 +214,7 @@ export function useSmartQueryAudioRecorder() {
         return null;
       }
 
-      return { base64, mimeType, uri };
+      return { base64, mimeType, uri, durationMs: statusDurationMs ?? wallDurationMs };
     } catch (error: any) {
       recordingRef.current = null;
       setIsRecording(false);
@@ -248,5 +264,6 @@ export function useSmartQueryAudioRecorder() {
     stopRecording,
     clearRecording,
     getRecordingPayload,
+    getRecordingDurationMs,
   };
 }

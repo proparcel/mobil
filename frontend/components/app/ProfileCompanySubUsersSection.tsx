@@ -25,8 +25,8 @@ type MemberRow = {
 };
 
 function subUserId(sub: ProfileSubUser): number | null {
-  const id = sub.user?.id;
-  return id != null && Number.isFinite(Number(id)) ? Number(id) : null;
+  const raw = sub.user_id ?? sub.user?.id;
+  return raw != null && Number.isFinite(Number(raw)) ? Number(raw) : null;
 }
 
 function subUserEmail(sub: ProfileSubUser): string {

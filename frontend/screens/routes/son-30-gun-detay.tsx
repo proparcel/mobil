@@ -66,6 +66,10 @@ import {
   type ProfileReturnRouteParams,
 } from '../../src/utils/profileReturnNavigation';
 import {
+  loadPortalRecentQueriesListSession,
+  portalRecentQueriesSessionHasListContext,
+} from '../../src/utils/portalRecentQueriesListSession';
+import {
   PORTAL_RECENT_QUERIES_CHANGED,
   type PortalRecentQueriesChangedPayload,
 } from '../../src/constants/portalEvents';
@@ -95,6 +99,7 @@ import {
   getPortalDetailSection,
   getPortalKmSection,
 } from '../../services/portalService';
+import { bootstrapListingFromPortalSnapshot } from '../../services/listingBootstrapService';
 import { authJsonFetch } from '../../services/apiClient';
 import { authService } from '../../services/authService';
 import type {
@@ -130,7 +135,8 @@ import { useDesignedParcelShare } from '../../src/hooks/useDesignedParcelShare';
 import DesignedParcelShareHost from '../../components/app/DesignedParcelShareHost';
 import RNFS from 'react-native-fs';
 import {
-  enrichMorphologyForDisplay,
+  buildContextMorphologyDisplay,
+  formatSlopeMeters,
   resolvePortalAvgSlopeFromSectionPayload,
 } from '../../src/utils/slopeTerrainHelpers';
 import {
@@ -151,6 +157,7 @@ import {
   buildTkgmFeatureFromPortalDetail,
 } from '../../src/utils/portalDetailProQueryLauncher';
 import { useProQueryAfterTypeSelect } from '../../src/hooks/useProQueryAfterTypeSelect';
+import { usePortalMahalleOrtSession } from '../../src/hooks/usePortalMahalleOrtSession';
 import ProQueryTypeModalHost from '../../components/app/ProQueryTypeModalHost';
 import {
   ELECTRIC_LEGAL_INFO,
@@ -342,7 +349,7 @@ function hasListingDescriptionTab(d: PortalQueryDetail): boolean {
   return !!d.listing_id;
 }
 
-/** Web üst şerit sırasıyla uyumlu sekme listesi */
+/** Mobil detay sekme sırası (kullanıcı tanımlı + ilan / kenar / uzman ekleri). */
 function buildMobileDetailTabs(d: PortalQueryDetail): DetailMainTabDef[] {
   const isStructure = isStructurePortalQueryType(d.query_type);
   const out: DetailMainTabDef[] = [];
@@ -350,27 +357,35 @@ function buildMobileDetailTabs(d: PortalQueryDetail): DetailMainTabDef[] {
     out.push({ id: 'listing_info', label: 'İlan Bilgileri' });
     out.push({ id: 'listing_description', label: 'Açıklama' });
   }
-  const mid: DetailMainTabDef[] = [
+
+  out.push(
+    { id: 'general', label: 'Genel' },
     { id: 'overview', label: 'DFA' },
-    { id: 'slope', label: 'Parsel Eğimi' },
-    { id: 'km', label: 'KM Analizi' },
-    { id: 'edge', label: 'Kenar Ölçüleri' },
+    { id: 'calculate', label: 'Hesapla' },
+    { id: 'slope', label: 'Parsel Morfoloji' },
     { id: 'road', label: 'Yol' },
-  ];
+    { id: 'electric', label: 'Yüksek Gerilim' },
+    { id: 'investment_score', label: 'Mülk Skoru' },
+    { id: 'km', label: 'KM Analizi' },
+  );
+
   if (isImarliArsaLandCategory(d) || isImarsizTarimLandCategory(d)) {
-    mid.push({ id: 'split', label: 'Bölünebilirlik' });
+    out.push({ id: 'split', label: 'Bölünebilirlik' });
   }
-  mid.push({ id: 'electric', label: 'Yüksek Gerilim' });
   if (!isStructure) {
-    mid.push({ id: 'fruit_investment', label: 'Meyve Bahçesi Skoru' });
+    out.push({ id: 'fruit_investment', label: 'Meyve Bahçesi Skoru' });
   }
-  mid.push({ id: 'investment_score', label: 'Mülk Skoru' });
-  mid.push({ id: 'solar_energy', label: 'Güneş Enerjisi' });
+  out.push({ id: 'solar_energy', label: 'Güneş Enerjisi' });
   if (!isStructure) {
-    mid.push({ id: 'wind_energy', label: 'Rüzgar Enerjisi' });
+    out.push({ id: 'wind_energy', label: 'Rüzgar Enerjisi' });
   }
-  out.push(...mid);
-  out.push({ id: 'expert', label: 'Uzman Görüşleri' });
+  out.push(
+    { id: 'promahalle', label: 'Mahalle Bilgileri' },
+    { id: 'report', label: 'Rapor' },
+    { id: 'edge', label: 'Kenar Ölçüleri' },
+    { id: 'expert', label: 'Uzman Görüşleri' },
+  );
+
   return out;
 }
 
@@ -1166,6 +1181,7 @@ export default function Son30GunDetayScreen() {
     ratingId?: string;
     listingId?: string;
     fromProQuery?: string;
+    fromSon30Gun?: string;
   } & ProfileReturnRouteParams>();
   const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const {
@@ -1183,6 +1199,7 @@ export default function Son30GunDetayScreen() {
   const slopeSectionRef = useRef<View>(null);
   const electricSectionRef = useRef<View>(null);
   const dfaSectionRef = useRef<View>(null);
+  const hesaplaSectionRef = useRef<View>(null);
   const listingDescSectionRef = useRef<View>(null);
   const listingInfoSectionRef = useRef<View>(null);
   const edgeSectionRef = useRef<View>(null);
@@ -1193,7 +1210,31 @@ export default function Son30GunDetayScreen() {
   const [detailMenuVisible, setDetailMenuVisible] = useState(false);
   const [shareMenuVisible, setShareMenuVisible] = useState(false);
   const [detailMenuLihkabOpen, setDetailMenuLihkabOpen] = useState(false);
-  const [activeDetailTabId, setActiveDetailTabId] = useState<string>('overview');
+  const [activeDetailTabId, setActiveDetailTabId] = useState<string>('general');
+  const detailTabSwiperRef = useRef<FlatList<DetailMainTabDef>>(null);
+  const detailTabDefsRef = useRef<DetailMainTabDef[]>([]);
+  const detailTabBarScrollRef = useRef<ScrollView>(null);
+  const detailTabLayoutsRef = useRef<Record<string, { x: number; width: number }>>({});
+
+  const scrollDetailTabBarToActive = useCallback((tabId: string) => {
+    const layout = detailTabLayoutsRef.current[tabId];
+    if (!layout || !detailTabBarScrollRef.current) return false;
+    const tabCenter = layout.x + layout.width / 2;
+    const targetX = Math.max(0, tabCenter - SCREEN_WIDTH / 2);
+    detailTabBarScrollRef.current.scrollTo({ x: targetX, animated: true });
+    return true;
+  }, []);
+
+  const selectDetailTab = useCallback((tabId: string, opts?: { animated?: boolean }) => {
+    setActiveDetailTabId(tabId);
+    const idx = detailTabDefsRef.current.findIndex((t) => t.id === tabId);
+    if (idx >= 0) {
+      detailTabSwiperRef.current?.scrollToIndex({
+        index: idx,
+        animated: opts?.animated ?? true,
+      });
+    }
+  }, []);
   const [solarEnergyPayload, setSolarEnergyPayload] = useState<PortalSolarEnergyScoreResponse | null>(null);
   const [solarEnergyLoading, setSolarEnergyLoading] = useState(false);
   const [solarEnergyErr, setSolarEnergyErr] = useState<string | null>(null);
@@ -1212,7 +1253,7 @@ export default function Son30GunDetayScreen() {
   const splitFetchedRef = useRef(false);
 
   const scrollToSection = useCallback((tabId: string, ref: React.RefObject<View>) => {
-    setActiveDetailTabId(tabId);
+    selectDetailTab(tabId, { animated: false });
     setDetailMenuVisible(false);
     setTimeout(() => {
       ref.current?.measureLayout(
@@ -1221,16 +1262,16 @@ export default function Son30GunDetayScreen() {
         () => {},
       );
     }, 450);
-  }, []);
+  }, [selectDetailTab]);
 
-  const ensureOverviewTabForDfaInput = useCallback(() => {
-    if (activeDetailTabId !== 'overview') {
-      setActiveDetailTabId('overview');
+  const ensureCalculateTabForDfaInput = useCallback(() => {
+    if (activeDetailTabId !== 'calculate') {
+      selectDetailTab('calculate', { animated: false });
     }
-  }, [activeDetailTabId]);
+  }, [activeDetailTabId, selectDetailTab]);
 
   const openKmTab = useCallback(() => {
-    setActiveDetailTabId('km');
+    selectDetailTab('km', { animated: false });
     setDetailMenuVisible(false);
     setTimeout(() => {
       kmSectionRef.current?.measureLayout(
@@ -1239,15 +1280,27 @@ export default function Son30GunDetayScreen() {
         () => {},
       );
     }, 450);
-  }, []);
+  }, [selectDetailTab]);
 
   const openMulkScoreTab = useCallback(() => {
-    setActiveDetailTabId('investment_score');
+    selectDetailTab('investment_score', { animated: false });
     setDetailMenuVisible(false);
     setTimeout(() => {
       scrollRef.current?.scrollTo({ y: 420, animated: true });
     }, 300);
-  }, []);
+  }, [selectDetailTab]);
+
+  const openSlopeTab = useCallback(() => {
+    selectDetailTab('slope', { animated: false });
+    setDetailMenuVisible(false);
+    setTimeout(() => {
+      slopeSectionRef.current?.measureLayout(
+        scrollRef.current?.getInnerViewRef?.() as any,
+        (_x: number, y: number) => scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true }),
+        () => {},
+      );
+    }, 450);
+  }, [selectDetailTab]);
 
   const [data, setData] = useState<PortalQueryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1354,6 +1407,15 @@ export default function Son30GunDetayScreen() {
     [isListingDetailView, data?.is_own_query, data?.pro_query_credit_notice?.show],
   );
   const [proQueryCreditNoticeModalVisible, setProQueryCreditNoticeModalVisible] = useState(false);
+  const [ilanVerBusy, setIlanVerBusy] = useState(false);
+
+  const showIlanVerButton = useMemo(
+    () =>
+      !isListingDetailView
+      && Boolean(data?.is_own_query)
+      && !String(data?.listing_id || '').trim(),
+    [data?.is_own_query, data?.listing_id, isListingDetailView],
+  );
 
   useEffect(() => {
     if (!showProQueryCreditNotice || !Number.isFinite(snapshotId)) {
@@ -1391,6 +1453,7 @@ export default function Son30GunDetayScreen() {
   });
 
   const detailTabDefs = useMemo(() => (data ? buildMobileDetailTabs(data) : []), [data]);
+  detailTabDefsRef.current = detailTabDefs;
 
   const lastSnapshotForTabRef = useRef<number | null>(null);
   useEffect(() => {
@@ -1398,15 +1461,25 @@ export default function Son30GunDetayScreen() {
     if (lastSnapshotForTabRef.current !== data.snapshot_id) {
       lastSnapshotForTabRef.current = data.snapshot_id;
       setActiveDetailTabId(detailTabDefs[0].id);
+      requestAnimationFrame(() => {
+        detailTabSwiperRef.current?.scrollToIndex({ index: 0, animated: false });
+      });
     }
   }, [data?.snapshot_id, detailTabDefs]);
 
   useEffect(() => {
     if (!detailTabDefs.length) return;
     if (!detailTabDefs.some((t) => t.id === activeDetailTabId)) {
-      setActiveDetailTabId(detailTabDefs[0].id);
+      selectDetailTab(detailTabDefs[0].id, { animated: false });
     }
-  }, [detailTabDefs, activeDetailTabId]);
+  }, [detailTabDefs, activeDetailTabId, selectDetailTab]);
+
+  useEffect(() => {
+    if (!activeDetailTabId || !detailTabDefs.some((t) => t.id === activeDetailTabId)) return;
+    if (scrollDetailTabBarToActive(activeDetailTabId)) return;
+    const retry = setTimeout(() => scrollDetailTabBarToActive(activeDetailTabId), 64);
+    return () => clearTimeout(retry);
+  }, [activeDetailTabId, detailTabDefs, scrollDetailTabBarToActive]);
 
   const redirectToLoginForDetail = useCallback(() => {
     if (!Number.isFinite(snapshotId)) {
@@ -1431,6 +1504,30 @@ export default function Son30GunDetayScreen() {
     params.ratingId,
     params.fromProQuery,
   ]);
+
+  const handleIlanVerPress = useCallback(async () => {
+    if (!Number.isFinite(snapshotId)) return;
+    if (!isAuthenticated) {
+      redirectToLoginForDetail();
+      return;
+    }
+    setIlanVerBusy(true);
+    try {
+      const res = await bootstrapListingFromPortalSnapshot(String(snapshotId));
+      if (!res.ok) {
+        Alert.alert('İlan Ver', res.error || 'Taslak oluşturulamadı.');
+        return;
+      }
+      router.push('listing-wizard', {
+        listingId: res.listingId,
+        mode: 'edit',
+        forceEidsFirst: '1',
+        returnSnapshotId: String(snapshotId),
+      });
+    } finally {
+      setIlanVerBusy(false);
+    }
+  }, [isAuthenticated, redirectToLoginForDetail, router, snapshotId]);
 
   redirectToLoginForDetailRef.current = redirectToLoginForDetail;
 
@@ -1696,6 +1793,11 @@ export default function Son30GunDetayScreen() {
     kmSectionFetchedRef.current = false;
     void loadKmSection({ force: true });
   }, [loadDetail, loadKmSection]);
+
+  const mahalleOrtSession = usePortalMahalleOrtSession(data, {
+    onMahalleOrtSaved: handleMahalleOrtSaved,
+    viewerIsExpert: Boolean(data?.viewer_is_expert ?? isExpertMember(user)),
+  });
 
   useEffect(() => {
     if (activeDetailTabId !== 'km') return;
@@ -2006,23 +2108,31 @@ export default function Son30GunDetayScreen() {
     () => resolveImageUrl(profileInfo.companyLogoUrl || null),
     [profileInfo.companyLogoUrl],
   );
-  const shouldDetailBackOpenHome = useMemo(() => {
-    if (!isAuthenticated) return true;
-    const isBusinessUser = isExpertMember(user);
-    return !isBusinessUser;
-  }, [isAuthenticated, user]);
-
   const handleHeaderBack = useCallback(() => {
     if (isProfileReturn(params)) {
       navigateBackFromProfileChild(router, params);
       return;
     }
-    if (shouldDetailBackOpenHome) {
-      router.replace('index');
+    const fromList = String(params.fromSon30Gun || '').trim() === '1';
+    if (fromList && router.canGoBack()) {
+      router.back();
       return;
     }
-    router.back();
-  }, [router, params, shouldDetailBackOpenHome]);
+    void (async () => {
+      const session = await loadPortalRecentQueriesListSession();
+      const fallbackCityId =
+        data?.city_id != null && Number.isFinite(Number(data.city_id)) ? String(data.city_id) : undefined;
+      if (portalRecentQueriesSessionHasListContext(session)) {
+        router.replace('son-30-gun', { restoreListSession: '1' });
+        return;
+      }
+      if (fallbackCityId) {
+        router.replace('son-30-gun', { fallbackCityId });
+        return;
+      }
+      router.replace('son-30-gun');
+    })();
+  }, [router, params, data?.city_id]);
 
   // ── Handlers ──
 
@@ -2030,6 +2140,19 @@ export default function Son30GunDetayScreen() {
     if (!data) return;
     router.push('portal-v5-report-webview', {
       snapshotId: String(data.snapshot_id),
+    });
+  }, [data, router]);
+
+  const handleOpenPromahalle = useCallback(() => {
+    if (!data) return;
+    router.push('promahalle', {
+      city_id: String(data.city_id || ''),
+      town_id: String(data.town_id || ''),
+      quarter_id: String(data.quarter_id || ''),
+      proparcel_value: data.proparcel_value ? String(data.proparcel_value) : undefined,
+      title: data.quarter_name?.trim()
+        ? `ProMahalle — ${String(data.quarter_name).trim()}`
+        : 'ProMahalle',
     });
   }, [data, router]);
 
@@ -2044,6 +2167,12 @@ export default function Son30GunDetayScreen() {
 
   const handleSharePdf = useCallback(() => {
     if (!data) return;
+    console.log('[PortalV5PdfShare] menu_pdf_share_pressed', {
+      snapshotId: data.snapshot_id,
+      quarter: data.quarter_name,
+      ada: data.ada,
+      parsel: data.parsel,
+    });
     router.push('portal-v5-report-webview', {
       snapshotId: String(data.snapshot_id),
       sharePdf: '1',
@@ -3844,6 +3973,22 @@ export default function Son30GunDetayScreen() {
             <Text style={s.modeNoticePillText}>{isListingDetailView ? 'İlan' : 'ProSorgu'}</Text>
           </View>
         )}
+        {showIlanVerButton ? (
+          <TouchableOpacity
+            style={[s.modeNoticePill, s.modeNoticePillListing, s.modeNoticePillButton, ilanVerBusy && s.modeNoticePillDisabled]}
+            onPress={() => void handleIlanVerPress()}
+            disabled={ilanVerBusy}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="İlan Ver"
+          >
+            {ilanVerBusy ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={s.modeNoticePillText}>İlan Ver</Text>
+            )}
+          </TouchableOpacity>
+        ) : null}
         {detailModeNoticeTitle ? (
           <Text
             style={[s.modeNoticeText, isListingDetailView ? s.modeNoticeTextListing : s.modeNoticeTextQuery]}
@@ -3864,6 +4009,7 @@ export default function Son30GunDetayScreen() {
         backgroundColor={COLORS.pageBg}
         avoidingStyle={s.keyboardAvoidingFill}
         style={s.scrollView}
+        disableKeyboardAvoiding
         contentContainerStyle={[s.scrollContent, { paddingBottom: insets.bottom + 24 }]}
       >
         {/* Breadcrumb */}
@@ -4245,44 +4391,64 @@ export default function Son30GunDetayScreen() {
                 </Text>
               </View>
             ) : null}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.detailTabScroll} contentContainerStyle={s.detailTabScrollContent}>
+            <ScrollView
+              ref={detailTabBarScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={s.detailTabScroll}
+              contentContainerStyle={s.detailTabScrollContent}
+            >
               {detailTabDefs.map((tab) => (
                 <TouchableOpacity
                   key={tab.id}
                   style={[s.detailTabSquare, activeDetailTabId === tab.id && s.detailTabSquareActive]}
-                  onPress={() => setActiveDetailTabId(tab.id)}
+                  onPress={() => selectDetailTab(tab.id)}
+                  onLayout={(e) => {
+                    detailTabLayoutsRef.current[tab.id] = {
+                      x: e.nativeEvent.layout.x,
+                      width: e.nativeEvent.layout.width,
+                    };
+                  }}
                   activeOpacity={0.7}
                 >
                   <Text style={[s.detailTabSquareText, activeDetailTabId === tab.id && s.detailTabSquareTextActive]}>{tab.label}</Text>
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity
-                style={s.detailTabSquare}
-                onPress={() => {
-                  router.push('promahalle', {
-                    city_id: String(data?.city_id || ''),
-                    town_id: String(data?.town_id || ''),
-                    quarter_id: String(data?.quarter_id || ''),
-                    proparcel_value: data?.proparcel_value ? String(data.proparcel_value) : undefined,
-                    title: data?.quarter_name?.trim()
-                      ? `ProMahalle — ${String(data.quarter_name).trim()}`
-                      : 'ProMahalle',
-                  });
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={s.detailTabSquareText}>Mahalle Bilgileri</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={s.detailTabSquare}
-                onPress={() => handleViewReport()}
-                activeOpacity={0.7}
-              >
-                <Text style={s.detailTabSquareText}>Rapor</Text>
-              </TouchableOpacity>
             </ScrollView>
 
-            {activeDetailTabId === 'listing_info' && data.listing_id ? (
+            <FlatList
+              ref={detailTabSwiperRef}
+              data={detailTabDefs}
+              horizontal
+              pagingEnabled
+              nestedScrollEnabled
+              bounces={false}
+              decelerationRate="fast"
+              showsHorizontalScrollIndicator={false}
+              keyExtractor={(item) => item.id}
+              extraData={activeDetailTabId}
+              style={s.detailTabSwiper}
+              getItemLayout={(_, index) => ({
+                length: SCREEN_WIDTH,
+                offset: SCREEN_WIDTH * index,
+                index,
+              })}
+              initialScrollIndex={Math.max(0, detailTabDefs.findIndex((t) => t.id === activeDetailTabId))}
+              onScrollToIndexFailed={(info) => {
+                setTimeout(() => {
+                  detailTabSwiperRef.current?.scrollToIndex({ index: info.index, animated: false });
+                }, 80);
+              }}
+              onMomentumScrollEnd={(e) => {
+                const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+                const tab = detailTabDefs[idx];
+                if (tab && tab.id !== activeDetailTabId) {
+                  setActiveDetailTabId(tab.id);
+                }
+              }}
+              renderItem={({ item: tab }) => (
+                <View style={{ width: SCREEN_WIDTH }}>
+            {tab.id === 'listing_info' && data.listing_id ? (
               <View ref={listingInfoSectionRef}>
                 <View style={s.card}>
                   <View style={s.cardTitleRow}>
@@ -4335,7 +4501,7 @@ export default function Son30GunDetayScreen() {
               </View>
             ) : null}
 
-            {activeDetailTabId === 'listing_description' && (
+            {tab.id === 'listing_description' && (
               <View ref={listingDescSectionRef} style={s.listingDescFullPage}>
                 {data.listing_description && String(data.listing_description).trim() ? (
                   <ListingDescriptionRich content={String(data.listing_description).trim()} />
@@ -4345,51 +4511,67 @@ export default function Son30GunDetayScreen() {
               </View>
             )}
 
-            {activeDetailTabId === 'overview' && (
-              <>
-                <View ref={bilgiSectionRef}>
-                  <PortalInsightSummaryCard
-                    detail={data}
-                    data={scores.insightData}
-                    listingProLocked={listingProLocked}
-                    listingOnly={listingOnly}
-                    onOpenMulkScoreTab={openMulkScoreTab}
-                    onOpenKmTab={openKmTab}
-                    onQuarterCenterChipPress={() => void handleQuarterCenterChipClick()}
-                    quarterCenterMapActive={quarterCenterMapVisible}
-                    quarterCenterMapLoading={quarterCenterMapLoading}
-                    quarterCenterMapError={quarterCenterMapError}
-                  />
-                </View>
-                <View ref={dfaSectionRef}>
-                  <PortalDfaTableCard
-                    detail={data}
-                    scrollRef={scrollRef}
-                    onBeforeMahalleInputFocus={ensureOverviewTabForDfaInput}
-                    hasElectricOverrideNote={hasElectricOverrideNote}
-                    onOpenRoadModal={() => setRoadReportModalVisible(true)}
-                    onOpenElectricModal={() => setElectricOverrideMapVisible(true)}
-                    onMahalleOrtSaved={handleMahalleOrtSaved}
-                    viewerIsExpert={Boolean(data?.viewer_is_expert ?? isExpertMember(user))}
-                    middleSlot={
-                      <>
-                        <PortalProParcelPriceCard detail={data} topMargin={0} />
-                        {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info')}
-                        {renderDetailKvCard(
-                          'Yapı bilgileri',
-                          'business-outline',
-                          structureRows.map(([label, value]) => [label, value] as [string, string, boolean?]),
-                          'structure-info',
-                          12,
-                        )}
-                      </>
-                    }
-                  />
-                </View>
-              </>
+            {tab.id === 'general' && (
+              <View ref={bilgiSectionRef}>
+                <PortalInsightSummaryCard
+                  detail={data}
+                  data={scores.insightData}
+                  listingProLocked={listingProLocked}
+                  listingOnly={listingOnly}
+                  onOpenMulkScoreTab={openMulkScoreTab}
+                  onOpenKmTab={openKmTab}
+                  onOpenSlopeTab={openSlopeTab}
+                  onQuarterCenterChipPress={() => void handleQuarterCenterChipClick()}
+                  quarterCenterMapActive={quarterCenterMapVisible}
+                  quarterCenterMapLoading={quarterCenterMapLoading}
+                  quarterCenterMapError={quarterCenterMapError}
+                />
+                {renderDetailKvCard('Bilgiler', 'information-circle-outline', parcelRows, 'parcel-info', 8)}
+              </View>
             )}
 
-            {activeDetailTabId === 'km' && data ? (
+            {tab.id === 'overview' && (
+              <View ref={dfaSectionRef}>
+                <PortalDfaTableCard
+                  detail={data}
+                  section="valuation"
+                  mahalleOrtSession={mahalleOrtSession}
+                  hasElectricOverrideNote={hasElectricOverrideNote}
+                  onOpenRoadModal={() => setRoadReportModalVisible(true)}
+                  onOpenElectricModal={() => setElectricOverrideMapVisible(true)}
+                  onMahalleOrtSaved={handleMahalleOrtSaved}
+                  viewerIsExpert={Boolean(data?.viewer_is_expert ?? isExpertMember(user))}
+                  middleSlot={
+                    <>
+                      <PortalProParcelPriceCard detail={data} topMargin={0} />
+                      {renderDetailKvCard(
+                        'Yapı bilgileri',
+                        'business-outline',
+                        structureRows.map(([label, value]) => [label, value] as [string, string, boolean?]),
+                        'structure-info',
+                        12,
+                      )}
+                    </>
+                  }
+                />
+              </View>
+            )}
+
+            {tab.id === 'calculate' && (
+              <View ref={hesaplaSectionRef}>
+                <PortalDfaTableCard
+                  detail={data}
+                  section="calculator"
+                  mahalleOrtSession={mahalleOrtSession}
+                  scrollRef={scrollRef}
+                  onBeforeMahalleInputFocus={ensureCalculateTabForDfaInput}
+                  onMahalleOrtSaved={handleMahalleOrtSaved}
+                  viewerIsExpert={Boolean(data?.viewer_is_expert ?? isExpertMember(user))}
+                />
+              </View>
+            )}
+
+            {tab.id === 'km' && data ? (
               <PortalKmTab
                 detail={data}
                 kmSectionData={kmSectionData}
@@ -4400,17 +4582,20 @@ export default function Son30GunDetayScreen() {
               />
             ) : null}
 
-            {activeDetailTabId === 'slope' && (() => {
+            {tab.id === 'slope' && (() => {
               const slopeSectionPayload = scores.slopeSection as Record<string, unknown> | null;
               const slopeElev = (
                 slopeSectionPayload?.slope_elevation_json
                 ?? data.slope_elevation_json
                 ?? {}
               ) as Record<string, any>;
-              const morphology = enrichMorphologyForDisplay(
+              const contextMorphology =
+                (slopeSectionPayload?.context_morphology_json
+                  ?? data.context_morphology_json) as Record<string, unknown> | null | undefined;
+              const morphology = buildContextMorphologyDisplay(
+                contextMorphology,
                 slopeElev.elevation_morphology as Record<string, unknown> | undefined,
-                (slopeElev.parcel_slope_values || slopeElev.slope_values || {}) as Record<string, unknown>,
-              ) as Record<string, any>;
+              );
               const sv = (slopeElev.parcel_slope_values || slopeElev.slope_values || {}) as Record<string, any>;
               const slopeSummary = data.slopeSummary;
               if (slopeSummary && typeof slopeSummary === 'object') {
@@ -4453,24 +4638,17 @@ export default function Son30GunDetayScreen() {
                 if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
                 return `%${formatRoundedSlope(value)}`;
               };
-              const formatMetersSlope = (value: unknown): string => {
-                if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
-                return `${formatRoundedSlope(value)} m`;
-              };
-              const formatRangeSlope = (range: unknown): string => {
-                if (!Array.isArray(range) || range.length < 2) return '—';
-                return `${formatMetersSlope(range[0])} - ${formatMetersSlope(range[1])}`;
-              };
 
               const morphRows = [
                 { label: 'Arazi Sınıfı', value: String(morphology.type_label || '—') },
-                { label: 'Morfoloji Tipi', value: String(morphology.type || '—') },
                 {
-                  label: 'Güven Seviyesi',
-                  value: morphology.confidence != null && morphology.confidence !== ''
-                    ? formatPercentSlope(Number(morphology.confidence) * 100)
-                    : '—',
+                  label: 'Güven',
+                  value:
+                    morphology.confidence != null
+                      ? formatPercentSlope(Number(morphology.confidence) * 100)
+                      : '—',
                 },
+                { label: 'Parsel Ort. Yükseklik', value: formatSlopeMeters(morphology.parcel_mean_m) },
               ];
               const distRows = [
                 { label: '0-20 Eğim Alanı', value: formatPercentSlope(sv.parcel_slope_percent_0_20) },
@@ -4480,14 +4658,8 @@ export default function Son30GunDetayScreen() {
                 { label: 'Ortalama Eğim', value: avgSlope != null ? formatPercentSlope(avgSlope) : formatPercentSlope(sv.slope_avg_poly) },
               ];
               const elevRows = [
-                { label: 'Ortalama Rakım', value: formatMetersSlope(morphology.avg_elevation) },
-                { label: 'Rakım Aralığı', value: formatRangeSlope(morphology.elevation_range) },
-                { label: 'Toplam Yükseklik Farkı', value: formatMetersSlope(morphology.range) },
-                {
-                  label: 'Parsel Alanı',
-                  value: morphology.area_m2 != null ? `${formatRoundedSlope(morphology.area_m2)} m²` : '—',
-                },
-                { label: 'Taban Rakım', value: formatMetersSlope(sv.base_elevation) },
+                { label: 'Parsel Ort. Rakım', value: formatSlopeMeters(morphology.parcel_mean_m) },
+                { label: 'Çevre Yükseklik Farkı', value: formatSlopeMeters(morphology.height_spread) },
               ];
 
               const renderSlopeBlock = (title: string, rows: { label: string; value: string }[]) => (
@@ -4575,7 +4747,7 @@ export default function Son30GunDetayScreen() {
               );
             })()}
 
-            {activeDetailTabId === 'edge' && (
+            {tab.id === 'edge' && (
               <View ref={edgeSectionRef}>
                 <View style={s.card}>
                   <View style={s.cardTitleRow}>
@@ -4595,7 +4767,7 @@ export default function Son30GunDetayScreen() {
               </View>
             )}
 
-            {activeDetailTabId === 'road' && data ? (
+            {tab.id === 'road' && data ? (
               <PortalRoadTab
                 snapshotId={Number(data.snapshot_id ?? snapshotId)}
                 detail={data}
@@ -4604,7 +4776,7 @@ export default function Son30GunDetayScreen() {
               />
             ) : null}
 
-            {activeDetailTabId === 'electric' && (() => {
+            {tab.id === 'electric' && (() => {
               if (electricSectionLoading) {
                 return (
                   <View ref={electricSectionRef} style={s.card}>
@@ -4721,7 +4893,7 @@ export default function Son30GunDetayScreen() {
               );
             })()}
 
-            {activeDetailTabId === 'fruit_investment' && (
+            {tab.id === 'fruit_investment' && (
               scores.structureQuery ? (
                 <View style={s.card}>
                   <Text style={s.detailEmptyTabText}>Bu sorgu tipi için meyve bahçesi skoru uygulanmaz.</Text>
@@ -4736,14 +4908,14 @@ export default function Son30GunDetayScreen() {
               )
             )}
 
-            {activeDetailTabId === 'investment_score' && (
+            {tab.id === 'investment_score' && (
               <>
                 <PortalMulkScoreDetailCard detail={data} loading={scores.loading} fetchError={scores.err} invPayload={scores.invPayload} />
                 <PortalAraziScoreDetailCard detail={data} loading={scores.loading} fetchError={scores.err} invPayload={scores.invPayload} />
               </>
             )}
 
-            {activeDetailTabId === 'solar_energy' && (
+            {tab.id === 'solar_energy' && (
               <PortalSolarEnergyCard
                 loading={solarEnergyLoading}
                 payload={solarEnergyPayload}
@@ -4751,7 +4923,7 @@ export default function Son30GunDetayScreen() {
               />
             )}
 
-            {activeDetailTabId === 'wind_energy' && (
+            {tab.id === 'wind_energy' && (
               <PortalWindEnergyCard
                 loading={windEnergyLoading}
                 payload={windEnergyPayload}
@@ -4759,7 +4931,7 @@ export default function Son30GunDetayScreen() {
               />
             )}
 
-            {activeDetailTabId === 'split' && (
+            {tab.id === 'split' && (
               <PortalParcelSplitDetailCard
                 loading={splitLoading}
                 analysis={splitAnalysis}
@@ -4767,7 +4939,37 @@ export default function Son30GunDetayScreen() {
               />
             )}
 
-            {activeDetailTabId === 'expert' && (
+            {tab.id === 'promahalle' && (
+              <View style={s.card}>
+                <View style={s.cardTitleRow}>
+                  <Ionicons name="map-outline" size={16} color={COLORS.accentBlue} />
+                  <Text style={s.cardTitle}>Mahalle Bilgileri</Text>
+                </View>
+                <Text style={s.detailEmptyTabText}>
+                  Mahalle morfolojisi, satış grid ve katman verileri ProMahalle ekranında açılır.
+                </Text>
+                <TouchableOpacity style={s.detailTabActionBtn} onPress={handleOpenPromahalle} activeOpacity={0.85}>
+                  <Text style={s.detailTabActionBtnText}>ProMahalle&apos;yi aç</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {tab.id === 'report' && (
+              <View style={s.card}>
+                <View style={s.cardTitleRow}>
+                  <Ionicons name="document-text-outline" size={16} color={COLORS.accentBlue} />
+                  <Text style={s.cardTitle}>Rapor</Text>
+                </View>
+                <Text style={s.detailEmptyTabText}>
+                  Pro sorgu PDF raporunu görüntüleyin veya paylaşın.
+                </Text>
+                <TouchableOpacity style={s.detailTabActionBtn} onPress={handleViewReport} activeOpacity={0.85}>
+                  <Text style={s.detailTabActionBtnText}>Raporu aç</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {tab.id === 'expert' && (
               <>
                 {data.ramsar_json?.is_ramsar && (
                   <View style={s.ramsarWarn}>
@@ -4802,6 +5004,9 @@ export default function Son30GunDetayScreen() {
                 )}
               </>
             )}
+                </View>
+              )}
+            />
 
             {(
               <View ref={yorumSectionRef} style={detailRatingStyles.body}>
@@ -5597,6 +5802,7 @@ const s = StyleSheet.create({
   /** Satır hafif gri; sekme kutuları beyaz */
   detailTabScroll: { backgroundColor: '#1a273e', borderBottomWidth: 2, borderBottomColor: '#3b82f6' },
   detailTabScrollContent: { flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 8, gap: 6, alignItems: 'stretch' },
+  detailTabSwiper: { flexGrow: 0 },
   detailTabSquare: {
     minWidth: 88,
     paddingHorizontal: 8,
@@ -5617,6 +5823,15 @@ const s = StyleSheet.create({
   detailTabSquareAux: { borderColor: 'rgba(59,130,246,0.45)', borderWidth: 1, backgroundColor: 'transparent' },
   detailTabSquareAuxText: { color: '#bfdbfe', fontSize: 10 },
   detailEmptyTabText: { fontSize: 13, color: COLORS.textSecondary, padding: 12, lineHeight: 20 },
+  detailTabActionBtn: {
+    marginHorizontal: 12,
+    marginBottom: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: COLORS.accentBlue,
+    alignItems: 'center',
+  },
+  detailTabActionBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   insightMetricsRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -6289,7 +6504,7 @@ const sec = StyleSheet.create({
   },
   predFooterText: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 4 },
 
-  // Parsel Eğimi
+  // Parsel Morfoloji
   slopeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
   slopeGridItem: {
     flex: 1, minWidth: (SCREEN_WIDTH - 32 - 16 - 16) / 3,

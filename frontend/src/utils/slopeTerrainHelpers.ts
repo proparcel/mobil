@@ -3,7 +3,7 @@
  */
 
 import { DJANGO_API_URL } from '../../config/api';
-import { resolveSlopePercentForInsight } from './portalInsightHelpers';
+import { formatMorphologyTypeLabel, resolveSlopePercentForInsight } from './portalInsightHelpers';
 
 const MEDIA_BASE = DJANGO_API_URL.replace(/\/$/, '');
 
@@ -42,6 +42,95 @@ export function enrichMorphologyForDisplay(
     m.avg_slope = slopeValues.slope_avg_poly;
   }
   return m;
+}
+
+export type ContextMorphologyDisplay = {
+  type_label: string;
+  type: string;
+  confidence: number | null;
+  parcel_mean_m: number | null;
+  height_spread: number | null;
+};
+
+/** Web DetailSlopeTab.buildContextMorphologyDisplay — context_morphology_json öncelikli. */
+export function buildContextMorphologyDisplay(
+  contextMorphology: Record<string, unknown> | null | undefined,
+  legacyElevationMorphology: Record<string, unknown> | null | undefined,
+): ContextMorphologyDisplay {
+  let ctx = contextMorphology && typeof contextMorphology === 'object' ? contextMorphology : null;
+  let morph =
+    ctx?.morphology && typeof ctx.morphology === 'object'
+      ? { ...(ctx.morphology as Record<string, unknown>) }
+      : ({} as Record<string, unknown>);
+
+  if (!morph.type && ctx?.type) {
+    morph = {
+      ...morph,
+      type: ctx.type,
+      type_label: ctx.type_label,
+    };
+  }
+
+  if (
+    !morph.type &&
+    !morph.type_label &&
+    legacyElevationMorphology &&
+    typeof legacyElevationMorphology === 'object'
+  ) {
+    morph = {
+      type: legacyElevationMorphology.type || legacyElevationMorphology.morphology_type,
+      type_label: legacyElevationMorphology.type_label || legacyElevationMorphology.label,
+      confidence: legacyElevationMorphology.confidence,
+      reason: legacyElevationMorphology.reason,
+    };
+  }
+
+  const elev =
+    ctx?.elevations && typeof ctx.elevations === 'object'
+      ? (ctx.elevations as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+  const sides = Array.isArray(elev.sides) ? elev.sides : [];
+  const deltas = sides
+    .map((side) => Math.abs(Number((side as { delta_m?: unknown })?.delta_m)))
+    .filter((value) => Number.isFinite(value));
+  const heightSpread = deltas.length ? Math.max(...deltas) * 2 : null;
+
+  const typeRaw = String(morph.type || '');
+  const typeLabel = formatMorphologyTypeLabel(typeRaw, String(morph.type_label || morph.type || ''));
+
+  if (!ctx && !legacyElevationMorphology) {
+    return {
+      type_label: '—',
+      type: '—',
+      confidence: null,
+      parcel_mean_m: null,
+      height_spread: null,
+    };
+  }
+
+  const confidenceRaw = morph.confidence;
+  const confidence =
+    confidenceRaw != null && confidenceRaw !== '' && Number.isFinite(Number(confidenceRaw))
+      ? Number(confidenceRaw)
+      : null;
+  const parcelMeanRaw = elev.parcel_mean_m;
+  const parcelMeanM =
+    parcelMeanRaw != null && parcelMeanRaw !== '' && Number.isFinite(Number(parcelMeanRaw))
+      ? Number(parcelMeanRaw)
+      : null;
+
+  return {
+    type_label: typeLabel,
+    type: typeRaw || '—',
+    confidence,
+    parcel_mean_m: parcelMeanM,
+    height_spread: heightSpread,
+  };
+}
+
+export function formatSlopeMeters(value: unknown): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  return `${new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(Math.ceil(Number(value)))} m`;
 }
 
 export function getSlopeInfo(v: number | null | undefined): SlopeInfo {

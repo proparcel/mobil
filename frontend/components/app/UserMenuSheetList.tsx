@@ -148,9 +148,9 @@ export default function UserMenuSheetList({
           </TouchableOpacity>
           {item.id === "ai-video" && !item.disabled && submenuOpenId === "ai-video" && (
             <>
-              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-video-studio")}>
+              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ai-video-new-editor")}>
                 <View style={st.iconWrap}>
-                  <Ionicons name="film-outline" size={20} color={subIconColor} />
+                  <Ionicons name="videocam-outline" size={20} color={subIconColor} />
                 </View>
                 <Text style={st.itemText}>AI Video</Text>
               </TouchableOpacity>
@@ -182,16 +182,11 @@ export default function UserMenuSheetList({
           )}
           {item.id === "ilan-islemleri" && submenuOpenId === "ilan-islemleri" && (
             <>
-              <TouchableOpacity
-                style={[st.item, st.itemSub, st.itemDisabled]}
-                onPress={() => showDisabledFeedback("ilan-ver")}
-              >
+              <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ilan-ver")}>
                 <View style={st.iconWrap}>
-                  <Ionicons name="add-circle-outline" size={20} color={variant === "dark" ? "#64748b" : "#94a3b8"} />
+                  <Ionicons name="add-circle-outline" size={20} color={subIconColor} />
                 </View>
-                <Text style={[st.itemText, st.itemTextDisabled]}>
-                  {disabledFeedbackId === "ilan-ver" ? "Çok yakında" : "İlan ver"}
-                </Text>
+                <Text style={st.itemText}>İlan ver</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[st.item, st.itemSub]} onPress={() => onItemPress("ilanlarim")}>
                 <View style={st.iconWrap}>

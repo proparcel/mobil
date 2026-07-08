@@ -49,9 +49,9 @@ import {
   isExpertMember,
   isExpertUser,
   isIndividualMember,
-  isVipCustomer,
   membershipDisplayLabel,
 } from "../../src/utils/membership";
+import { MembershipTierBadge } from "../../components/app/MembershipTierBadge";
 import { launchImageLibrary } from "react-native-image-picker";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useFocusEffect, useRoute } from "@react-navigation/native";
@@ -599,11 +599,11 @@ export default function ProfileScreen() {
   const openListingEditor = useCallback(
     (listingId: string) => {
       router.push(
-        "portal-webview",
+        "listing-wizard",
         withProfileReturn(
           {
-            path: `/portal/ilan/${encodeURIComponent(listingId)}/duzenle/`,
-            title: "İlan düzenle",
+            listingId,
+            mode: "edit",
           },
           "ilanlar",
         ),
@@ -1236,8 +1236,6 @@ export default function ProfileScreen() {
   const providerCoverageHint = (profile?.corporate_type === "lihkab" || corpSubtype === "lihkab")
     ? "Harita işlemi taleplerinin yönleneceği ilçeleri seçin. Bir kayıt primary olabilir."
     : "SPK değerleme taleplerini almak istediğiniz ilçeleri seçin. Bir kayıt primary olabilir.";
-  const isVip = isVipCustomer(user);
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <AppStatusBar />
@@ -1335,12 +1333,7 @@ export default function ProfileScreen() {
                     ? `${capitalizeName(profile?.first_name)} ${capitalizeName(profile?.last_name)}`.trim()
                     : "Profil"}
                 </Text>
-                {isVip && (
-                  <View style={styles.profileVipBadge}>
-                    <Ionicons name="star" size={12} color="#fff" />
-                    <Text style={styles.profileVipBadgeText}>VIP</Text>
-                  </View>
-                )}
+                <MembershipTierBadge user={user} />
               </View>
               <Text style={styles.profileSectionUserType}>
                 {membershipDisplayLabel(user, profile) ??
@@ -3192,21 +3185,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#64748b",
     marginTop: 2,
-  },
-  profileVipBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#d97706",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  profileVipBadgeText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 0.5,
   },
   profileSectionNoteWrap: {
     marginTop: 10,

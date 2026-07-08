@@ -30,7 +30,7 @@ export function useScrollInputIntoView({
   onBeforeFocus,
   minVisibleTop = 100,
   keyboardOverlapMargin = 20,
-  tabSwitchDelay = 400,
+  tabSwitchDelay = 280,
 }: ScrollInputIntoViewOptions) {
   const inputFocusedRef = useRef(false);
   const lastScrollAtRef = useRef(0);

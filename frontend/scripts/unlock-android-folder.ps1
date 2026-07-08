@@ -6,12 +6,14 @@ $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
 $android = Join-Path $root "android"
 
-function Stop-Metro8081 {
+. "$PSScriptRoot/metro-ports.ps1"
+
+function Stop-MetroAndroid {
   try {
-    $p = Get-NetTCPConnection -LocalPort 8081 -ErrorAction SilentlyContinue | Select-Object -First 1
+    $p = Get-NetTCPConnection -LocalPort $METRO_PORT_ANDROID -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($p) {
       Stop-Process -Id $p.OwningProcess -Force -ErrorAction SilentlyContinue
-      Write-Host "Metro (8081) durduruldu PID $($p.OwningProcess)"
+      Write-Host "Android Metro ($METRO_PORT_ANDROID) durduruldu PID $($p.OwningProcess)"
     }
   } catch { }
 }
@@ -93,7 +95,7 @@ function Remove-AndroidFolder {
 }
 
 Write-Host "=== unlock-android-folder ==="
-Stop-Metro8081
+Stop-MetroAndroid
 Stop-GradleJavaProcesses
 Stop-GradleDaemons
 if ($ForceRemoveOnly) {

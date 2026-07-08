@@ -124,9 +124,9 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
         Alert.alert("İlan oluşturulamadı", "Tanıtıcı alınamadı.");
         return;
       }
-      router.push("portal-webview", {
-        path: `/portal/ilan/${lid}/duzenle/`,
-        title: "İlan düzenle",
+      router.push("listing-wizard", {
+        listingId: lid,
+        mode: "create",
       });
     } catch (e: any) {
       Alert.alert("Hata", e?.message || "İlan oluşturulamadı.");
@@ -191,7 +191,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
       const run = () => {
         switch (itemId) {
           case "landing-intro":
-            router.push("landing", { skipIntro: true });
+            router.push("nasil-yapilir");
             break;
           case "emlak-vitrini":
             router.replace("emlak-vitrini-liste");
@@ -209,7 +209,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
             router.push("aranacaklar");
             break;
           case "sorgularim":
-            router.push("index", { launch: "my-queries" });
+            router.push("son-30-gun", { mine: "1" });
             break;
           case "hisseli-parsel-projelerim":
             router.push("index", { launch: "parcel-split" });
@@ -250,18 +250,11 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
               title: "Destek",
             });
             break;
+          case "nasil-yapilir":
+            router.push("nasil-yapilir");
+            break;
           case "ilanlarim":
             router.push("ilanlarim");
-            break;
-          case "ai-video-studio":
-            if (!isAuthenticated) {
-              Alert.alert("Giriş gerekli", "AI Video için giriş yapın.", [
-                { text: "İptal", style: "cancel" },
-                { text: "Giriş", onPress: () => router.push("login") },
-              ]);
-              return;
-            }
-            router.push("ai-video-studio");
             break;
           case "ai-image-animation":
             if (!isAuthenticated) {
@@ -272,6 +265,16 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
               return;
             }
             router.push("ai-image-animation-purchase");
+            break;
+          case "ai-video-new-editor":
+            if (!isAuthenticated) {
+              Alert.alert("Giriş gerekli", "AI Video için giriş yapın.", [
+                { text: "İptal", style: "cancel" },
+                { text: "Giriş", onPress: () => router.push("login") },
+              ]);
+              return;
+            }
+            router.push("ai-video-new-editor");
             break;
           case "ai-drone-video":
             router.push("ai-drone-hub");

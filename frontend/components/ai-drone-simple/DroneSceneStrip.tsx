@@ -1,39 +1,74 @@
 import React, { useMemo } from "react";
 import {
   ActivityIndicator,
-  Image,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  UIManager,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import type {
-  RunwaySegmentItem,
-  RunwaySegmentTimelineEntry,
-  SceneGenerationRights,
+import {
+  buildCanonicalTimeline,
+  DRONE_SCENE_PACKAGE_ALLOWANCE,
+  freeSceneRemaining,
+  type RunwaySegmentItem,
+  type RunwaySegmentTimelineEntry,
+  type SceneGenerationRights,
 } from "../../services/droneSceneService";
-import { DRONE_SCENE_PACKAGE_ALLOWANCE } from "../../services/droneSceneService";
 import { AI_DRONE_EDITOR_THEME } from "../../src/constants/aiDroneEditorTheme";
+import { DroneSceneThumbnail } from "./DroneSceneThumbnail";
+
+let Video: any = null;
+try {
+  const v = require("react-native-video");
+  Video = v?.default || v;
+} catch {
+  Video = null;
+}
+
+const hasNativeVideoView =
+  !!(UIManager as any)?.getViewManagerConfig?.("RCTVideo") ||
+  !!(UIManager as any)?.getViewManagerConfig?.("RCTVideoView");
 
 export type SceneStripCard = {
   slot: number | null;
   segment?: RunwaySegmentItem | null;
   timelineEntry?: RunwaySegmentTimelineEntry | null;
   placeholder?: boolean;
+  /** Paket içi ücretsiz hak ile eklenebilir boş slot */
+  placeholderFree?: boolean;
+  /** Tam birleşik video kartı — strip başında, sil/birleştir yok */
+  fullVideo?: boolean;
+};
+
+export type SceneStripPlaceholderProgress = {
+  cardIndex: number;
+  runwaySlot: number;
+  percent: number;
+  label: string;
 };
 
 type Props = {
+  jobId: string;
+  authHeader?: Record<string, string>;
+  thumbCacheBust?: number;
   cards: SceneStripCard[];
   activeSlot: number | null;
   mergeSelectedSlots: Set<number>;
   sceneRights: SceneGenerationRights;
   busy?: boolean;
   merging?: boolean;
-  onSelectScene: (slot: number) => void;
+  /** Ek sahne üretimi — boş kart üzerinde ilerleme */
+  placeholderProgress?: SceneStripPlaceholderProgress | null;
+  fullVideoActive?: boolean;
+  fullVideoUri?: string;
+  onSelectFullVideo?: () => void;
+  onSelectScene: (slot: number, segment?: RunwaySegmentItem | null) => void;
   onToggleMerge: (slot: number) => void;
-  onDeleteScene: (slot: number) => void;
+  onDeleteScene: (entryId: string, slot: number) => void;
+  onMoveActiveScene?: (direction: -1 | 1) => void;
   onMergeScenes: () => void;
   onNewScene: () => void;
 };
@@ -43,23 +78,34 @@ export function buildSceneStripCards(
   timeline: RunwaySegmentTimelineEntry[],
   sceneRights: SceneGenerationRights,
 ): SceneStripCard[] {
-  const readySegments = segments.filter((s) => s.exists && s.slot > 0);
-  const cards: SceneStripCard[] = readySegments.map((segment) => {
-    const timelineEntry = timeline.find((t) => Number(t.slot) === segment.slot) || null;
-    return { slot: segment.slot, segment, timelineEntry };
-  });
+  const canonical = buildCanonicalTimeline(segments, timeline);
+  const segmentBySlot = new Map(
+    segments.filter((s) => s.exists && s.slot > 0).map((s) => [s.slot, s]),
+  );
+  const cards: SceneStripCard[] = canonical
+    .map((timelineEntry) => {
+      const segment = segmentBySlot.get(Number(timelineEntry.slot));
+      if (!segment) return null;
+      return { slot: timelineEntry.slot, segment, timelineEntry };
+    })
+    .filter((card): card is SceneStripCard => card != null);
 
   const remaining = Math.max(0, Number(sceneRights.remaining) || 0);
+  const freeRemaining = freeSceneRemaining(sceneRights);
   const emptyCount = Math.max(0, DRONE_SCENE_PACKAGE_ALLOWANCE - cards.length);
   for (let i = 0; i < emptyCount; i += 1) {
     const canUse = i < remaining;
-    cards.push({ slot: null, placeholder: canUse });
+    const isFree = canUse && i < freeRemaining;
+    cards.push({ slot: null, placeholder: canUse, placeholderFree: isFree });
   }
 
   return cards.slice(0, DRONE_SCENE_PACKAGE_ALLOWANCE);
 }
 
 export function DroneSceneStrip({
+  jobId,
+  authHeader,
+  thumbCacheBust = 0,
   cards,
   activeSlot,
   mergeSelectedSlots,
@@ -69,75 +115,258 @@ export function DroneSceneStrip({
   onSelectScene,
   onToggleMerge,
   onDeleteScene,
+  onMoveActiveScene,
   onMergeScenes,
   onNewScene,
+  placeholderProgress = null,
+  fullVideoActive = false,
+  fullVideoUri = "",
+  onSelectFullVideo,
 }: Props) {
+  const moveDisabled = busy || merging;
+
+  const fullVideoCard = useMemo(() => cards.find((c) => c.fullVideo) ?? null, [cards]);
+  const sceneCards = useMemo(
+    () => cards.filter((c) => c.slot != null && !c.fullVideo),
+    [cards],
+  );
+  const placeholderCards = useMemo(
+    () => cards.filter((c) => c.slot == null && !c.fullVideo),
+    [cards],
+  );
+
+  const fullVideoOffset = fullVideoCard ? 1 : 0;
+
+  const activeSceneIndex = useMemo(() => {
+    if (activeSlot == null) return -1;
+    return sceneCards.findIndex((c) => Number(c.slot) === Number(activeSlot));
+  }, [activeSlot, sceneCards]);
+
+  const canMoveLeft = activeSceneIndex > 0;
+  const canMoveRight = activeSceneIndex >= 0 && activeSceneIndex < sceneCards.length - 1;
+
+  const fullVideoThumbSource = useMemo(() => {
+    const uri = String(fullVideoUri || "").trim();
+    if (!uri) return null;
+    if (uri.startsWith("file:") || uri.startsWith("content:")) {
+      return { uri };
+    }
+    if (authHeader?.Authorization) {
+      return { uri, headers: authHeader };
+    }
+    return { uri };
+  }, [fullVideoUri, authHeader]);
+
   const rightsLabel = useMemo(() => {
     const used = Number(sceneRights.used) || 0;
     const allowance = Number(sceneRights.allowance) || DRONE_SCENE_PACKAGE_ALLOWANCE;
     return `${used}/${allowance} sahne hakkı kullanıldı`;
   }, [sceneRights]);
 
+  const renderFullVideoCard = () => {
+    if (!fullVideoCard) return null;
+    return (
+      <View style={[styles.card, fullVideoActive && styles.cardActive]}>
+        <TouchableOpacity
+          style={styles.fullVideoBtn}
+          onPress={() => onSelectFullVideo?.()}
+          disabled={busy}
+          activeOpacity={0.85}
+        >
+          <View style={styles.thumbContent} pointerEvents="none">
+            {fullVideoThumbSource && Video && hasNativeVideoView ? (
+              <Video
+                source={fullVideoThumbSource}
+                style={styles.fullVideoThumb}
+                resizeMode="cover"
+                paused
+                muted
+                repeat={false}
+                controls={false}
+                playInBackground={false}
+                playWhenInactive={false}
+                pointerEvents="none"
+              />
+            ) : (
+              <View style={styles.fullVideoIconWrap}>
+                <Ionicons name="film-outline" size={22} color="#94a3b8" />
+              </View>
+            )}
+            <Text style={styles.slotLabel}>Tam video</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const renderSceneCard = (card: SceneStripCard) => {
+    const slot = Number(card.slot);
+    const isSceneActive = activeSlot != null && Number(activeSlot) === slot;
+    const selected = mergeSelectedSlots.has(slot);
+
+    return (
+      <View
+        key={card.timelineEntry?.id || `scene-${slot}`}
+        style={[styles.card, isSceneActive && styles.cardActive]}
+      >
+        <TouchableOpacity
+          style={styles.thumbBtn}
+          onPress={() => onSelectScene(slot, card.segment ?? null)}
+          disabled={busy}
+          activeOpacity={0.85}
+        >
+          <View style={styles.thumbContent} pointerEvents="none">
+            <DroneSceneThumbnail
+              jobId={jobId}
+              slot={slot}
+              segmentUrl={card.segment?.url}
+              refUrl={card.segment?.ref_url}
+              preflightUrl={card.segment?.preflight_url}
+              authHeader={authHeader}
+              cacheBust={thumbCacheBust}
+            />
+            <Text style={styles.slotLabel}>
+              S{card.timelineEntry?.label || slot}
+            </Text>
+          </View>
+        </TouchableOpacity>
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            style={[styles.checkBtn, selected && styles.checkBtnOn]}
+            onPress={() => onToggleMerge(slot)}
+            disabled={busy}
+          >
+            <Ionicons name={selected ? "checkbox" : "square-outline"} size={14} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.deleteBtn}
+            onPress={() =>
+              onDeleteScene(card.timelineEntry?.id || `slot-${slot}`, slot)
+            }
+            disabled={busy}
+          >
+            <Ionicons name="trash-outline" size={13} color="#fecaca" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderPlaceholderCard = (card: SceneStripCard, placeholderIndex: number) => {
+    const stripIndex = fullVideoOffset + sceneCards.length + placeholderIndex;
+    const isProducing = placeholderProgress?.cardIndex === stripIndex;
+    const labelText = card.placeholderFree
+      ? "Ücretsiz sahne ekle"
+      : card.placeholder
+        ? "Sahne ekle"
+        : null;
+
+    const placeholderBody = isProducing ? (
+      <>
+        <ActivityIndicator size="small" color={AI_DRONE_EDITOR_THEME.primaryBright} />
+        <Text style={styles.placeholderProgressTitle}>S{placeholderProgress.runwaySlot}</Text>
+        <View style={styles.placeholderBarTrack}>
+          <View
+            style={[
+              styles.placeholderBarFill,
+              { width: `${Math.max(0, Math.min(100, placeholderProgress.percent))}%` },
+            ]}
+          />
+        </View>
+        <Text style={styles.placeholderPercent}>%{placeholderProgress.percent}</Text>
+        <Text style={styles.placeholderLabel} numberOfLines={2}>
+          {placeholderProgress.label}
+        </Text>
+      </>
+    ) : card.placeholder ? (
+      <>
+        <Ionicons name="add" size={16} color={card.placeholderFree ? "#22c55e" : "#64748b"} />
+        {labelText ? (
+          <Text
+            style={[styles.placeholderAddLabel, card.placeholderFree && styles.placeholderAddLabelFree]}
+            numberOfLines={3}
+          >
+            {labelText}
+          </Text>
+        ) : null}
+      </>
+    ) : (
+      <Ionicons name="add" size={18} color="#334155" />
+    );
+
+    return (
+      <View
+        key={`placeholder-${placeholderIndex}`}
+        style={[
+          styles.card,
+          !card.placeholder && styles.placeholderDisabledWrap,
+          isProducing && styles.cardActive,
+        ]}
+      >
+        {card.placeholder && !isProducing ? (
+          <TouchableOpacity
+            style={[
+              styles.placeholder,
+              isProducing && styles.placeholderProducing,
+            ]}
+            onPress={() => onNewScene()}
+            disabled={busy || merging}
+            activeOpacity={0.85}
+          >
+            {placeholderBody}
+          </TouchableOpacity>
+        ) : (
+          <View
+            style={[
+              styles.placeholder,
+              !card.placeholder && styles.placeholderDisabled,
+              isProducing && styles.placeholderProducing,
+            ]}
+          >
+            {placeholderBody}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   return (
     <View style={styles.wrap}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Sahneler</Text>
-        <Text style={styles.rights}>{rightsLabel}</Text>
+        <View style={styles.headerRight}>
+          <View style={styles.moveBtns}>
+            <TouchableOpacity
+              style={[
+                styles.moveBtn,
+                (moveDisabled || !canMoveLeft || activeSceneIndex < 0) && styles.moveBtnDisabled,
+              ]}
+              onPress={() => onMoveActiveScene?.(-1)}
+              disabled={moveDisabled || !canMoveLeft || activeSceneIndex < 0}
+              accessibilityLabel="Seçili sahneyi sola taşı"
+            >
+              <Ionicons name="chevron-back" size={14} color="#e2e8f0" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.moveBtn,
+                (moveDisabled || !canMoveRight || activeSceneIndex < 0) && styles.moveBtnDisabled,
+              ]}
+              onPress={() => onMoveActiveScene?.(1)}
+              disabled={moveDisabled || !canMoveRight || activeSceneIndex < 0}
+              accessibilityLabel="Seçili sahneyi sağa taşı"
+            >
+              <Ionicons name="chevron-forward" size={14} color="#e2e8f0" />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.rights}>{rightsLabel}</Text>
+        </View>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-        {cards.map((card, index) => {
-          const slot = card.slot;
-          const isActive = slot != null && activeSlot === slot;
-          const selected = slot != null && mergeSelectedSlots.has(slot);
-          const thumbUri = card.segment?.url || card.segment?.ref_url || "";
-          return (
-            <View
-              key={slot != null ? `scene-${slot}` : `placeholder-${index}`}
-              style={[styles.card, isActive && styles.cardActive]}
-            >
-              {slot != null ? (
-                <>
-                  <TouchableOpacity
-                    style={styles.thumbBtn}
-                    onPress={() => onSelectScene(slot)}
-                    disabled={busy}
-                    activeOpacity={0.85}
-                  >
-                    {thumbUri ? (
-                      <Image source={{ uri: thumbUri }} style={styles.thumb} resizeMode="cover" />
-                    ) : (
-                      <View style={styles.thumbEmpty}>
-                        <Ionicons name="videocam-outline" size={18} color="#94a3b8" />
-                      </View>
-                    )}
-                    <Text style={styles.slotLabel}>S{index + 1}</Text>
-                  </TouchableOpacity>
-                  <View style={styles.cardActions}>
-                    <TouchableOpacity
-                      style={[styles.checkBtn, selected && styles.checkBtnOn]}
-                      onPress={() => onToggleMerge(slot)}
-                      disabled={busy}
-                    >
-                      <Ionicons name={selected ? "checkbox" : "square-outline"} size={14} color="#fff" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={() => onDeleteScene(slot)}
-                      disabled={busy}
-                    >
-                      <Ionicons name="trash-outline" size={13} color="#fecaca" />
-                    </TouchableOpacity>
-                  </View>
-                </>
-              ) : (
-                <View style={[styles.placeholder, !card.placeholder && styles.placeholderDisabled]}>
-                  <Ionicons name="add" size={18} color={card.placeholder ? "#64748b" : "#334155"} />
-                </View>
-              )}
-            </View>
-          );
-        })}
+        {renderFullVideoCard()}
+        {sceneCards.map((card) => renderSceneCard(card))}
+        {placeholderCards.map((card, index) => renderPlaceholderCard(card, index))}
       </ScrollView>
 
       <View style={styles.actionRow}>
@@ -172,9 +401,22 @@ const CARD_WIDTH = 62;
 const styles = StyleSheet.create({
   wrap: { gap: 8 },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 6 },
+  moveBtns: { flexDirection: "row", alignItems: "center", gap: 2 },
+  moveBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.35)",
+    backgroundColor: "rgba(15,23,42,0.85)",
+  },
+  moveBtnDisabled: { opacity: 0.35 },
   title: { color: "#e2e8f0", fontWeight: "800", fontSize: 14 },
   rights: { color: "#94a3b8", fontSize: 11, fontWeight: "600" },
-  row: { gap: 8, paddingVertical: 2 },
+  row: { gap: 8, paddingVertical: 2, alignItems: "flex-start" },
   card: {
     width: CARD_WIDTH,
     borderRadius: 10,
@@ -185,8 +427,15 @@ const styles = StyleSheet.create({
   },
   cardActive: { borderColor: AI_DRONE_EDITOR_THEME.primaryBright },
   thumbBtn: { height: 72, backgroundColor: "#0b1220" },
-  thumb: { width: "100%", height: "100%" },
-  thumbEmpty: { flex: 1, alignItems: "center", justifyContent: "center" },
+  fullVideoBtn: { height: 98, backgroundColor: "#0b1220" },
+  fullVideoThumb: { flex: 1, width: "100%", height: "100%" },
+  fullVideoIconWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0b1220",
+  },
+  thumbContent: { flex: 1 },
   slotLabel: {
     position: "absolute",
     left: 4,
@@ -223,6 +472,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(127,29,29,0.45)",
   },
+  placeholderDisabledWrap: { opacity: 0.45 },
   placeholder: {
     height: 98,
     alignItems: "center",
@@ -233,6 +483,53 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15,23,42,0.55)",
   },
   placeholderDisabled: { opacity: 0.45 },
+  placeholderProducing: {
+    borderStyle: "solid",
+    borderColor: AI_DRONE_EDITOR_THEME.primaryBright,
+    paddingHorizontal: 4,
+    gap: 3,
+  },
+  placeholderProgressTitle: {
+    color: "#f8fafc",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  placeholderBarTrack: {
+    alignSelf: "stretch",
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: "rgba(148,163,184,0.25)",
+    overflow: "hidden",
+  },
+  placeholderBarFill: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: AI_DRONE_EDITOR_THEME.primaryBright,
+  },
+  placeholderPercent: {
+    color: AI_DRONE_EDITOR_THEME.primaryBright,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  placeholderLabel: {
+    color: "#94a3b8",
+    fontSize: 8,
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 10,
+  },
+  placeholderAddLabel: {
+    color: "#94a3b8",
+    fontSize: 7,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 9,
+    paddingHorizontal: 2,
+    marginTop: 2,
+  },
+  placeholderAddLabelFree: {
+    color: "#22c55e",
+  },
   actionRow: { flexDirection: "row", gap: 8 },
   mergeBtn: {
     flex: 1,

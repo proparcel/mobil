@@ -442,6 +442,21 @@ function patchAppManifestUnityActivity(manifestPath) {
     changed = true;
   }
 
+  const unityActivityPattern =
+    /<activity[^>]*android:name="com\.unity3d\.player\.UnityPlayerActivity"[\s\S]*?<\/activity>/g;
+  const unityActivities = text.match(unityActivityPattern) || [];
+  if (unityActivities.length > 1) {
+    const keep =
+      unityActivities.find((block) => block.includes(UNITY_MANIFEST_MARKER)) ||
+      unityActivities[unityActivities.length - 1];
+    for (const block of unityActivities) {
+      if (block !== keep) {
+        text = text.replace(block, "");
+        changed = true;
+      }
+    }
+  }
+
   if (!text.includes(UNITY_MANIFEST_MARKER)) {
     const block = `
     <!-- ${UNITY_MANIFEST_MARKER}: UnityPlayerActivity yalnizca embedded view icin -->

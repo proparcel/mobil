@@ -2,15 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  DEFAULT_PORTRAIT_SUBTITLE_EXPORT_FONT_SIZE,
   defaultPortraitSubtitleExportFontSize,
-  portraitSubtitleExportFontSize,
   portraitSubtitlePreviewFontSize,
   portraitUserCardPreviewScale,
   normalizePortraitSubtitleExportFontSize,
   userCardExportPointToUiCenter,
   userCardUiCenterToExportPoint,
   PORTRAIT_PREVIEW_REF_HEIGHT,
-  PORTRAIT_PREVIEW_SUBTITLE_FONT_PX,
 } from "./portraitOverlayContract";
 
 describe("portraitOverlayContract", () => {
@@ -29,23 +28,21 @@ describe("portraitOverlayContract", () => {
     assert.ok(Math.abs(center.y - 0.8) < 0.01);
   });
 
-  it("matches preview subtitle size to export fontSize", () => {
-    const exportFont = defaultPortraitSubtitleExportFontSize();
-    const previewPx = portraitSubtitlePreviewFontSize(exportFont, PORTRAIT_PREVIEW_REF_HEIGHT);
-    assert.ok(Math.abs(previewPx - PORTRAIT_PREVIEW_SUBTITLE_FONT_PX) < 1);
+  it("uses 30 as default export subtitle font size", () => {
+    assert.equal(DEFAULT_PORTRAIT_SUBTITLE_EXPORT_FONT_SIZE, 30);
+    assert.equal(defaultPortraitSubtitleExportFontSize(), 30);
   });
 
-  it("round-trips subtitle export font from preview px", () => {
-    const exportFont = portraitSubtitleExportFontSize(
-      PORTRAIT_PREVIEW_SUBTITLE_FONT_PX,
-      PORTRAIT_PREVIEW_REF_HEIGHT,
-    );
-    assert.equal(exportFont, defaultPortraitSubtitleExportFontSize());
+  it("derives preview subtitle size from export fontSize", () => {
+    const previewPx = portraitSubtitlePreviewFontSize(30, PORTRAIT_PREVIEW_REF_HEIGHT);
+    assert.ok(previewPx >= 10);
   });
 
   it("upgrades legacy subtitle font sizes", () => {
     assert.equal(normalizePortraitSubtitleExportFontSize(22), defaultPortraitSubtitleExportFontSize());
     assert.equal(normalizePortraitSubtitleExportFontSize(34), defaultPortraitSubtitleExportFontSize());
+    assert.equal(normalizePortraitSubtitleExportFontSize(35), defaultPortraitSubtitleExportFontSize());
+    assert.equal(normalizePortraitSubtitleExportFontSize(51), defaultPortraitSubtitleExportFontSize());
     assert.equal(normalizePortraitSubtitleExportFontSize(33), 33);
     assert.equal(normalizePortraitSubtitleExportFontSize(42), 42);
   });

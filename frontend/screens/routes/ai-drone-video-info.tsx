@@ -2,7 +2,7 @@
  * AI Drone Video — masaüstü bilgilendirme + ProParcel drone üretim talebi (parsel seçimi + TKGM).
  */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,9 +23,11 @@ import { MobileAiScreenShell } from "../../components/app/MobileAiScreenHeader";
 import { useScrollInputIntoView } from "../../src/keyboard";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { useAuth } from "../contexts/AuthContext";
-import { creditService } from "../../services/creditService";
-import { getProductPricing, purchaseProductLicense } from "../../services/productLicenseService";
 import { aiDroneProparcelService } from "../../services/aiDroneProparcelService";
+import {
+  AiDroneProparcelPurchaseModal,
+  type AiDroneProparcelPurchaseResult,
+} from "../../components/ai-drone-simple/AiDroneProparcelPurchaseModal";
 import { extractNitelikText } from "../../src/utils/propertyTypeUtils";
 import {
   fetchTkgmParcelByAdaParsel,
@@ -33,11 +35,7 @@ import {
   type TkgmParcelResponse,
 } from "../../src/utils/tkgmParcelQuery";
 
-const TepeCoinIcon = require("../../assets/images/TepeCoin.png");
 const UserCardExample = require("../../assets/images/ai-drone-user-card-example.png");
-
-/** Sunucu kredi kullanımları tablosu */
-const DRONE_SERVICE_ACTION = "ai_drone_proparcel";
 
 const COLORS = {
   headerBg: "#0f172a",
@@ -58,36 +56,15 @@ export default function AiDroneVideoInfoScreen() {
     inputWrapRef: noteInputWrapRef,
   });
   const { isAuthenticated } = useAuth();
-  const [priceTry, setPriceTry] = useState<number | null>(null);
-  const [isTryPriced, setIsTryPriced] = useState(true);
-  const [costLoading, setCostLoading] = useState(true);
   const [queryLoading, setQueryLoading] = useState(false);
   const [parcelPayload, setParcelPayload] = useState<AdaParselSubmitPayload | null>(null);
   const [tkgmData, setTkgmData] = useState<TkgmParcelResponse | null>(null);
   const [resultSummary, setResultSummary] = useState<string | null>(null);
   const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
   const [userNote, setUserNote] = useState("");
   const [showUserCard, setShowUserCard] = useState(false);
   const [userCardConfirmed, setUserCardConfirmed] = useState(false);
-
-  const loadCreditCost = useCallback(async () => {
-    setCostLoading(true);
-    const row = await getProductPricing(DRONE_SERVICE_ACTION);
-    const tryMode = Boolean(row?.is_try_priced);
-    setIsTryPriced(tryMode);
-    if (tryMode) {
-      setPriceTry(typeof row?.price_try === "number" ? row.price_try : null);
-    } else {
-      const cost = await creditService.getCreditCostForAction(DRONE_SERVICE_ACTION);
-      setPriceTry(null);
-      if (cost != null) setPriceTry(cost);
-    }
-    setCostLoading(false);
-  }, []);
-
-  useEffect(() => {
-    void loadCreditCost();
-  }, [loadCreditCost]);
 
   const handleParcelQuery = useCallback(async (payload: AdaParselSubmitPayload) => {
     setQueryLoading(true);
@@ -111,6 +88,22 @@ export default function AiDroneVideoInfoScreen() {
 
   const canSubmitOrder = Boolean(parcelPayload && tkgmData?.geometry && resultSummary);
 
+  const referenceId = useMemo(() => {
+    if (!parcelPayload) return "";
+    const mahalleTkgm = String(parcelPayload.mahalleTkgmValue ?? "").trim();
+    if (!mahalleTkgm) return "";
+    return `${mahalleTkgm}_${parcelPayload.ada}_${parcelPayload.parsel}`;
+  }, [parcelPayload]);
+
+  const purchaseModalExtraDescription = useMemo(() => {
+    const cardLine =
+      showUserCard && userCardConfirmed
+        ? "Videoda kullanıcı kartı gösterilecek."
+        : "Videoda kullanıcı kartı gösterilmeyecek.";
+    const note = userNote.trim();
+    return note ? `${cardLine}\n\nNot: ${note.slice(0, 200)}` : cardLine;
+  }, [showUserCard, userCardConfirmed, userNote]);
+
   const onToggleUserCard = useCallback((value: boolean) => {
     if (!value) {
       setShowUserCard(false);
@@ -133,6 +126,67 @@ export default function AiDroneVideoInfoScreen() {
     );
   }, []);
 
+  const submitProparcelRequest = useCallback(
+    async (result: AiDroneProparcelPurchaseResult): Promise<boolean> => {
+      if (!parcelPayload || !resultSummary) return false;
+
+      setPurchaseBusy(true);
+      try {
+        const idempotencyKey =
+          typeof globalThis.crypto?.randomUUID === "function"
+            ? globalThis.crypto.randomUUID()
+            : `aidrone-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+        const summaryLine = resultSummary;
+        const res = await aiDroneProparcelService.createRequest({
+          parcel: {
+            mahalleTkgmValue: parcelPayload.mahalleTkgmValue,
+            mahalle: parcelPayload.mahalle,
+            ada: parcelPayload.ada,
+            parsel: parcelPayload.parsel,
+            city: parcelPayload.city,
+            town: parcelPayload.town,
+            proparcelValue: parcelPayload.proparcelValue ?? null,
+          },
+          tkgmSummary: summaryLine,
+          userNote: userNote.trim(),
+          showUserCard: showUserCard && userCardConfirmed,
+          idempotencyKey,
+          paymentReference: result.paymentReference,
+        });
+
+        if (res.success) {
+          const used = res.creditsUsed ?? 0;
+          const balance = res.newBalance;
+          const newId = res.requestId;
+          Alert.alert(
+            "Talep alındı",
+            result.paymentReference
+              ? `Ödemeniz alındı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`
+              : `${used} Tepe Kredi kullanıldı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`,
+            [
+              ...(newId
+                ? [{ text: "İş detayı", onPress: () => router.push("ai-drone-job-detail", { requestId: String(newId) }) }]
+                : []),
+              { text: "İşlerim", onPress: () => router.push("ai-drone-jobs") },
+              { text: "Tamam", onPress: () => router.back() },
+            ],
+          );
+          return true;
+        }
+
+        Alert.alert("İşlem başarısız", res.error || "Talep oluşturulamadı.");
+        return false;
+      } catch (e: unknown) {
+        Alert.alert("Hata", e instanceof Error ? e.message : "İşlem tamamlanamadı.");
+        return false;
+      } finally {
+        setPurchaseBusy(false);
+      }
+    },
+    [parcelPayload, resultSummary, userNote, showUserCard, userCardConfirmed, router],
+  );
+
   const handleWeDoItForYou = useCallback(() => {
     if (!isAuthenticated) {
       Alert.alert("Giriş gerekli", "Talep oluşturmak için giriş yapın.", [
@@ -145,118 +199,8 @@ export default function AiDroneVideoInfoScreen() {
       Alert.alert("Parsel seçin", "Önce il, ilçe, mahalle, ada ve parsel girip Sorgula deyin.");
       return;
     }
-    if (priceTry == null && !costLoading) {
-      Alert.alert("Fiyat bilgisi", "Paket fiyatı yüklenemedi. Lütfen tekrar deneyin.", [
-        { text: "Tamam", onPress: () => void loadCreditCost() },
-      ]);
-      return;
-    }
-
-    const priceLabel = isTryPriced
-      ? `${Math.round(priceTry ?? 0)} ₺ (App Store / Google Play)`
-      : `${priceTry} Tepe Kredi`;
-
-    const summaryLine = resultSummary || "";
-    const cardLine = showUserCard && userCardConfirmed
-      ? "Videoda kullanıcı kartı gösterilecek."
-      : "Videoda kullanıcı kartı gösterilmeyecek.";
-    const noteLine = userNote.trim() ? `\n\nNotunuz:\n${userNote.trim().slice(0, 200)}` : "";
-    Alert.alert(
-      "Onay",
-      `${priceLabel} harcanacak.\n\n${summaryLine}\n\n${cardLine}${noteLine}\n\nDevam edilsin mi?`,
-      [
-        { text: "Vazgeç", style: "cancel" },
-        {
-          text: "Onayla",
-          onPress: async () => {
-            setPurchaseBusy(true);
-            try {
-              const idempotencyKey =
-                typeof globalThis.crypto?.randomUUID === "function"
-                  ? globalThis.crypto.randomUUID()
-                  : `aidrone-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-              const mahalleTkgm = String(parcelPayload.mahalleTkgmValue ?? "").trim();
-              const referenceId = `${mahalleTkgm}_${parcelPayload.ada}_${parcelPayload.parsel}`;
-
-              let paymentReference: string | undefined;
-              if (isTryPriced) {
-                const iapResult = await purchaseProductLicense({
-                  actionType: DRONE_SERVICE_ACTION,
-                  referenceId,
-                  description: JSON.stringify({
-                    service: DRONE_SERVICE_ACTION,
-                    summary: summaryLine,
-                    show_user_card: showUserCard && userCardConfirmed,
-                  }),
-                });
-                if (!iapResult.success) {
-                  Alert.alert("Ödeme başarısız", iapResult.error || iapResult.message || "IAP doğrulanamadı.");
-                  return;
-                }
-                paymentReference = iapResult.transaction_id || `iap:${Date.now()}`;
-              }
-
-              const res = await aiDroneProparcelService.createRequest({
-                parcel: {
-                  mahalleTkgmValue: parcelPayload.mahalleTkgmValue,
-                  mahalle: parcelPayload.mahalle,
-                  ada: parcelPayload.ada,
-                  parsel: parcelPayload.parsel,
-                  city: parcelPayload.city,
-                  town: parcelPayload.town,
-                  proparcelValue: parcelPayload.proparcelValue ?? null,
-                },
-                tkgmSummary: summaryLine,
-                userNote: userNote.trim(),
-                showUserCard: showUserCard && userCardConfirmed,
-                idempotencyKey,
-                paymentReference,
-              });
-              if (res.success) {
-                const used = res.creditsUsed ?? 0;
-                const balance = res.newBalance;
-                const newId = res.requestId;
-                Alert.alert(
-                  "Talep alındı",
-                  isTryPriced
-                    ? `Ödemeniz alındı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`
-                    : `${used} Tepe Kredi kullanıldı.${balance != null ? ` Kalan bakiye: ${balance}` : ""}\n\nDrone videonuz hazırlandığında bildirim ile link paylaşılacaktır.`,
-                  [
-                    ...(newId
-                      ? [{ text: "İş detayı", onPress: () => router.push("ai-drone-job-detail", { requestId: String(newId) }) }]
-                      : []),
-                    { text: "İşlerim", onPress: () => router.push("ai-drone-jobs") },
-                    { text: "Tamam", onPress: () => router.back() },
-                  ],
-                );
-              } else {
-                Alert.alert("İşlem başarısız", res.error || "Talep oluşturulamadı.");
-              }
-            } catch (e: unknown) {
-              Alert.alert("Hata", e instanceof Error ? e.message : "İşlem tamamlanamadı.");
-            } finally {
-              setPurchaseBusy(false);
-            }
-          },
-        },
-      ],
-    );
-  }, [
-    isAuthenticated,
-    canSubmitOrder,
-    parcelPayload,
-    tkgmData,
-    priceTry,
-    isTryPriced,
-    costLoading,
-    resultSummary,
-    userNote,
-    showUserCard,
-    userCardConfirmed,
-    router,
-    loadCreditCost,
-  ]);
+    setPurchaseModalVisible(true);
+  }, [isAuthenticated, canSubmitOrder, parcelPayload, tkgmData, router]);
 
   return (
     <MobileAiScreenShell
@@ -303,24 +247,6 @@ export default function AiDroneVideoInfoScreen() {
           </View>
           <Ionicons name="chevron-forward" size={20} color={COLORS.muted} />
         </TouchableOpacity>
-
-        <View style={styles.creditCard}>
-          <Image source={TepeCoinIcon} style={styles.coinIcon} resizeMode="contain" />
-          <View style={styles.creditTextWrap}>
-            <Text style={styles.creditLabel}>Sizin yerinize üretim hizmeti</Text>
-            {costLoading ? (
-              <ActivityIndicator color="#b45309" style={{ marginTop: 6, alignSelf: "flex-start" }} />
-            ) : priceTry != null ? (
-              <Text style={styles.creditValue}>
-                {isTryPriced ? `${Math.round(priceTry)} ₺` : `${priceTry} Tepe Kredi`}
-              </Text>
-            ) : (
-              <TouchableOpacity onPress={() => void loadCreditCost()} activeOpacity={0.7}>
-                <Text style={styles.creditRetry}>Maliyet yüklenemedi — yenile</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Parsel bilgileri</Text>
@@ -394,16 +320,13 @@ export default function AiDroneVideoInfoScreen() {
           <Text style={styles.sectionTitle}>Sizin Yerinize Biz Yapalım</Text>
           <Text style={styles.sectionBody}>
             İsterseniz sizin yerinize ultra gerçekçi drone videonuzu biz üretip size gönderebiliriz. Önce yukarıdan
-            parsel sorgusu yapın; ardından onaylayarak talebi iletin.
+            parsel sorgusu yapın; ardından satın alarak talebi iletin.
           </Text>
           <TouchableOpacity
-            style={[
-              styles.primaryBtn,
-              (!canSubmitOrder || purchaseBusy || (priceTry == null && costLoading)) && styles.primaryBtnDisabled,
-            ]}
+            style={[styles.primaryBtn, (!canSubmitOrder || purchaseBusy) && styles.primaryBtnDisabled]}
             onPress={handleWeDoItForYou}
             activeOpacity={0.85}
-            disabled={!canSubmitOrder || purchaseBusy || (priceTry == null && !costLoading)}
+            disabled={!canSubmitOrder || purchaseBusy}
           >
             {purchaseBusy ? (
               <ActivityIndicator color="#fff" />
@@ -419,6 +342,15 @@ export default function AiDroneVideoInfoScreen() {
           ) : null}
         </View>
       </KeyboardAwareScrollScreen>
+
+      <AiDroneProparcelPurchaseModal
+        visible={purchaseModalVisible}
+        onClose={() => setPurchaseModalVisible(false)}
+        referenceId={referenceId}
+        parcelSummary={resultSummary ?? ""}
+        extraDescription={purchaseModalExtraDescription}
+        onPurchaseSuccess={submitProparcelRequest}
+      />
     </MobileAiScreenShell>
   );
 }
@@ -459,22 +391,6 @@ const styles = StyleSheet.create({
   jobsLinkTextWrap: { flex: 1 },
   jobsLinkTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
   jobsLinkHint: { fontSize: 12, color: COLORS.muted, marginTop: 2 },
-  creditCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: "#fffbeb",
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#fde68a",
-  },
-  coinIcon: { width: 36, height: 36 },
-  creditTextWrap: { flex: 1 },
-  creditLabel: { fontSize: 13, color: "#92400e", fontWeight: "600" },
-  creditValue: { fontSize: 20, fontWeight: "800", color: "#b45309", marginTop: 2 },
-  creditRetry: { fontSize: 13, color: "#b45309", marginTop: 4, textDecorationLine: "underline" },
   sectionTitle: { fontSize: 17, fontWeight: "700", color: COLORS.text, marginBottom: 6 },
   sectionHint: { fontSize: 13, color: COLORS.muted, marginBottom: 8 },
   sectionBody: { fontSize: 14, color: COLORS.muted, lineHeight: 21, marginBottom: 14 },

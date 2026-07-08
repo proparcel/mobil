@@ -5,25 +5,35 @@ type Props = {
   label: string;
   onPress: () => void;
   testID?: string;
+  /** Header action bar içinde gömülü kullanım — absolute anchor yok */
+  embedded?: boolean;
 };
 
 const BADGE_HEIGHT = 34;
 const HALF_OVERLAP = BADGE_HEIGHT / 2;
 
-export function MapFloatingCreditBadge({ label, onPress, testID }: Props) {
+export function MapFloatingCreditBadge({ label, onPress, testID, embedded = false }: Props) {
+  const pill = (
+    <TouchableOpacity
+      testID={testID}
+      onPress={onPress}
+      activeOpacity={0.82}
+      accessibilityLabel="Kredi bakiyesi"
+      style={styles.pill}
+    >
+      <Text style={styles.label} numberOfLines={1}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  if (embedded) {
+    return pill;
+  }
+
   return (
     <View style={styles.anchor} pointerEvents="box-none">
-      <TouchableOpacity
-        testID={testID}
-        onPress={onPress}
-        activeOpacity={0.82}
-        accessibilityLabel="Kredi bakiyesi"
-        style={styles.pill}
-      >
-        <Text style={styles.label} numberOfLines={1}>
-          {label}
-        </Text>
-      </TouchableOpacity>
+      {pill}
     </View>
   );
 }

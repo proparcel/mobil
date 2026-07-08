@@ -1,6 +1,4 @@
-import { StyleSheet, Dimensions } from 'react-native';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({
   container: {
@@ -108,47 +106,8 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     pointerEvents: 'box-none',
   },
-  welcomeCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    marginHorizontal: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    minWidth: SCREEN_WIDTH - 40,
-    maxWidth: 400,
-  },
   formContainer: {
     flex: 1,
-  },
-  welcomeContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 80,
-  },
-  welcomeTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1e40af',
-    marginTop: 24,
-    marginBottom: 16,
-  },
-  welcomeText: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 16,
-    lineHeight: 20,
   },
   searchButton: {
     flexDirection: 'row',

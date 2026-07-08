@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import type { InsightRiskChip } from '../../src/utils/portalInsightHelpers';
+import { INSIGHT_GRID_CARD_HEIGHT } from './portalInsightMetricLayout';
 
 const METRIC_ICON: Record<InsightRiskChip['key'], string> = {
   ramsar: 'water-outline',
@@ -72,16 +73,17 @@ export default function PortalInsightMetricChip({ chip, loading, mapActive, onPr
 const styles = StyleSheet.create({
   card: {
     flex: 1,
+    alignSelf: 'stretch',
+    height: INSIGHT_GRID_CARD_HEIGHT,
     minWidth: 0,
-    minHeight: 52,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#bfdbfe',
     backgroundColor: '#f5f9ff',
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 6,
   },
   cardAlert: {
@@ -96,8 +98,8 @@ const styles = StyleSheet.create({
     opacity: 0.88,
   },
   iconWrap: {
-    width: 28,
-    height: 28,
+    width: 32,
+    height: 32,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -112,19 +114,19 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   title: {
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: '700',
     color: '#64748b',
     textTransform: 'uppercase',
     letterSpacing: 0.25,
-    marginBottom: 3,
-    lineHeight: 12,
+    marginBottom: 4,
+    lineHeight: 14,
   },
   value: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
     color: '#0f172a',
-    lineHeight: 15,
+    lineHeight: 18,
   },
   valueAlert: {
     color: '#9a3412',

@@ -116,7 +116,7 @@ export function DroneProductionPipelineContent({
     !hideSlotProgress &&
     slotProgress &&
     slotProgress.length > 0 &&
-    (activeStepId === "polling" || activeStepId === "production");
+    (activeStepId === "polling" || activeStepId === "production" || activeStepId === "ready");
 
   return (
     <View style={styles.content} accessibilityRole="summary">

@@ -13,8 +13,11 @@ import {
   resolvePortalInsightStarScorePct,
   resolveSlopePercentForInsight,
 } from '../../src/utils/portalInsightHelpers';
+import PortalInsightGeneralHeroCard from './PortalInsightGeneralHeroCard';
 import PortalInsightMetricChip from './PortalInsightMetricChip';
-import PortalInsightPriceCard from './PortalInsightPriceCard';
+import PortalInsightParcelMetricCard from './PortalInsightParcelMetricCard';
+import PortalInsightSlopeMetricCard from './PortalInsightSlopeMetricCard';
+import PortalInsightMorphologyMetricCard from './PortalInsightMorphologyMetricCard';
 
 export type PortalInsightScoresBundle = {
   loading: boolean;
@@ -30,6 +33,7 @@ type Props = {
   listingOnly?: boolean;
   onOpenMulkScoreTab?: () => void;
   onOpenKmTab?: () => void;
+  onOpenSlopeTab?: () => void;
   onQuarterCenterChipPress?: () => void;
   quarterCenterMapActive?: boolean;
   quarterCenterMapLoading?: boolean;
@@ -78,6 +82,28 @@ function InsightStarRow({
   return row;
 }
 
+function MetricGridRows({ children }: { children: React.ReactNode[] }) {
+  const rows: React.ReactNode[][] = [];
+  for (let i = 0; i < children.length; i += 2) {
+    rows.push(children.slice(i, i + 2));
+  }
+
+  return (
+    <View style={styles.metricsGrid}>
+      {rows.map((row, rowIndex) => (
+        <View key={`metric-row-${rowIndex}`} style={styles.gridRow}>
+          {row.map((child, cellIndex) => (
+            <View key={`metric-cell-${rowIndex}-${cellIndex}`} style={styles.gridCell}>
+              <View style={styles.gridCellInner}>{child}</View>
+            </View>
+          ))}
+          {row.length === 1 ? <View style={styles.gridCell} /> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function PortalInsightSummaryCard({
   detail,
   data,
@@ -85,6 +111,7 @@ export default function PortalInsightSummaryCard({
   listingOnly = false,
   onOpenMulkScoreTab,
   onOpenKmTab,
+  onOpenSlopeTab,
   onQuarterCenterChipPress,
   quarterCenterMapActive = false,
   quarterCenterMapLoading = false,
@@ -121,6 +148,50 @@ export default function PortalInsightSummaryCard({
 
   const showStars = !listingProLocked && !listingOnly && (analysis || starScorePct != null);
 
+  const metricCells = useMemo(() => {
+    const cells: React.ReactNode[] = [
+      <PortalInsightParcelMetricCard key="parcel" detail={detail} />,
+    ];
+
+    riskChips.forEach((chip) => {
+      cells.push(
+        <PortalInsightMetricChip
+          key={chip.key}
+          chip={chip}
+          loading={chip.key === 'quarter-center' && quarterCenterMapLoading}
+          mapActive={chip.key === 'quarter-center' && quarterCenterMapActive}
+          onPress={chip.key === 'quarter-center' ? onQuarterCenterChipPress : undefined}
+        />,
+      );
+    });
+
+    if (onOpenSlopeTab) {
+      cells.push(
+        <PortalInsightSlopeMetricCard key="slope" slopePct={slopePct} onPress={onOpenSlopeTab} />,
+      );
+    }
+
+    cells.push(
+      <PortalInsightMorphologyMetricCard
+        key="morphology"
+        detail={detail}
+        slopeSection={data.slopeSection}
+        onPress={onOpenSlopeTab}
+      />,
+    );
+
+    return cells;
+  }, [
+    detail,
+    riskChips,
+    quarterCenterMapLoading,
+    quarterCenterMapActive,
+    onQuarterCenterChipPress,
+    onOpenSlopeTab,
+    slopePct,
+    data.slopeSection,
+  ]);
+
   if (listingProLocked) {
     return (
       <View style={styles.card} accessibilityLabel="Özet karar kartı">
@@ -136,79 +207,59 @@ export default function PortalInsightSummaryCard({
 
   if (listingOnly) {
     return (
-      <View style={styles.card} accessibilityLabel="Özet karar kartı">
-        <View style={styles.metricsRow}>
-          <PortalInsightPriceCard summary={detail} onOpenKmTab={onOpenKmTab} />
-        </View>
+      <View style={styles.container} accessibilityLabel="Özet karar kartı">
+        <PortalInsightGeneralHeroCard detail={detail} onOpenKmTab={onOpenKmTab} />
       </View>
     );
   }
 
   return (
-    <View style={styles.card} accessibilityLabel="Özet karar kartı">
+    <View style={styles.container} accessibilityLabel="Özet karar kartı">
       {data.loading ? (
         <View style={styles.loadingBox}>
           <ActivityIndicator size="small" color="#2563eb" />
           <Text style={styles.loadingText}>Yatırım analizi hesaplanıyor…</Text>
         </View>
-      ) : !data.loading && emptyReason && !analysis ? (
+      ) : null}
+
+      {!data.loading && emptyReason && !analysis ? (
         <Text style={styles.emptyText}>
           {emptyReason === 'not_analyzed'
-            ? 'Mülk özeti henüz yok; hesap tamamlanınca bu kart dolacak.'
+            ? 'Mülk özeti henüz yok; hesap tamamlanınca puan ve risk kartları dolacak.'
             : 'Özet için veri yok.'}
         </Text>
-      ) : (
-        <>
-          {data.err ? (
-            <Text style={styles.noticeText} accessibilityRole="text">
-              Yatırım özeti şu an alınamadı; aşağıdaki alanlar özet verisinden gösteriliyor.
-            </Text>
-          ) : null}
+      ) : null}
 
-          {showStars ? (
-            <InsightStarRow scorePct={starScorePct} onPress={onOpenMulkScoreTab} />
-          ) : null}
+      {data.err ? (
+        <Text style={styles.noticeText} accessibilityRole="text">
+          Yatırım özeti şu an alınamadı; aşağıdaki alanlar özet verisinden gösteriliyor.
+        </Text>
+      ) : null}
 
-          {riskChips.length > 0 || onOpenKmTab ? (
-            <View style={styles.metricsGrid}>
-              <View style={styles.metricsRow}>
-                {riskChips.slice(0, 3).map((chip) => (
-                  <PortalInsightMetricChip
-                    key={chip.key}
-                    chip={chip}
-                    loading={chip.key === 'quarter-center' && quarterCenterMapLoading}
-                    mapActive={chip.key === 'quarter-center' && quarterCenterMapActive}
-                    onPress={chip.key === 'quarter-center' ? onQuarterCenterChipPress : undefined}
-                  />
-                ))}
-              </View>
-              <View style={styles.metricsRow}>
-                {riskChips.slice(3).map((chip) => (
-                  <PortalInsightMetricChip
-                    key={chip.key}
-                    chip={chip}
-                    loading={chip.key === 'quarter-center' && quarterCenterMapLoading}
-                    mapActive={chip.key === 'quarter-center' && quarterCenterMapActive}
-                    onPress={chip.key === 'quarter-center' ? onQuarterCenterChipPress : undefined}
-                  />
-                ))}
-                <PortalInsightPriceCard summary={detail} onOpenKmTab={onOpenKmTab} />
-              </View>
-            </View>
-          ) : null}
+      {showStars ? (
+        <View style={styles.starRowWrap}>
+          <InsightStarRow scorePct={starScorePct} onPress={onOpenMulkScoreTab} />
+        </View>
+      ) : null}
 
-          {quarterCenterMapError ? (
-            <Text style={styles.errorText} accessibilityRole="alert">
-              {quarterCenterMapError}
-            </Text>
-          ) : null}
-        </>
-      )}
+      <PortalInsightGeneralHeroCard detail={detail} onOpenKmTab={onOpenKmTab} />
+
+      <MetricGridRows>{metricCells}</MetricGridRows>
+
+      {quarterCenterMapError ? (
+        <Text style={styles.errorText} accessibilityRole="alert">
+          {quarterCenterMapError}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    marginVertical: 8,
+    width: '100%',
+  },
   card: {
     marginVertical: 8,
     padding: 12,
@@ -233,6 +284,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     gap: 8,
+    marginBottom: 4,
   },
   loadingText: {
     fontSize: 12,
@@ -242,6 +294,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
     lineHeight: 20,
+    marginBottom: 8,
   },
   noticeText: {
     fontSize: 12,
@@ -249,14 +302,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     lineHeight: 18,
   },
+  starRowWrap: {
+    alignItems: 'center',
+    marginBottom: 10,
+  },
   starRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 4,
-    marginBottom: 10,
   },
   starPressable: {
-    alignSelf: 'flex-start',
     borderRadius: 8,
     paddingVertical: 2,
     paddingHorizontal: 2,
@@ -274,11 +330,20 @@ const styles = StyleSheet.create({
     gap: 6,
     width: '100%',
   },
-  metricsRow: {
+  gridRow: {
     flexDirection: 'row',
     alignItems: 'stretch',
     gap: 6,
     width: '100%',
+  },
+  gridCell: {
+    flex: 1,
+    minWidth: 0,
+    alignSelf: 'stretch',
+  },
+  gridCellInner: {
+    flex: 1,
+    alignSelf: 'stretch',
   },
   errorText: {
     marginTop: 8,

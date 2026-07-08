@@ -27,6 +27,8 @@ const CREDIT_ENDPOINTS = {
   LICENSE_3D: "/api/credit/3d-design-license/",
   /** GET ?reference_id= — AI Drone Video (parsel) lisansı var mı */
   LICENSE_DRONE_VIDEO: "/api/credit/drone-video-license/",
+  /** GET ?reference_id= — AI Video lisansı var mı (action_type: ai_video) */
+  LICENSE_AI_VIDEO: "/api/credit/ai-video-license/",
   /** GET — Web "3D Tasarımlarım" ile aynı liste (CreditUsage 3d_design) */
   LICENSES_3D_LIST: "/api/credit/3d-design-licenses/",
   /** POST { reference_id } — lisans kaydını sil (kredi iadesi yok) */
@@ -301,6 +303,7 @@ export interface CreditCostItem {
   is_try_priced?: boolean;
   ios_product_id?: string;
   google_product_id?: string;
+  android_product_id?: string;
   icon: string;
   icon_fa: string;
   icon_ion: string;
@@ -711,6 +714,21 @@ class CreditService {
   async checkDroneVideoLicense(referenceId: string): Promise<boolean> {
     const raw = await authFetch<{ allowed?: boolean; success?: boolean; data?: { allowed?: boolean } }>(
       `${CREDIT_ENDPOINTS.LICENSE_DRONE_VIDEO}?reference_id=${encodeURIComponent(referenceId)}`,
+      { method: "GET" },
+    );
+    const anyRaw = raw as Record<string, unknown>;
+    if (anyRaw && typeof anyRaw.allowed === "boolean") return anyRaw.allowed;
+    const d = anyRaw?.data as { allowed?: boolean } | undefined;
+    if (d && typeof d.allowed === "boolean") return d.allowed;
+    return false;
+  }
+
+  /**
+   * Bu reference_id için AI Video lisansı var mı (action_type: ai_video).
+   */
+  async checkAiVideoLicense(referenceId: string): Promise<boolean> {
+    const raw = await authFetch<{ allowed?: boolean; success?: boolean; data?: { allowed?: boolean } }>(
+      `${CREDIT_ENDPOINTS.LICENSE_AI_VIDEO}?reference_id=${encodeURIComponent(referenceId)}`,
       { method: "GET" },
     );
     const anyRaw = raw as Record<string, unknown>;

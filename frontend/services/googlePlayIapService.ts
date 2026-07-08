@@ -151,6 +151,57 @@ function isConsumableForFinish(productId: string): boolean {
   return isConsumableProductId(productId) || !isPlaySubscriptionProductId(productId);
 }
 
+function playProductQueryType(productId: string): "subs" | "in-app" {
+  return isPlaySubscriptionProductId(productId) ? "subs" : "in-app";
+}
+
+function formatPlayPurchaseErrorMessage(error: PurchaseError | Error, productId?: string): string {
+  const code = String((error as PurchaseError).code || "");
+  const raw = String(error.message || "");
+  const lower = `${code} ${raw}`.toLowerCase();
+  if (
+    lower.includes("sku-not-found") ||
+    lower.includes("sku_not_found") ||
+    lower.includes("not found") && lower.includes("sku")
+  ) {
+    const skuHint = productId ? ` (${productId})` : "";
+    return (
+      `Google Play'de ürün bulunamadı${skuHint}. ` +
+      "Play Console → Monetize → In-app products altında Product ID'nin birebir tanımlı, " +
+      "Active durumda ve test build'inizle aynı uygulama paketinde (com.proparcel.mobile) olduğundan emin olun."
+    );
+  }
+  if (lower.includes("user_cancelled") || lower.includes("user_canceled")) {
+    return "Satın alma iptal edildi.";
+  }
+  return raw || "Satın alma başarısız.";
+}
+
+async function ensurePlayProductInCatalog(productId: string): Promise<PlayProductInfo | null> {
+  const cached = cachedStoreProducts.find((p) => p.productId === productId);
+  if (cached) return cached;
+
+  await loadPlayProducts();
+  const reloaded = cachedStoreProducts.find((p) => p.productId === productId);
+  if (reloaded) return reloaded;
+
+  const iap = await getIap();
+  if (!iap) return null;
+
+  const type = playProductQueryType(productId);
+  try {
+    const rows = await iap.fetchProducts({ skus: [productId], type });
+    const first = rows?.[0];
+    if (!first) return null;
+    const mapped = mapProduct(first, type);
+    cachedStoreProducts = [...cachedStoreProducts.filter((p) => p.productId !== productId), mapped];
+    return mapped;
+  } catch (e) {
+    console.warn("[googlePlayIap] ensurePlayProductInCatalog failed:", productId, e);
+    return null;
+  }
+}
+
 async function validateReceipt(payload: ValidateReceiptPayload): Promise<ValidateReceiptResult> {
   if (!IS_ANDROID) {
     return { success: false, error: "Google Play yalnızca Android'de kullanılabilir." };
@@ -287,9 +338,8 @@ function attachListeners(iap: IapModule): void {
       pendingPurchaseResolvers.clear();
       return;
     }
-    pendingPurchaseResolvers.forEach(({ reject }) =>
-      reject(new Error(error.message || "Satın alma başarısız."))
-    );
+    const message = formatPlayPurchaseErrorMessage(error);
+    pendingPurchaseResolvers.forEach(({ reject }) => reject(new Error(message)));
     pendingPurchaseResolvers.clear();
   });
 }
@@ -370,8 +420,12 @@ export async function purchasePlayProduct(
   const iap = await getIap();
   if (!iap) throw new Error("Ödeme modülü yüklenemedi.");
 
-  const purchaseType = isPlaySubscriptionProductId(productId) ? "subs" : "in-app";
-  const catalog = cachedStoreProducts.find((p) => p.productId === productId);
+  const catalog = await ensurePlayProductInCatalog(productId);
+  if (!catalog) {
+    throw new Error(formatPlayPurchaseErrorMessage(new Error("sku-not-found"), productId));
+  }
+
+  const purchaseType = playProductQueryType(productId);
 
   return new Promise<ValidateReceiptResult>((resolve, reject) => {
     const timeoutId = setTimeout(() => {
@@ -416,7 +470,7 @@ export async function purchasePlayProduct(
           google: androidRequest,
         },
       })
-      .catch((err) => fail(err));
+      .catch((err) => fail(formatPlayPurchaseErrorMessage(err instanceof Error ? err : new Error(String(err)), productId)));
   });
 }
 

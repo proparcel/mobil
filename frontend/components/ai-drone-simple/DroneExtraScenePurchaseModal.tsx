@@ -2,7 +2,7 @@
  * Pratik Video — ek sahne IAP (1 veya 2 sahne).
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -23,8 +23,12 @@ import { AI_DRONE_EDITOR_THEME } from "../../src/constants/aiDroneEditorTheme";
 type Props = {
   visible: boolean;
   onClose: () => void;
+  /** Backdrop / Vazgeç — bekleyen capture iptali (editor Devam gate). */
+  onDismiss?: () => void;
   referenceId: string;
   jobId: string;
+  /** Devam gate: kare sayısına göre öne çıkarılacak paket. */
+  preferredActionType?: typeof DRONE_EK_SAHNE_ACTION | typeof DRONE_EK_SAHNE_2_ACTION;
   onPurchaseSuccess?: () => void;
 };
 
@@ -58,14 +62,29 @@ function formatTry(price: number | null): string {
 export function DroneExtraScenePurchaseModal({
   visible,
   onClose,
+  onDismiss,
   referenceId,
   jobId,
+  preferredActionType,
   onPurchaseSuccess,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [purchasing, setPurchasing] = useState<string | null>(null);
   const [prices, setPrices] = useState<Record<string, number | null>>({});
   const [error, setError] = useState<string | null>(null);
+
+  const packageOptions = useMemo(() => {
+    if (!preferredActionType) return PACKAGES;
+    return [...PACKAGES].sort((a, b) => {
+      if (a.actionType === preferredActionType) return -1;
+      if (b.actionType === preferredActionType) return 1;
+      return 0;
+    });
+  }, [preferredActionType]);
+
+  const handleDismiss = useCallback(() => {
+    (onDismiss ?? onClose)();
+  }, [onDismiss, onClose]);
 
   const loadPricing = useCallback(async () => {
     setLoading(true);
@@ -126,8 +145,8 @@ export function DroneExtraScenePurchaseModal({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleDismiss}>
+      <Pressable style={styles.backdrop} onPress={handleDismiss}>
         <Pressable style={styles.sheet} onPress={() => undefined}>
           <Text style={styles.title}>Ek Sahne Satın Al</Text>
           <Text style={styles.subtitle}>
@@ -137,15 +156,21 @@ export function DroneExtraScenePurchaseModal({
           {loading ? (
             <ActivityIndicator color={AI_DRONE_EDITOR_THEME.primaryBright} style={styles.loader} />
           ) : (
-            PACKAGES.map((pkg) => (
+            packageOptions.map((pkg) => (
               <TouchableOpacity
                 key={pkg.actionType}
-                style={styles.pkgBtn}
+                style={[
+                  styles.pkgBtn,
+                  preferredActionType === pkg.actionType ? styles.pkgBtnPreferred : null,
+                ]}
                 disabled={Boolean(purchasing)}
                 onPress={() => void handlePurchase(pkg)}
               >
                 <View style={styles.pkgBody}>
-                  <Text style={styles.pkgTitle}>{pkg.title}</Text>
+                  <Text style={styles.pkgTitle}>
+                    {pkg.title}
+                    {preferredActionType === pkg.actionType ? " · Önerilen" : ""}
+                  </Text>
                   <Text style={styles.pkgSub}>{pkg.subtitle}</Text>
                 </View>
                 <View style={styles.pkgRight}>
@@ -162,7 +187,7 @@ export function DroneExtraScenePurchaseModal({
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+          <TouchableOpacity style={styles.closeBtn} onPress={handleDismiss}>
             <Text style={styles.closeBtnText}>Vazgeç</Text>
           </TouchableOpacity>
         </Pressable>
@@ -196,6 +221,10 @@ const styles = StyleSheet.create({
     backgroundColor: AI_DRONE_EDITOR_THEME.primary,
     borderRadius: 12,
     padding: 12,
+  },
+  pkgBtnPreferred: {
+    borderWidth: 2,
+    borderColor: "#fbbf24",
   },
   pkgBody: { flex: 1, gap: 2 },
   pkgTitle: { color: "#fff", fontWeight: "800", fontSize: 15 },

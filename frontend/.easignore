@@ -21,8 +21,11 @@ dist
 web-build
 release_builds
 apk_releases
+app_releases
+ios_release_builds
 
 .apk
+.ipa
 .aab
 .jks
 .p8

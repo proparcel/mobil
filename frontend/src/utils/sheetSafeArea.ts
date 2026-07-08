@@ -18,6 +18,15 @@ export function sheetScrollBottomPadding(safeAreaBottom: number, extra = 0): num
   return sheetContentSafeBottom(safeAreaBottom) + extra;
 }
 
+/** Tam sayfa scroll: klavye açıkken home indicator padding'i eklenmez */
+export function scrollContentBottomPadding(
+  safeAreaBottom: number,
+  extra: number,
+  keyboardHeight: number,
+): number {
+  return keyboardHeight > 0 ? extra : sheetContentSafeBottom(safeAreaBottom) + extra;
+}
+
 /**
  * Tam ekran modal (3D editör): sheet ekran dibine yapışır; safe area yalnızca içerik padding'inde.
  */

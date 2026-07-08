@@ -37,17 +37,26 @@ const portalEntry = path.resolve(
   'node_modules/@gorhom/portal/lib/commonjs/index.js',
 );
 const rniapEntry = path.resolve(__dirname, 'node_modules/react-native-iap/lib/module/index.js');
+const youtubeIframeEntry = path.resolve(
+  __dirname,
+  'node_modules/react-native-youtube-iframe/lib/commonjs/index.js',
+);
 const nitroModulesEntry = path.resolve(
   __dirname,
   'node_modules/react-native-nitro-modules/lib/module/index.js',
 );
+
+const blurEntry = path.resolve(__dirname, 'node_modules/@react-native-community/blur/src/index.tsx');
+const blurWebStub = path.resolve(__dirname, 'shims/blur-web-stub.js');
 
 config.resolver.alias = {
   ...(config.resolver.alias || {}),
   "@": path.resolve(__dirname),
   "@gorhom/portal": portalEntry,
   "react-native-iap": rniapEntry,
+  "react-native-youtube-iframe": youtubeIframeEntry,
   "react-native-nitro-modules": nitroModulesEntry,
+  "@react-native-community/blur": blurEntry,
 };
 
 const defaultResolveRequest = config.resolver.resolveRequest;
@@ -58,8 +67,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (moduleName === 'react-native-iap') {
     return { type: 'sourceFile', filePath: rniapEntry };
   }
+  if (moduleName === 'react-native-youtube-iframe') {
+    return { type: 'sourceFile', filePath: youtubeIframeEntry };
+  }
   if (moduleName === 'react-native-nitro-modules') {
     return { type: 'sourceFile', filePath: nitroModulesEntry };
+  }
+  if (moduleName === '@react-native-community/blur' && platform === 'web') {
+    return { type: 'sourceFile', filePath: blurWebStub };
   }
   if (defaultResolveRequest) {
     return defaultResolveRequest(context, moduleName, platform);

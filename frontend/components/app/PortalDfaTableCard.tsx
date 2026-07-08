@@ -2,37 +2,32 @@
  * Portal detay — DFA tablosu (web PortalRecentQueryDetailApp OverviewTab ile uyumlu).
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  Keyboard,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
-import { postMahalleOrtSignal } from '../../services/portalService';
 import { useScrollInputIntoView } from '../../src/keyboard';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import type { MahalleOrtSignalResponse, PortalQueryDetail } from '../../src/types/portal';
+import type { PortalQueryDetail } from '../../src/types/portal';
 import {
   buildDfaRowsFromSteps,
   filterLandDfaStepsForStructureQuery,
   formatTotalAppliedPercent,
   getPortalDfaPriceFooter,
   type PortalDfaRow,
-  type PortalDfaSimulatedFooter,
 } from '../../src/utils/portalDfaHelpers';
-import {
-  mapMahalleOrtSimulationToFooter,
-  mahalleOrtWrittenPriceMatchesInput,
-  parseMahalleOrtInput,
-  resolveMahalleOrtDisplaySimulation,
-} from '../../src/utils/dfaPortalSteps';
+import { parseMahalleOrtInput } from '../../src/utils/dfaPortalSteps';
 import { isStructurePortalQueryType } from '../../src/utils/portalDetailCardContract';
+import {
+  usePortalMahalleOrtSession,
+  type PortalMahalleOrtSession,
+} from '../../src/hooks/usePortalMahalleOrtSession';
 import CreditCelebrationModal from './CreditCelebrationModal';
 import PortalStructureValuationStory from './PortalStructureValuationStory';
 
@@ -76,6 +71,10 @@ type Props = {
   viewerIsExpert?: boolean;
   /** DFA sekmesinde hesap makinesi ile değerleme tablosu arasına kart yerleştirir. */
   middleSlot?: React.ReactNode;
+  /** `calculator` — yalnız hesap alanı; `valuation` — tablo/özet (+ middleSlot); `full` — hepsi */
+  section?: 'full' | 'calculator' | 'valuation';
+  /** Hesapla + DFA sekmeleri arasında mahalle ort. simülasyonu paylaşır. */
+  mahalleOrtSession?: PortalMahalleOrtSession;
 };
 
 type DfaTableOptions = {
@@ -94,16 +93,31 @@ export default function PortalDfaTableCard({
   onMahalleOrtSaved,
   viewerIsExpert = false,
   middleSlot,
+  section = 'full',
+  mahalleOrtSession: externalMahalleOrtSession,
 }: Props) {
-  const [mahalleOrtInput, setMahalleOrtInput] = useState('');
-  const [simulatedFooter, setSimulatedFooter] = useState<PortalDfaSimulatedFooter | null>(null);
-  const [mahalleOrtNotice, setMahalleOrtNotice] = useState<string | null>(null);
-  const [mahalleOrtHesaplaSubmitting, setMahalleOrtHesaplaSubmitting] = useState(false);
-  const [mahalleOrtBildirSubmitting, setMahalleOrtBildirSubmitting] = useState(false);
-  const [mahalleOrtDbSaved, setMahalleOrtDbSaved] = useState(false);
-  const [creditCelebration, setCreditCelebration] = useState<{ credits: number; message: string } | null>(
-    null,
-  );
+  const internalMahalleOrtSession = usePortalMahalleOrtSession(detail, {
+    onMahalleOrtSaved,
+    viewerIsExpert,
+  });
+  const mahalleOrtSession = externalMahalleOrtSession ?? internalMahalleOrtSession;
+  const {
+    mahalleOrtInput,
+    setMahalleOrtInput,
+    simulatedFooter,
+    mahalleOrtNotice,
+    mahalleOrtHesaplaSubmitting,
+    mahalleOrtBildirSubmitting,
+    mahalleOrtDbSaved,
+    creditCelebration,
+    setCreditCelebration,
+    handleMahalleOrtHesapla,
+    handleMahalleOrtBildir,
+    handleMahalleOrtReset,
+    canResetMahalleOrt,
+    mahalleOrtValid,
+    mahalleOrtBusy,
+  } = mahalleOrtSession;
   const [expandedDfaRowKey, setExpandedDfaRowKey] = useState<string | null>(null);
   const mahalleOrtWrapRef = useRef<View>(null);
 
@@ -118,11 +132,6 @@ export default function PortalDfaTableCard({
   const hasValuationLayers = Boolean(detail.valuation_layers_summary);
 
   useEffect(() => {
-    setMahalleOrtInput('');
-    setSimulatedFooter(null);
-    setMahalleOrtNotice(null);
-    setMahalleOrtDbSaved(false);
-    setCreditCelebration(null);
     setExpandedDfaRowKey(null);
   }, [detail.snapshot_id]);
 
@@ -130,199 +139,12 @@ export default function PortalDfaTableCard({
   const appliedPercentLabel =
     simulatedFooter?.appliedPercent ?? formatTotalAppliedPercent(detail, dfaRows);
 
-  const applyMahalleOrtSimulation = useCallback(
-    (body: Pick<MahalleOrtSignalResponse, 'db_simulation' | 'simulation'>) => {
-      const displaySimulation = resolveMahalleOrtDisplaySimulation(body);
-      const footer = mapMahalleOrtSimulationToFooter(displaySimulation);
-      if (footer) {
-        setSimulatedFooter(footer);
-      }
-    },
-    [],
-  );
-
-  const applyMahalleOrtReward = useCallback((body: MahalleOrtSignalResponse) => {
-    const reward = body.reward;
-    if (!reward?.show_celebration_modal) return;
-    setCreditCelebration({
-      credits: reward.credit_awarded ?? 1,
-      message:
-        reward.celebration_message ||
-        `Tebrikler! ${reward.credit_awarded ?? 1} Tepe Kredi kazandınız.`,
-    });
-    const attempts = reward.attempts_remaining;
-    if (Number.isFinite(attempts) && attempts != null && attempts >= 0) {
-      setMahalleOrtNotice((prev) => {
-        const base = prev || 'İşlem tamamlandı.';
-        return `${base} Kalan deneme hakkı: ${attempts}.`;
-      });
-    }
-  }, []);
-
-  const processMahalleOrtSuccess = useCallback(
-    (body: MahalleOrtSignalResponse, unit: number, mode: 'hesapla' | 'bildir') => {
-      applyMahalleOrtSimulation(body);
-      setMahalleOrtInput(String(Math.round(unit)));
-
-      if (mode === 'bildir') {
-        if (body.db_saved) {
-          if (!mahalleOrtWrittenPriceMatchesInput(body, unit)) {
-            setMahalleOrtNotice(
-              'Kayıt alındı ancak simülasyon girilen fiyatla eşleşmiyor. Sayfayı yenileyin.',
-            );
-          } else {
-            setMahalleOrtNotice('Mahalle ortalaması bildirildi.');
-          }
-          setMahalleOrtDbSaved(true);
-          onMahalleOrtSaved?.();
-        } else {
-          setMahalleOrtNotice(body.message || 'Mahalle ortalaması kaydedilemedi.');
-          setMahalleOrtDbSaved(false);
-        }
-      } else if (body.db_saved) {
-        setMahalleOrtNotice(body.message || 'Mahalle ortalaması güncellendi.');
-        setMahalleOrtDbSaved(true);
-        onMahalleOrtSaved?.();
-      } else if (body.message) {
-        setMahalleOrtNotice(body.message);
-      }
-
-      applyMahalleOrtReward(body);
-      if (!body.reward?.show_celebration_modal && body.reward?.badge_counted) {
-        const notice =
-          mode === 'bildir'
-            ? 'Mahalle ortalaması bildirildi. Bu parsel için kredi penceresi henüz dolmadı.'
-            : 'Katılımınız kaydedildi. Bu parsel için kredi penceresi henüz dolmadı.';
-        setMahalleOrtNotice(notice);
-      }
-    },
-    [applyMahalleOrtReward, applyMahalleOrtSimulation, onMahalleOrtSaved],
-  );
-
-  const submitMahalleOrtSignal = useCallback(
-    async (
-      unit: number,
-      snapshotId: number,
-      options: { persist: boolean; confirmExtremePrice?: boolean },
-    ) => postMahalleOrtSignal(snapshotId, unit, options),
-    [],
-  );
-
-  const handleMahalleOrtHesapla = useCallback(async () => {
-    const unit = parseMahalleOrtInput(mahalleOrtInput);
-    const snapshotId = Number(detail.snapshot_id);
-    if (unit == null || !Number.isFinite(snapshotId) || snapshotId <= 0 || mahalleOrtHesaplaSubmitting) {
-      setSimulatedFooter(null);
-      return;
-    }
-
-    setMahalleOrtHesaplaSubmitting(true);
-    setMahalleOrtNotice(null);
-    try {
-      const res = await submitMahalleOrtSignal(unit, snapshotId, { persist: false });
-      if (!res.ok) {
-        Alert.alert('Uyarı', res.error || 'Hesaplama yapılamadı.');
-        setSimulatedFooter(null);
-        return;
-      }
-      processMahalleOrtSuccess(res.data, unit, 'hesapla');
-    } catch {
-      Alert.alert('Uyarı', 'Hesaplama isteği gönderilemedi.');
-      setSimulatedFooter(null);
-    } finally {
-      setMahalleOrtHesaplaSubmitting(false);
-      Keyboard.dismiss();
-    }
-  }, [
-    mahalleOrtInput,
-    detail.snapshot_id,
-    mahalleOrtHesaplaSubmitting,
-    processMahalleOrtSuccess,
-    submitMahalleOrtSignal,
-  ]);
-
-  const handleMahalleOrtBildir = useCallback(async () => {
-    const unit = parseMahalleOrtInput(mahalleOrtInput);
-    const snapshotId = Number(detail.snapshot_id);
-    if (unit == null || !Number.isFinite(snapshotId) || snapshotId <= 0 || mahalleOrtBildirSubmitting) {
-      return;
-    }
-
-    const runSignal = (confirmExtremePrice: boolean) =>
-      submitMahalleOrtSignal(unit, snapshotId, { persist: true, confirmExtremePrice });
-
-    setMahalleOrtBildirSubmitting(true);
-    setMahalleOrtNotice(null);
-    try {
-      let res = await runSignal(false);
-
-      if (!res.ok && res.status === 409 && res.code === 'confirm_extreme_price') {
-        if (res.payload && typeof res.payload === 'object') {
-          applyMahalleOrtSimulation({
-            db_simulation: res.payload.db_simulation as MahalleOrtSignalResponse['db_simulation'],
-            simulation: res.payload.simulation as MahalleOrtSignalResponse['simulation'],
-          });
-        }
-        const message =
-          res.error ||
-          String(res.payload?.message || '') ||
-          'Girdiğiniz fiyat mahalle ortalamasından önemli ölçüde farklı. Onaylıyor musunuz?';
-        const confirmed = await new Promise<boolean>((resolve) => {
-          Alert.alert('Onay', message, [
-            { text: 'İptal', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Evet', onPress: () => resolve(true) },
-          ]);
-        });
-        if (!confirmed) {
-          setMahalleOrtNotice('Onay verilmediği için fiyat veritabanına kaydedilmedi.');
-          return;
-        }
-        res = await runSignal(true);
-      }
-
-      if (!res.ok) {
-        Alert.alert('Uyarı', res.error || 'Mahalle ortalaması kaydedilemedi.');
-        return;
-      }
-
-      processMahalleOrtSuccess(res.data, unit, 'bildir');
-    } catch {
-      Alert.alert('Uyarı', 'Mahalle ortalaması isteği gönderilemedi.');
-    } finally {
-      setMahalleOrtBildirSubmitting(false);
-      Keyboard.dismiss();
-    }
-  }, [
-    mahalleOrtInput,
-    detail.snapshot_id,
-    mahalleOrtBildirSubmitting,
-    processMahalleOrtSuccess,
-    submitMahalleOrtSignal,
-  ]);
-
-  const handleMahalleOrtReset = useCallback(() => {
-    setMahalleOrtInput('');
-    setSimulatedFooter(null);
-    setMahalleOrtNotice(null);
-    setMahalleOrtDbSaved(false);
-    Keyboard.dismiss();
-  }, []);
-
-  const canResetMahalleOrt =
-    simulatedFooter != null ||
-    mahalleOrtInput.trim().length > 0 ||
-    mahalleOrtNotice != null ||
-    mahalleOrtDbSaved;
-
   const { handleFocus: handleMahalleInputFocus, handleBlur: handleMahalleInputBlur } =
     useScrollInputIntoView({
       scrollRef: scrollRef ?? { current: null },
       inputWrapRef: mahalleOrtWrapRef,
       onBeforeFocus: onBeforeMahalleInputFocus,
     });
-
-  const mahalleOrtValid = parseMahalleOrtInput(mahalleOrtInput) != null;
-  const mahalleOrtBusy = mahalleOrtHesaplaSubmitting || mahalleOrtBildirSubmitting;
 
   const roadExtra: PortalDfaRow | null = useMemo(() => {
     const raw = detail.road_frontage_values?.total_road_frontage_edge_length_m;
@@ -362,17 +184,7 @@ export default function PortalDfaTableCard({
   const buildingSteps = Array.isArray(detail.building_dfa_json) ? detail.building_dfa_json : [];
   const hasStructureDfaContent =
     isStructure && (hasValuationLayers || buildingSteps.length > 0);
-
-  if (!rawSteps.length && !buildingSteps.length && !hasStructureDfaContent) {
-    return (
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Gayrimenkul Değerleme Hesap Makinesi</Text>
-        <Text style={styles.emptyText}>
-          DFA adımları henüz yüklenmedi veya bu kayıt için gösterilemiyor. Sayfayı yenileyin veya birkaç saniye bekleyin.
-        </Text>
-      </View>
-    );
-  }
+  const hasAnyDfaContent = rawSteps.length > 0 || buildingSteps.length > 0 || hasStructureDfaContent;
 
   const renderDfaTable = (
     rows: PortalDfaRow[],
@@ -575,41 +387,46 @@ export default function PortalDfaTableCard({
     </View>
   );
 
+  const renderValuationSummaryGrid = () => {
+    if (!showLandSummaryGrid) return null;
+    return (
+      <View style={styles.summaryWrap}>
+        <Text style={styles.summaryTitle}>Değerleme özeti (özet API)</Text>
+        <View style={styles.summaryGrid}>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Başlangıç (TL/m²)</Text>
+            <Text style={styles.summaryValue}>
+              {displayFooter.startUnit != null ? formatPrice(displayFooter.startUnit) : '—'}
+            </Text>
+          </View>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Bitiş (TL/m²)</Text>
+            <Text style={[styles.summaryValue, simulatedFooter && styles.summaryValueHighlight]}>
+              {displayFooter.endUnit != null ? formatPrice(displayFooter.endUnit) : '—'}
+            </Text>
+          </View>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Uygulanan %</Text>
+            <Text style={styles.summaryValue}>{appliedPercentLabel}</Text>
+          </View>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Toplam (TL)</Text>
+            <Text style={[styles.summaryValue, simulatedFooter && styles.summaryValueHighlight]}>
+              {displayFooter.total != null ? formatPrice(displayFooter.total) : '—'}
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   const renderValuationAndLandSections = () => (
     <>
       {isStructure && hasValuationLayers ? (
         <PortalStructureValuationStory detail={detail} simulatedLand={simulatedFooter} />
       ) : null}
 
-      {showLandSummaryGrid ? (
-        <View style={styles.summaryWrap}>
-          <Text style={styles.summaryTitle}>Değerleme özeti (özet API)</Text>
-          <View style={styles.summaryGrid}>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryLabel}>Başlangıç (TL/m²)</Text>
-              <Text style={styles.summaryValue}>
-                {displayFooter.startUnit != null ? formatPrice(displayFooter.startUnit) : '—'}
-              </Text>
-            </View>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryLabel}>Bitiş (TL/m²)</Text>
-              <Text style={[styles.summaryValue, simulatedFooter && styles.summaryValueHighlight]}>
-                {displayFooter.endUnit != null ? formatPrice(displayFooter.endUnit) : '—'}
-              </Text>
-            </View>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryLabel}>Uygulanan %</Text>
-              <Text style={styles.summaryValue}>{appliedPercentLabel}</Text>
-            </View>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryLabel}>Toplam (TL)</Text>
-              <Text style={[styles.summaryValue, simulatedFooter && styles.summaryValueHighlight]}>
-                {displayFooter.total != null ? formatPrice(displayFooter.total) : '—'}
-              </Text>
-            </View>
-          </View>
-        </View>
-      ) : null}
+      {renderValuationSummaryGrid()}
 
       {hasLandDfaTable ? (
         <>
@@ -625,14 +442,69 @@ export default function PortalDfaTableCard({
   const hasBottomSection =
     (isStructure && hasValuationLayers) || showLandSummaryGrid || hasLandDfaTable;
 
+  const renderCalculatorCard = () => (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Gayrimenkul Değerleme Hesap Makinesi</Text>
+      <Text style={styles.cardSubtitle}>{DFA_SECTION_SUBTITLE}</Text>
+      {showMahalleOrtControls ? renderMahalleOrtControls() : null}
+    </View>
+  );
+
+  const renderEmptyCalculator = () => (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Gayrimenkul Değerleme Hesap Makinesi</Text>
+      <Text style={styles.emptyText}>
+        DFA adımları henüz yüklenmedi veya bu kayıt için gösterilemiyor. Sayfayı yenileyin veya birkaç saniye bekleyin.
+      </Text>
+    </View>
+  );
+
+  const renderEmptyValuation = () => (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Değerleme Faktörleri Analizi</Text>
+      <Text style={styles.emptyText}>
+        DFA adımları henüz yüklenmedi veya bu kayıt için gösterilemiyor. Sayfayı yenileyin veya birkaç saniye bekleyin.
+      </Text>
+    </View>
+  );
+
+  if (section === 'calculator') {
+    if (!hasAnyDfaContent && !showMahalleOrtControls) {
+      return renderEmptyCalculator();
+    }
+    const summaryGrid = renderValuationSummaryGrid();
+    return (
+      <>
+        {renderCalculatorCard()}
+        {summaryGrid ? (
+          <View style={[styles.card, styles.cardBottom]}>{summaryGrid}</View>
+        ) : null}
+      </>
+    );
+  }
+
+  if (section === 'valuation') {
+    if (!hasAnyDfaContent) {
+      return renderEmptyValuation();
+    }
+    return (
+      <>
+        {middleSlot}
+        {hasBottomSection ? (
+          <View style={[styles.card, styles.cardBottom]}>{renderValuationAndLandSections()}</View>
+        ) : null}
+      </>
+    );
+  }
+
+  if (!hasAnyDfaContent) {
+    return renderEmptyCalculator();
+  }
+
   if (middleSlot) {
     return (
       <>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Gayrimenkul Değerleme Hesap Makinesi</Text>
-          <Text style={styles.cardSubtitle}>{DFA_SECTION_SUBTITLE}</Text>
-          {showMahalleOrtControls ? renderMahalleOrtControls() : null}
-        </View>
+        {renderCalculatorCard()}
         {middleSlot}
         {hasBottomSection ? (
           <View style={[styles.card, styles.cardBottom]}>{renderValuationAndLandSections()}</View>

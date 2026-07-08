@@ -63,10 +63,12 @@ import {
 } from "../../../components/auth/CorporateTypeCard";
 import VoiceRegistrationWizard from "../../../components/auth/VoiceRegistrationWizard";
 import type {
+  VoiceRegistrationBatchResult,
   VoiceRegistrationField,
   VoiceRegistrationFormPatch,
 } from "../../../src/types/voiceRegistration";
 import { canOpenVoiceRegistrationWizard } from "../../../src/utils/voiceRegistrationResolve";
+import { voiceRegistrationFieldToFormErrorKey } from "../../../src/utils/voiceRegistrationFieldToFormErrorKey";
 import { enforceAsciiEmailAddress } from "../../../src/utils/voiceRegistrationValidators";
 import { appendVoiceQueryDebugLog } from "../../../src/utils/voiceQueryDebugLog";
 
@@ -216,6 +218,7 @@ export default function RegisterScreen() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
   const [referralCode, setReferralCode] = useState("");
   const [companyName, setCompanyName] = useState("");
@@ -250,6 +253,7 @@ export default function RegisterScreen() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [voiceWizardVisible, setVoiceWizardVisible] = useState(false);
   const passwordInputRef = useRef<TextInput>(null);
+  const firstNameInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     storageService.getDeferredReferralCode().then((code) => {
@@ -714,13 +718,57 @@ export default function RegisterScreen() {
     [],
   );
 
-  const handleVoiceWizardCompleted = useCallback(() => {
-    setVoiceWizardVisible(false);
-    void appendVoiceQueryDebugLog("wizard_completed", "voice_registration", {});
+  const focusFormTopForReview = useCallback(() => {
     setTimeout(() => {
-      passwordInputRef.current?.focus();
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      firstNameInputRef.current?.focus();
     }, 300);
   }, []);
+
+  const handleVoiceBatchCompleted = useCallback(
+    (result: VoiceRegistrationBatchResult) => {
+      if (result.successes.length === 0 && result.failures.length === 0) {
+        Alert.alert(
+          "Sesli Üyelik",
+          "Ses kayıtları işlenemedi. Lütfen tekrar deneyin.",
+        );
+        return;
+      }
+
+      setVoiceWizardVisible(false);
+      void appendVoiceQueryDebugLog("wizard_completed", "voice_registration", {
+        successCount: result.successes.length,
+        failureCount: result.failures.length,
+      });
+
+      result.successes.forEach(({ patch, field }) => {
+        handleVoiceFieldResolved(patch, field);
+        const key = voiceRegistrationFieldToFormErrorKey(field);
+        if (key) {
+          setErrors((prev) => ({ ...prev, [key]: "" }));
+        }
+      });
+
+      if (result.failures.length > 0) {
+        setErrors((prev) => {
+          const next = { ...prev };
+          result.failures.forEach(({ field, message }) => {
+            const key = voiceRegistrationFieldToFormErrorKey(field);
+            if (key) next[key] = message;
+          });
+          return next;
+        });
+        Alert.alert(
+          "Sesli Üyelik",
+          "Bazı alanlar algılanamadı. Kırmızı işaretli alanları kontrol edin.",
+          [{ text: "Tamam", onPress: focusFormTopForReview }],
+        );
+      } else {
+        focusFormTopForReview();
+      }
+    },
+    [handleVoiceFieldResolved, focusFormTopForReview],
+  );
 
   const handleVoiceWizardClose = useCallback(() => {
     setVoiceWizardVisible(false);
@@ -917,6 +965,7 @@ export default function RegisterScreen() {
                 <>
                   <Text style={styles.label}>Ad *</Text>
                   <TextInput
+                    ref={firstNameInputRef}
                     style={[styles.input, errors.firstName && styles.inputError]}
                     placeholder="Adınız"
                     placeholderTextColor="#999"
@@ -1508,23 +1557,42 @@ export default function RegisterScreen() {
               {({ onFocus, onBlur }) => (
                 <>
                   <Text style={styles.label}>Şifre *</Text>
-                  <TextInput
-                    ref={passwordInputRef}
-                    style={[styles.input, errors.password && styles.inputError, securePasswordInputStyle]}
-                    placeholder="En az 8 karakter"
-                    placeholderTextColor="#999"
-                    secureTextEntry
-                    value={password}
-                    onChangeText={(text) => {
-                      setPassword(text);
-                      if (errors.password) setErrors((e) => ({ ...e, password: "" }));
-                    }}
-                    autoComplete="password-new"
-                    textContentType="newPassword"
-                    onFocus={onFocus}
-                    onBlur={onBlur}
-                    {...securePasswordInputProps}
-                  />
+                  <View
+                    style={[
+                      styles.passwordRow,
+                      errors.password && styles.inputError,
+                    ]}
+                  >
+                    <TextInput
+                      ref={passwordInputRef}
+                      style={[styles.passwordInput, securePasswordInputStyle]}
+                      placeholder="En az 8 karakter"
+                      placeholderTextColor="#999"
+                      secureTextEntry={!showPassword}
+                      value={password}
+                      onChangeText={(text) => {
+                        setPassword(text);
+                        if (errors.password) setErrors((e) => ({ ...e, password: "" }));
+                      }}
+                      autoComplete="password-new"
+                      textContentType="newPassword"
+                      onFocus={onFocus}
+                      onBlur={onBlur}
+                      {...securePasswordInputProps}
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordToggle}
+                      onPress={() => setShowPassword((v) => !v)}
+                      accessibilityRole="button"
+                      accessibilityLabel={showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
+                    >
+                      <Ionicons
+                        name={showPassword ? "eye-off-outline" : "eye-outline"}
+                        size={22}
+                        color="#64748b"
+                      />
+                    </TouchableOpacity>
+                  </View>
                   {errors.password ? (
                     <Text style={styles.fieldError}>{errors.password}</Text>
                   ) : null}
@@ -1680,8 +1748,7 @@ export default function RegisterScreen() {
         memberType={memberType}
         corporateType={corporateType}
         selectedCompany={selectedCompany}
-        onFieldResolved={handleVoiceFieldResolved}
-        onCompleted={handleVoiceWizardCompleted}
+        onBatchCompleted={handleVoiceBatchCompleted}
         onClose={handleVoiceWizardClose}
       />
     </SafeAreaView>

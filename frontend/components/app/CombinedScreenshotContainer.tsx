@@ -16,6 +16,7 @@ import {
   verifyCaptureFile,
 } from '../../src/utils/screenshotManager';
 import { parseTurkishPrice, formatTurkishPrice } from '../../src/utils/priceParser';
+import { formatParcelAreaDisplay, resolveParcelAreaM2, pickParcelAreaRaw } from '../../src/utils/dfaRows';
 import {
   mergeParcelDisplayProperties,
   pickParcelDisplayValue,
@@ -76,13 +77,9 @@ const pickRaw = (source: Record<string, any>, keys: string[]): any => {
   return null;
 };
 
-const parseAreaToNumber = (value: any): number => {
-  if (value === null || value === undefined || value === '') return 0;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  const s = String(value).replace(/\s/g, '').replace(/m²|m2/gi, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, '');
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
-};
+const parseAreaToNumber = resolveParcelAreaM2;
+
+const formatArea = (value: any): string => formatParcelAreaDisplay(value, '-');
 
 const formatPriceMaybe = (raw: any, allow: boolean): string => {
   if (!allow) return '-';
@@ -223,31 +220,12 @@ export const CombinedScreenshotContainer = React.forwardRef<
   const pickValue = (source: Record<string, any>, keys: readonly string[]): string =>
     pickParcelDisplayValue(source, keys);
 
-  const formatArea = (value: any): string => {
-    if (value === null || value === undefined || value === '') return '-';
-    let n: number;
-    if (typeof value === 'string') {
-      const cleaned = String(value).trim();
-      if (cleaned.includes(',')) {
-        const withoutDots = cleaned.replace(/\./g, '');
-        const withDot = withoutDots.replace(',', '.');
-        n = Number(withDot);
-      } else {
-        n = Number(cleaned.replace(',', '.'));
-      }
-    } else {
-      n = Number(value);
-    }
-    if (!Number.isFinite(n) || n <= 0) return '-';
-    return `${Math.round(n).toLocaleString('tr-TR')} m²`;
-  };
-
   const il = pickValue(mergedProperties, LOCATION_IL_KEYS);
   const ilce = pickValue(mergedProperties, LOCATION_ILCE_KEYS);
   const mahalle = pickValue(mergedProperties, LOCATION_MAHALLE_KEYS);
   const ada = pickValue(mergedProperties, ['adaNo', 'ada', 'Ada']);
   const parsel = pickValue(mergedProperties, ['parselNo', 'parsel', 'Parsel']);
-  const alanRaw = mergedProperties.alan ?? mergedProperties.area ?? mergedProperties.Area ?? mergedProperties.area_m2 ?? null;
+  const alanRaw = pickParcelAreaRaw(mergedProperties);
   const alan = formatArea(alanRaw);
   const nitelik = pickValue(mergedProperties, ['nitelik', 'Nitelik']);
 

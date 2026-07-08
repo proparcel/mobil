@@ -26,12 +26,5 @@ export const landingRadii = {
   nav: 32,
 } as const;
 
-export const LANDING_INTRO_STAGGER_MS = 400;
-export const LANDING_INTRO_ENTER_MS = 480;
-export const LANDING_INTRO_HOLD_AFTER_MS = 2200;
-export const LANDING_INTRO_CONTENT_EXIT_MS = 900;
-export const LANDING_INTRO_PAGE_REVEAL_MS = 1100;
-export const LANDING_INTRO_LINE_COUNT = 5;
-
 /** Alt nav için scroll boşluğu (hukuki metinler panel içeriğinin sonunda) */
 export const LANDING_BOTTOM_CHROME = 100;

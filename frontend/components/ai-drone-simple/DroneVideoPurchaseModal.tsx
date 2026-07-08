@@ -2,7 +2,7 @@
  * Parsel bazlı AI Drone Video lisansı — TL + IAP (is_try_priced) veya Tepe Kredi.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { AiCreditPurchaseModalLayout } from "../ai-shared/AiCreditPurchaseModalLayout";
 import { creditService } from "../../services/creditService";
@@ -11,9 +11,16 @@ import type { DroneParcelQuery } from "../../services/aiDroneSimpleEditorService
 
 const DRONE_VIDEO_ACTION = "drone_video";
 
+function isPurchaseUserCancelled(message: string | null | undefined): boolean {
+  const text = String(message || "").trim().toLowerCase();
+  return text.includes("iptal") || text.includes("cancel");
+}
+
 type Props = {
   visible: boolean;
   onClose: () => void;
+  /** Kullanıcı ödeme adımını tamamlamadan kapattığında (modal veya mağaza iptali). */
+  onDismiss?: () => void;
   referenceId: string;
   parcel?: DroneParcelQuery | null;
   parcelSummary?: string;
@@ -23,6 +30,7 @@ type Props = {
 export function DroneVideoPurchaseModal({
   visible,
   onClose,
+  onDismiss,
   referenceId,
   parcel,
   parcelSummary,
@@ -36,14 +44,23 @@ export function DroneVideoPurchaseModal({
   const [purchasing, setPurchasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const purchaseCompletedRef = useRef(false);
 
   useEffect(() => {
     if (visible) {
+      purchaseCompletedRef.current = false;
       void loadPricing();
       setError(null);
       setSuccess(false);
     }
   }, [visible]);
+
+  const handleModalClose = () => {
+    onClose();
+    if (!purchaseCompletedRef.current) {
+      onDismiss?.();
+    }
+  };
 
   const loadPricing = async () => {
     setLoading(true);
@@ -144,7 +161,11 @@ export function DroneVideoPurchaseModal({
           description: buildDescription(),
         });
         if (!result.success) {
-          setError(result.error || result.message || "Satın alma başarısız.");
+          const errMsg = result.error || result.message || "Satın alma başarısız.";
+          setError(errMsg);
+          if (isPurchaseUserCancelled(errMsg)) {
+            handleModalClose();
+          }
           return;
         }
       } else {
@@ -155,11 +176,13 @@ export function DroneVideoPurchaseModal({
         }
       }
 
+      purchaseCompletedRef.current = true;
       setSuccess(true);
       await loadPricing();
       setTimeout(() => {
         onPurchaseSuccess?.();
         onClose();
+        purchaseCompletedRef.current = false;
       }, 900);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Satın alma işlemi sırasında bir hata oluştu.");
@@ -173,7 +196,7 @@ export function DroneVideoPurchaseModal({
   return (
     <AiCreditPurchaseModalLayout
       visible={visible}
-      onClose={onClose}
+      onClose={handleModalClose}
       headerTitle="AI Drone Video Satın Al"
       productName="Tek kullanımlık video üretim hakkı"
       productDescription={summary}
@@ -187,11 +210,7 @@ export function DroneVideoPurchaseModal({
       success={success}
       successMessage="Lisans tanımlandı!"
       purchaseButtonIcon={isTryPriced ? "card" : "cart"}
-      helpText={
-        isTryPriced
-          ? "Ödeme App Store veya Google Play üzerinden alınır. Ek üretim denemeleri ayrı Tepe Kredi maliyetine tabidir."
-          : "Bu hak seçili parsel için bir kez video üretimi içerir. Ek üretim denemeleri ayrı Tepe Kredi maliyetine tabidir."
-      }
+      helpText="Bu hak seçili parsel için bir kez video üretimi içerir. Ek üretim denemeleri ayrı Tepe Kredi maliyetine tabidir."
       purchaseDisabled={loading || (isTryPriced ? priceTry == null : requiredCredits == null)}
       onPurchase={() => void handlePurchase()}
     />

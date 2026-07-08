@@ -35,6 +35,10 @@ yarn-error.*
 !.env.example
 .env*.local
 
+# Firebase (repo'ya commit etmeyin)
+google-services.json
+*firebase-adminsdk*.json
+
 # typescript
 *.tsbuildinfo
 
@@ -45,6 +49,9 @@ expo-env.d.ts
 # Build folders
 android/
 ios/
+signing/*.keystore
+signing/keystore.properties
+!signing/keystore.properties.example
 
 # Test model assets (release'te bundle'a girmemeli; sadece __DEV__ ekraninda kullanilir)
 assets/temp/*.glb

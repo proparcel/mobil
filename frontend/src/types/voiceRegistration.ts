@@ -39,6 +39,28 @@ export type VoiceRegistrationPendingReview =
 
 export type VoiceRegistrationInputType = "voice" | "manual_password";
 
+export type VoiceRegistrationSegmentMarker = {
+  field: VoiceRegistrationField;
+  startMs: number;
+  endMs: number;
+  optional?: boolean;
+};
+
+export type VoiceRegistrationBatchSuccess = {
+  field: VoiceRegistrationField;
+  patch: VoiceRegistrationFormPatch;
+};
+
+export type VoiceRegistrationBatchFailure = {
+  field: VoiceRegistrationField;
+  message: string;
+};
+
+export type VoiceRegistrationBatchResult = {
+  successes: VoiceRegistrationBatchSuccess[];
+  failures: VoiceRegistrationBatchFailure[];
+};
+
 export type VoiceRegistrationStepConfig = {
   field: VoiceRegistrationField;
   prompt: string;

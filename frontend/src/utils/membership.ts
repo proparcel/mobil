@@ -7,6 +7,8 @@ export type CorporateType = 'emlak' | 'lihkab' | 'spk' | 'editor' | 'none';
 
 const VIP_CUSTOMER_TYPES = new Set<CustomerType>(['vip', 'vip_limited', 'premium']);
 
+const GOVERNMENT_HAPTIC_CUSTOMER_TYPES = new Set<CustomerType>(['vip', 'vip_limited', 'premium']);
+
 function lower(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
 }
@@ -100,6 +102,28 @@ export function isVipCustomer(user?: User | null): boolean {
   return VIP_CUSTOMER_TYPES.has(ct);
 }
 
+/** VIP / vip_limited / premium — basit sorgu devlet/kamu titreşimi. */
+export function isGovernmentHapticEligible(user?: User | null): boolean {
+  if (!user) return false;
+  const ct = (user.customer_type || 'basic') as CustomerType;
+  return GOVERNMENT_HAPTIC_CUSTOMER_TYPES.has(ct);
+}
+
+/** Premium — parsel modal adaparsel tapu detayı (VIP'de yok). */
+export function isPremiumCustomer(user?: User | null): boolean {
+  if (!user) return false;
+  return (user.customer_type || 'basic') === 'premium';
+}
+
+/** Topbar / profil / menü rozeti — premium el yazısı, vip/vip_limited kalın VIP. */
+export function getMembershipTierBadgeLabel(user?: User | null): 'Premium' | 'VIP' | null {
+  if (!user) return null;
+  const ct = (user.customer_type || 'basic') as CustomerType;
+  if (ct === 'premium') return 'Premium';
+  if (ct === 'vip' || ct === 'vip_limited') return 'VIP';
+  return null;
+}
+
 export function isPlatformAdmin(user?: User | null): boolean {
   if (!user) return false;
   if (user.is_admin === true) return true;
@@ -126,17 +150,18 @@ export function effectiveCorporateType(profile?: UserProfile | null): CorporateT
 
 export function canAccessProSorgu(
   user?: User | null,
-  _profile?: UserProfile | null,
+  profile?: UserProfile | null,
   apiFlag?: boolean | null,
 ): boolean {
   if (apiFlag === true) return true;
   if (apiFlag === false) return false;
   if (!user) return false;
   if (isPlatformAdmin(user)) return true;
+  if (isExpertMember(user, profile)) return true;
+  if (lower(user.customer_type) === 'business') return true;
   if (user.can_access_prosorgu === true) return true;
   if (user.can_access_prosorgu === false) return false;
-  const customerType = lower(user.customer_type) || 'basic';
-  return customerType !== 'basic';
+  return false;
 }
 
 export function membershipDisplayLabel(

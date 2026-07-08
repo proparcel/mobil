@@ -1,13 +1,12 @@
-# iPhone USB + Personal Hotspot ile Metro baglantisi.
-# Not: iOS'ta Android adb reverse yok; kablo uzerinden mini-ag (172.20.10.x) kullanilir.
+# iPhone USB + Personal Hotspot ile Metro baglantisi (iOS port 8081).
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
+. "$PSScriptRoot/metro-smart.ps1"
 
 Write-Host "=== iPhone USB Metro (Personal Hotspot) ===" -ForegroundColor Cyan
 Write-Host ""
 
-# Apple USB ag adaptorunu bul (Personal Hotspot acik + kablo takili olmali)
 $usbIp = $null
 $adapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {
   $_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.' -and
@@ -23,7 +22,6 @@ foreach ($a in $adapters) {
   }
 }
 
-# Hotspot alt agi (172.20.10.x) — cogu kurulumda PC bu aralikta IP alir
 if (-not $usbIp) {
   $hotspot = $adapters | Where-Object { $_.IPAddress -match '^172\.20\.10\.' } | Select-Object -First 1
   if ($hotspot) {
@@ -35,28 +33,24 @@ if (-not $usbIp) {
 if (-not $usbIp) {
   Write-Host "USB ag IP bulunamadi." -ForegroundColor Red
   Write-Host ""
-  Write-Host "Kontrol listesi:" -ForegroundColor Yellow
+  Write-Host "Kontrol listesi:"
   Write-Host "  1. iPhone: Ayarlar -> Kisisel Erisim Noktasi -> AC"
   Write-Host "  2. USB kablo takili, 'Bu bilgisayara guven' onayli"
   Write-Host "  3. Windows: Apple Devices veya iTunes kurulu (USB surucu)"
-  Write-Host "  4. Ayarlar -> Ag -> Ethernet -> iPhone baglantisi gorunuyor mu?"
-  Write-Host ""
-  Write-Host "ipconfig ciktisinda 172.20.10.x veya Apple/iPhone adaptorunu arayin."
   exit 1
 }
 
-$metroUrl = "http://${usbIp}:8081"
+$metroUrl = "http://${usbIp}:$METRO_PORT_IOS"
 Write-Host ""
 Write-Host "Dev client Enter URL:" -ForegroundColor Cyan
 Write-Host "  $metroUrl" -ForegroundColor Green
 Write-Host ""
-Write-Host "Safari test (telefonda acilmali):" -ForegroundColor Cyan
-Write-Host "  $metroUrl" -ForegroundColor Green
-Write-Host ""
-Write-Host "Metro baslatiliyor..." -ForegroundColor Yellow
-Write-Host "Baglandiktan sonra kod degisikligi otomatik yenilenir (r = reload)." -ForegroundColor Gray
-Write-Host ""
 
-$env:NODE_ENV = "development"
-npm run stop:metro 2>$null | Out-Null
-npx expo start --dev-client --lan --scheme proparcel --port 8081
+if (Test-MetroListening -Port $METRO_PORT_IOS) {
+  Write-Host "[ios] Metro zaten acik (port $METRO_PORT_IOS) — yeniden baslatilmiyor." -ForegroundColor Green
+  Invoke-FocusMetroWindow -Platform ios
+  exit 0
+}
+
+Write-Host "Metro baslatiliyor (port $METRO_PORT_IOS)..." -ForegroundColor Yellow
+& "$PSScriptRoot/../start_ios_metro.ps1" -Lan

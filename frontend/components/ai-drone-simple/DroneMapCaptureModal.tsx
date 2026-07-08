@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Platform,
@@ -21,11 +22,12 @@ import {
   homeIndexMap3DLayersAvailable,
   homeIndexMapSatelliteStyleURL,
 } from "../map/HomeIndexMap3DLayers";
-import { tryMapboxSnap } from "../../src/utils/mapboxSnapshot";
+import { tryDroneMapReferenceSnap } from "../../src/utils/mapboxSnapshot";
 import {
   applyDroneCaptureCameraFit,
   calculateBoundsAndCamera,
   DRONE_CAPTURE_BBOX_MARGIN,
+  DRONE_CAPTURE_MULTI_BEARING_PADDING_SCALE,
   DRONE_CAPTURE_PADDING_PX,
   normalizeGeometryCoordinates,
 } from "../../src/utils/parcelUtils";
@@ -36,14 +38,21 @@ import {
   RUNWAY_PORTRAIT_REF_WIDTH,
 } from "../../services/runwayPortraitClient";
 import { AI_DRONE_EDITOR_THEME } from "../../src/constants/aiDroneEditorTheme";
+import {
+  DRONE_SCENE_INITIAL_COUNT,
+  DRONE_SCENE_MAX_CAPTURE_PER_PURCHASE,
+  DRONE_SCENE_PACKAGE_ALLOWANCE,
+} from "../../services/droneSceneService";
 
 const RECORD_PITCH = 60;
-const BEARINGS = [0, 120, 240];
-const MIN_FRAMES = 2;
+const DEFAULT_MIN_FRAMES = 2;
+const INITIAL_CAPTURE_BEARINGS = [0, 90, 180, 270] as const;
+const CAMERA_SETTLE_MS = 450;
+const SCENE_LIMIT_ALERT_MESSAGE =
+  "En fazla 5 sahne görseli alınabilir. Sahnelerin üretiminden sonra ek sahneler üretebilirsiniz.";
 const CAPTURE_VIEWPORT = { width: RUNWAY_PORTRAIT_REF_WIDTH, height: RUNWAY_PORTRAIT_REF_HEIGHT };
 const CAPTURE_SIZE = { mapWidth: RUNWAY_PORTRAIT_REF_WIDTH, mapHeight: RUNWAY_PORTRAIT_REF_HEIGHT };
 const MAP_READY_FALLBACK_MS = 2800;
-const CAMERA_SETTLE_MS = 1600;
 const FRAME_RENDER_MS = 900;
 const BOTTOM_PANEL_HEIGHT = 168;
 const TOP_BAR_CONTENT_HEIGHT = 48;
@@ -118,7 +127,11 @@ type Props = {
   visible: boolean;
   tkgmData: TkgmParcelResponse | null;
   mode?: CaptureMode;
-  maxFrames?: number;
+  /** Bu oturumda en fazla kaç kare (ek sahne: min(remaining, 2)). */
+  sessionMaxFrames?: number;
+  /** Paket üst sınırı (varsayılan 5). */
+  totalMaxFrames?: number;
+  minFrames?: number;
   onCancel: () => void;
   onContinue: (payload: DroneMapCaptureContinuePayload) => void;
   onStatusChange?: (status: string) => void;
@@ -129,7 +142,9 @@ export function DroneMapCaptureModal({
   visible,
   tkgmData,
   mode = "initial",
-  maxFrames,
+  sessionMaxFrames,
+  totalMaxFrames = DRONE_SCENE_PACKAGE_ALLOWANCE,
+  minFrames = DEFAULT_MIN_FRAMES,
   onCancel,
   onContinue,
   onStatusChange,
@@ -143,11 +158,13 @@ export function DroneMapCaptureModal({
   const mapReadyRef = useRef(false);
   const idleCountRef = useRef(0);
   const cancelledRef = useRef(false);
+  const initialFitDoneRef = useRef(false);
   const autoCaptureStartedRef = useRef(false);
-  const runCaptureRef = useRef<(() => Promise<void>) | null>(null);
+  const fittedCameraRef = useRef<{ center: [number, number]; zoom: number } | null>(null);
 
   const [status, setStatus] = useState("Harita hazırlanıyor…");
   const [busy, setBusy] = useState(false);
+  const [autoCaptureActive, setAutoCaptureActive] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
@@ -157,9 +174,15 @@ export function DroneMapCaptureModal({
   const [useOpenAiPreflight, setUseOpenAiPreflight] = useState(false);
 
   const isNewSceneMode = mode === "new_scene";
-  const effectiveMaxFrames = isNewSceneMode ? Math.max(1, maxFrames ?? 2) : undefined;
-  const effectiveMinFrames = isNewSceneMode ? 1 : MIN_FRAMES;
-  const showPromptField = isNewSceneMode && capturedFrames.length <= 1;
+  const effectiveSessionMax = Math.max(
+    1,
+    Math.min(
+      sessionMaxFrames ?? DRONE_SCENE_MAX_CAPTURE_PER_PURCHASE,
+      totalMaxFrames,
+    ),
+  );
+  const effectiveMinFrames = Math.max(1, minFrames);
+  const showPromptField = capturedFrames.length <= 1;
 
   const feature = useMemo(() => extractParcelFeature(tkgmData), [tkgmData]);
 
@@ -167,7 +190,7 @@ export function DroneMapCaptureModal({
     if (!feature?.geometry) return null;
     return calculateBoundsAndCamera(feature.geometry, {
       viewport: CAPTURE_VIEWPORT,
-      paddingPx: DRONE_CAPTURE_PADDING_PX,
+      paddingPx: Math.round(DRONE_CAPTURE_PADDING_PX * DRONE_CAPTURE_MULTI_BEARING_PADDING_SCALE),
       minZoom: 2,
       maxZoom: 18,
       bboxMargin: DRONE_CAPTURE_BBOX_MARGIN,
@@ -210,28 +233,35 @@ export function DroneMapCaptureModal({
     if (mapReadyRef.current || cancelledRef.current) return;
     mapReadyRef.current = true;
     setMapReady(true);
-    reportStatus("Harita hazır, kareler alınacak…");
+    reportStatus("Harita hazır, kare çekin…");
   }, [reportStatus]);
 
   const resetSession = useCallback(() => {
     mapReadyRef.current = false;
     idleCountRef.current = 0;
     cancelledRef.current = false;
+    initialFitDoneRef.current = false;
     autoCaptureStartedRef.current = false;
+    fittedCameraRef.current = null;
     setMapReady(false);
     setMapError(null);
     setBusy(false);
+    setAutoCaptureActive(false);
     setCapturedFrames([]);
     setSelectedIds(new Set());
     setPromptText("");
     setUseOpenAiPreflight(false);
-    reportStatus(isNewSceneMode ? "Harita hazırlanıyor…" : "Harita hazırlanıyor…");
+    reportStatus(isNewSceneMode ? "Harita hazır, kare çekin…" : "Harita hazır, kareler alınacak…");
   }, [reportStatus, isNewSceneMode]);
 
-  const canCaptureMore = useMemo(() => {
-    if (effectiveMaxFrames == null) return true;
-    return capturedFrames.length < effectiveMaxFrames;
-  }, [capturedFrames.length, effectiveMaxFrames]);
+  const canCaptureMore = useMemo(
+    () => capturedFrames.length < effectiveSessionMax,
+    [capturedFrames.length, effectiveSessionMax],
+  );
+
+  const showSceneLimitAlert = useCallback(() => {
+    Alert.alert("Sahne limiti", SCENE_LIMIT_ALERT_MESSAGE, [{ text: "Tamam" }]);
+  }, []);
 
   useEffect(() => {
     if (!visible) {
@@ -242,91 +272,82 @@ export function DroneMapCaptureModal({
     resetSession();
   }, [visible, resetSession, retryToken]);
 
-  const runAutoCapture = useCallback(async () => {
-    if (cancelledRef.current || busy) return;
-
-    if (!Mapbox || !feature) {
-      reportStatus("Harita veya parsel geometrisi kullanılamıyor.");
+  const runInitialAutoCapture = useCallback(async () => {
+    if (
+      cancelledRef.current ||
+      busy ||
+      autoCaptureStartedRef.current ||
+      isNewSceneMode ||
+      !Mapbox ||
+      !feature ||
+      !cameraDefaults ||
+      !mapReadyRef.current
+    ) {
       return;
     }
 
-    if (!mapReadyRef.current) {
-      reportStatus("Harita henüz hazır değil.");
-      return;
-    }
-
-    let waitMs = 0;
-    while (!mapRef.current && waitMs < 5000) {
-      await new Promise((r) => setTimeout(r, 100));
-      waitMs += 100;
-    }
-    if (!mapRef.current || cancelledRef.current) {
-      reportStatus("Harita görünümü hazır değil.");
-      return;
-    }
-
-    const cam = cameraDefaults || calculateBoundsAndCamera(feature.geometry, {
-      viewport: CAPTURE_VIEWPORT,
-      paddingPx: DRONE_CAPTURE_PADDING_PX,
-      bboxMargin: DRONE_CAPTURE_BBOX_MARGIN,
-    });
-    const center = cam?.center;
-    if (!center) {
-      reportStatus("Parsel merkezi hesaplanamadı.");
-      return;
-    }
-
+    const fitted = fittedCameraRef.current ?? cameraDefaults;
+    autoCaptureStartedRef.current = true;
+    setAutoCaptureActive(true);
     setBusy(true);
     setMapError(null);
-    const batch: CapturedFrame[] = [];
+
+    const frames: CapturedFrame[] = [];
 
     try {
-      await new Promise((r) => setTimeout(r, 200));
-
-      for (let i = 0; i < BEARINGS.length; i += 1) {
+      for (let i = 0; i < INITIAL_CAPTURE_BEARINGS.length; i += 1) {
         if (cancelledRef.current) return;
 
-        reportStatus(`Kare ${i + 1}/${BEARINGS.length} alınıyor…`);
-        await applyDroneCaptureCameraFit({
-          cameraRef,
-          mapRef,
-          geometry: feature.geometry,
-          captureViewport: CAPTURE_VIEWPORT,
-          mapViewport: mapLayout,
+        reportStatus(`Kare ${i + 1}/${INITIAL_CAPTURE_BEARINGS.length} alınıyor…`);
+        cameraRef.current?.setCamera?.({
+          centerCoordinate: fitted.center,
+          zoomLevel: fitted.zoom,
           pitch: RECORD_PITCH,
-          heading: BEARINGS[i],
-          paddingPx: DRONE_CAPTURE_PADDING_PX,
+          heading: INITIAL_CAPTURE_BEARINGS[i],
+          animationDuration: 0,
         });
 
         await new Promise((r) => setTimeout(r, CAMERA_SETTLE_MS + FRAME_RENDER_MS));
 
-        let uri = await tryMapboxSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
+        let uri = await tryDroneMapReferenceSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
         if (!uri) {
           await new Promise((r) => setTimeout(r, 500));
-          uri = await tryMapboxSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
+          uri = await tryDroneMapReferenceSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
         }
         if (!uri) throw new Error(`Kare ${i + 1} alınamadı.`);
 
-        batch.push({
+        frames.push({
           id: nextFrameId(),
           uri,
-          name: `reference_batch_${String(i + 1).padStart(2, "0")}.jpg`,
+          name: `reference_${String(i + 1).padStart(2, "0")}.jpg`,
           type: "image/jpeg",
         });
       }
 
       if (cancelledRef.current) return;
-      setCapturedFrames((prev) => [...prev, ...batch]);
+
+      setCapturedFrames(frames);
       setSelectedIds(new Set());
-      reportStatus(`${batch.length} kare eklendi. İnceleyin, silin veya tekrar çekin.`);
+      reportStatus(`${INITIAL_CAPTURE_BEARINGS.length} kare alındı. Kontrol edip Devam'a basın.`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Görüntü yakalama başarısız.";
       setMapError(msg);
       reportStatus(msg);
+      autoCaptureStartedRef.current = false;
+      if (frames.length > 0) {
+        setCapturedFrames(frames);
+      }
     } finally {
       setBusy(false);
+      setAutoCaptureActive(false);
     }
-  }, [busy, feature, cameraDefaults, mapLayout, reportStatus]);
+  }, [
+    busy,
+    feature,
+    cameraDefaults,
+    isNewSceneMode,
+    reportStatus,
+  ]);
 
   const runManualCapture = useCallback(async () => {
     if (cancelledRef.current || busy) return;
@@ -340,8 +361,24 @@ export function DroneMapCaptureModal({
       reportStatus("Harita henüz hazır değil.");
       return;
     }
+
+    if (capturedFrames.length >= totalMaxFrames) {
+      showSceneLimitAlert();
+      return;
+    }
+
     if (!canCaptureMore) {
-      reportStatus("Tek seferde en fazla iki sahne alınabilir.");
+      if (capturedFrames.length >= totalMaxFrames) {
+        showSceneLimitAlert();
+      } else if (isNewSceneMode && onNeedPurchase) {
+        onNeedPurchase();
+      } else {
+        Alert.alert(
+          "Kare limiti",
+          "Tek seferde en fazla iki kare alınabilir. Devam ederek videoyu oluşturun; kalan sahneleri üretimden sonra ekleyebilirsiniz.",
+          [{ text: "Tamam" }],
+        );
+      }
       return;
     }
 
@@ -360,22 +397,12 @@ export function DroneMapCaptureModal({
 
     try {
       reportStatus("Kare alınıyor…");
-      await applyDroneCaptureCameraFit({
-        cameraRef,
-        mapRef,
-        geometry: feature.geometry,
-        captureViewport: CAPTURE_VIEWPORT,
-        mapViewport: mapLayout,
-        pitch: RECORD_PITCH,
-        heading: 0,
-        paddingPx: DRONE_CAPTURE_PADDING_PX,
-      });
       await new Promise((r) => setTimeout(r, FRAME_RENDER_MS));
 
-      let uri = await tryMapboxSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
+      let uri = await tryDroneMapReferenceSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
       if (!uri) {
         await new Promise((r) => setTimeout(r, 500));
-        uri = await tryMapboxSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
+        uri = await tryDroneMapReferenceSnap(mapRef, CAPTURE_SIZE, { format: "jpeg" });
       }
       if (!uri) throw new Error("Kare alınamadı.");
 
@@ -389,7 +416,7 @@ export function DroneMapCaptureModal({
       };
       setCapturedFrames((prev) => [...prev, frame]);
       setSelectedIds(new Set());
-      reportStatus("Kare eklendi. İnceleyin, silin veya tekrar çekin.");
+      reportStatus(`Kare eklendi (${Math.min(capturedFrames.length + 1, totalMaxFrames)}/${totalMaxFrames}).`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Görüntü yakalama başarısız.";
       setMapError(msg);
@@ -397,20 +424,54 @@ export function DroneMapCaptureModal({
     } finally {
       setBusy(false);
     }
-  }, [busy, feature, mapLayout, reportStatus, canCaptureMore]);
-
-  runCaptureRef.current = runAutoCapture;
+  }, [
+    busy,
+    feature,
+    reportStatus,
+    canCaptureMore,
+    capturedFrames.length,
+    totalMaxFrames,
+    isNewSceneMode,
+    onNeedPurchase,
+    showSceneLimitAlert,
+  ]);
 
   useEffect(() => {
-    if (!visible || !feature || !cameraDefaults || !mapReady) return;
-    if (isNewSceneMode) return;
-    if (autoCaptureStartedRef.current || cancelledRef.current) return;
-    autoCaptureStartedRef.current = true;
-    const timer = setTimeout(() => {
-      void runCaptureRef.current?.();
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [visible, feature, cameraDefaults, mapReady, retryToken, isNewSceneMode]);
+    if (!visible || !feature || !mapReady || initialFitDoneRef.current || cancelledRef.current) {
+      return;
+    }
+    initialFitDoneRef.current = true;
+    void (async () => {
+      setBusy(true);
+      try {
+        const fitted = await applyDroneCaptureCameraFit({
+          cameraRef,
+          mapRef,
+          geometry: feature.geometry,
+          captureViewport: CAPTURE_VIEWPORT,
+          mapViewport: mapLayout,
+          pitch: RECORD_PITCH,
+          heading: 0,
+          paddingPx: DRONE_CAPTURE_PADDING_PX,
+          verifyHeadings: [...INITIAL_CAPTURE_BEARINGS],
+        });
+        if (fitted) {
+          fittedCameraRef.current = fitted;
+        } else if (cameraDefaults) {
+          fittedCameraRef.current = cameraDefaults;
+        }
+        if (cancelledRef.current || isNewSceneMode) return;
+        if (!cancelledRef.current) {
+          void runInitialAutoCapture();
+          return;
+        }
+      } finally {
+        if (cancelledRef.current || isNewSceneMode) {
+          setBusy(false);
+        }
+      }
+    })();
+  }, [visible, feature, mapReady, mapLayout, retryToken, isNewSceneMode, runInitialAutoCapture, cameraDefaults]);
 
   useEffect(() => {
     if (!visible) return;
@@ -437,6 +498,15 @@ export function DroneMapCaptureModal({
     setRetryToken((n) => n + 1);
   }, []);
 
+  const handleRetryAutoCapture = useCallback(() => {
+    autoCaptureStartedRef.current = false;
+    setAutoCaptureActive(false);
+    setMapError(null);
+    setCapturedFrames([]);
+    setSelectedIds(new Set());
+    void runInitialAutoCapture();
+  }, [runInitialAutoCapture]);
+
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -458,8 +528,12 @@ export function DroneMapCaptureModal({
       reportStatus(`En az ${effectiveMinFrames} kare gerekli.`);
       return;
     }
-    if (isNewSceneMode && effectiveMaxFrames != null && capturedFrames.length > effectiveMaxFrames) {
-      reportStatus("Tek seferde en fazla iki sahne alınabilir.");
+    if (capturedFrames.length > totalMaxFrames) {
+      showSceneLimitAlert();
+      return;
+    }
+    if (capturedFrames.length > effectiveSessionMax) {
+      showSceneLimitAlert();
       return;
     }
     const images: MobileUploadImage[] = capturedFrames.map((frame, index) => ({
@@ -470,18 +544,19 @@ export function DroneMapCaptureModal({
     onContinue({
       images,
       promptText: showPromptField ? promptText.trim() : undefined,
-      useOpenAiPreflight: isNewSceneMode ? useOpenAiPreflight : undefined,
+      useOpenAiPreflight: useOpenAiPreflight || undefined,
     });
   }, [
     capturedFrames,
     effectiveMinFrames,
-    effectiveMaxFrames,
-    isNewSceneMode,
+    effectiveSessionMax,
+    totalMaxFrames,
     onContinue,
     promptText,
     reportStatus,
     showPromptField,
     useOpenAiPreflight,
+    showSceneLimitAlert,
   ]);
 
   const handleCancel = useCallback(() => {
@@ -526,7 +601,7 @@ export function DroneMapCaptureModal({
           <TouchableOpacity style={styles.topBtn} onPress={handleCancel}>
             <Text style={styles.topBtnText}>İptal</Text>
           </TouchableOpacity>
-          <Text style={styles.topTitle}>{isNewSceneMode ? "Yeni sahne" : "Harita kareleri"}</Text>
+          <Text style={styles.topTitle}>{isNewSceneMode ? "Yeni sahne" : "Referans kareleri"}</Text>
           <View style={styles.topBtnPlaceholder} />
         </SafeAreaView>
 
@@ -602,7 +677,9 @@ export function DroneMapCaptureModal({
           >
             {capturedFrames.length === 0 ? (
               <Text style={styles.thumbEmpty}>
-                {isNewSceneMode ? "Kare çekin…" : "Kareler alınıyor…"}
+                {autoCaptureActive
+                  ? `${INITIAL_CAPTURE_BEARINGS.length} kare otomatik alınıyor…`
+                  : "Kare çekin…"}
               </Text>
             ) : (
               capturedFrames.map((frame) => {
@@ -614,7 +691,7 @@ export function DroneMapCaptureModal({
                     onPress={() => toggleSelect(frame.id)}
                     activeOpacity={0.85}
                   >
-                    <Image source={{ uri: frame.uri }} style={styles.thumbImage} resizeMode="cover" />
+                    <Image source={{ uri: frame.uri }} style={styles.thumbImage} resizeMode="contain" />
                     {selected ? (
                       <View style={styles.thumbCheck}>
                         <Ionicons name="checkmark" size={14} color="#fff" />
@@ -637,45 +714,52 @@ export function DroneMapCaptureModal({
             />
           ) : null}
 
-          {isNewSceneMode ? (
-            <TouchableOpacity
-              style={styles.preflightRow}
-              onPress={() => setUseOpenAiPreflight((v) => !v)}
-              activeOpacity={0.85}
-            >
-              <Ionicons
-                name={useOpenAiPreflight ? "checkbox" : "square-outline"}
-                size={18}
-                color={useOpenAiPreflight ? AI_DRONE_EDITOR_THEME.primaryBright : "#94a3b8"}
-              />
-              <Text style={styles.preflightLabel}>Resim canlandır</Text>
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.preflightRow}
+            onPress={() => setUseOpenAiPreflight((v) => !v)}
+            activeOpacity={0.85}
+          >
+            <Ionicons
+              name={useOpenAiPreflight ? "checkbox" : "square-outline"}
+              size={18}
+              color={useOpenAiPreflight ? AI_DRONE_EDITOR_THEME.primaryBright : "#94a3b8"}
+            />
+            <Text style={styles.preflightLabel}>Resim canlandır</Text>
+          </TouchableOpacity>
+
+          {!autoCaptureActive ? (
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[styles.captureBtn, (busy || !mapReady || !canCaptureMore) && styles.btnDisabled]}
+                onPress={() => void runManualCapture()}
+                disabled={busy || !mapReady || !canCaptureMore}
+              >
+                <Ionicons name="camera" size={18} color="#fff" />
+                <Text style={styles.captureBtnText}>Çek</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.continueBtn, !canContinue && styles.btnDisabled]}
+                onPress={handleContinue}
+                disabled={!canContinue}
+              >
+                <Text style={styles.continueBtnText}>Devam</Text>
+                <Ionicons name="arrow-forward" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
           ) : null}
 
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[styles.captureBtn, (busy || !mapReady || !canCaptureMore) && styles.btnDisabled]}
-              onPress={() => void runManualCapture()}
-              disabled={busy || !mapReady || !canCaptureMore}
-            >
-              <Ionicons name="camera" size={18} color="#fff" />
-              <Text style={styles.captureBtnText}>Çek</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.continueBtn, !canContinue && styles.btnDisabled]}
-              onPress={handleContinue}
-              disabled={!canContinue}
-            >
-              <Text style={styles.continueBtnText}>Devam</Text>
-              <Ionicons name="arrow-forward" size={18} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
           {mapError && !busy ? (
-            <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
-              <Text style={styles.retryBtnText}>Haritayı yenile</Text>
-            </TouchableOpacity>
+            <>
+              {!isNewSceneMode ? (
+                <TouchableOpacity style={styles.retryBtn} onPress={handleRetryAutoCapture}>
+                  <Text style={styles.retryBtnText}>Kareleri tekrar al</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
+                <Text style={styles.retryBtnText}>Haritayı yenile</Text>
+              </TouchableOpacity>
+            </>
           ) : null}
         </View>
       </View>
@@ -721,7 +805,7 @@ const styles = StyleSheet.create({
   },
   mapBusyOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(15,23,42,0.45)",
+    backgroundColor: "rgba(15,23,42,0.94)",
     alignItems: "center",
     justifyContent: "center",
   },

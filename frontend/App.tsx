@@ -5,7 +5,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { NativeModules, Platform, View, ActivityIndicator } from "react-native";
+import { NativeModules, Platform, View, ActivityIndicator, AppState } from "react-native";
 import { checkAppUpdate, type AppUpdateCheckResult } from './services/appUpdateService';
 import { setDismissedOptionalUpdateVersion } from './src/utils/appUpdateStorage';
 import { ForceUpdateScreen } from './components/app/ForceUpdateScreen';
@@ -23,9 +23,18 @@ import { ScreenShieldProvider, useScreenShield } from './screens/contexts/Screen
 import { ScreenShieldOverlay } from './components/app/screenShield/ScreenShieldOverlay';
 import { storageService } from "./services/storageService";
 import { useDeepLinkNavigation } from './src/hooks/useDeepLinkNavigation';
+import { IncomingShareImageListener } from './src/hooks/IncomingShareImageListener';
+import { ShareIntentProvider } from './src/shareIntent/shareIntentNative';
+import {
+  addNotificationResponseListener,
+  getInitialNotificationData,
+  registerPushToken,
+  shouldOpenHowToLiveTab,
+  type PushNotificationData,
+} from './services/pushNotificationService';
+import { saveHowToLiveSession } from './services/howToLiveSessionStorage';
 
-// Screens
-import IndexScreen from './screens/routes/index';
+// Screens (index lazy — 6000+ satir, ayri chunk)
 import ProfileScreen from './screens/routes/profile';
 import ChatbotScreen from './screens/routes/chatbot';
 import PricingScreen from './screens/routes/pricing';
@@ -34,11 +43,11 @@ import ParcelSplitScreen from './screens/routes/parcel-split';
 import TepeCoinEarnScreen from './screens/routes/tepe-coin-earn';
 import NotificationsScreen from './screens/routes/notifications';
 import SalesReportScreen from './screens/routes/sales-report';
-import AiVideoStudioScreen from './screens/routes/ai-video-studio';
 import AiImageAnimationPurchaseScreen from './screens/routes/ai-image-animation-purchase';
 import AiImageAnimationEditorScreen from './screens/routes/ai-image-animation-editor';
 import AiDroneHubScreen from './screens/routes/ai-drone-hub';
 import AiDroneSimpleEditorScreen from './screens/routes/ai-drone-simple-editor';
+import AiVideoNewEditorScreen from './screens/routes/ai-video-new-editor';
 import AiDroneVideoInfoScreen from './screens/routes/ai-drone-video-info';
 import AiDroneJobsScreen from './screens/routes/ai-drone-jobs';
 import AiDroneJobDetailScreen from './screens/routes/ai-drone-job-detail';
@@ -80,16 +89,31 @@ import IlanlarimScreen from './screens/routes/ilanlarim';
 import FavoriIlanlarimScreen from './screens/routes/favori-ilanlarim';
 import SorguFavorilerimScreen from './screens/routes/sorgu-favorilerim';
 import IlanIslemleriScreen from './screens/routes/ilan-islemleri';
-import LandingScreen from './screens/routes/landing';
+import ListingWizardScreen from './screens/routes/listing-wizard';
 import AranacaklarScreen from './screens/routes/aranacaklar';
 import AranacaklarPickerScreen from './screens/routes/aranacaklar-picker';
 import AranacaklarDetailScreen from './screens/routes/aranacaklar-detail';
 import AranacaklarStatsScreen from './screens/routes/aranacaklar-stats';
-import { initDroneRunwayJobTracker, teardownDroneRunwayJobTracker } from './services/droneRunwayJobTracker';
+import ProQueryGlobalModals from './components/app/ProQueryGlobalModals';
+import { notifyProQueryJobComplete } from './services/proQueryJobTracker';
+import {
+  buildProQueryCompletePayload,
+  handleSocialNotificationTap,
+  normalizeNotificationDataJson,
+  openPortalDetailFromProQueryData,
+} from './src/utils/notificationNavigation';
+import {
+  initDroneRunwayJobTracker,
+  teardownDroneRunwayJobTracker,
+} from './services/droneRunwayJobTracker';
 import {
   initDronePortraitExportJobTracker,
   teardownDronePortraitExportJobTracker,
 } from './services/dronePortraitExportJobTracker';
+import {
+  initDroneLandscapeExportJobTracker,
+  teardownDroneLandscapeExportJobTracker,
+} from './services/droneLandscapeExportJobTracker';
 import { registerParcelTerrain3dRoute } from './modules/parcelTerrain3d';
 import { registerUnitySmokeTestRoute, UNITY_SMOKE_TEST_ENABLED } from './modules/unitySmokeTest';
 import { maybePreloadPhonebookOnFirstLaunch } from './services/phonebookCacheService';
@@ -102,20 +126,129 @@ function TepeCoinPurchaseScreen(props: Record<string, unknown>) {
   return <Screen {...props} />;
 }
 
-function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'index' | 'unity-smoke-test' }) {
+/** Nasıl yapılır — youtube iframe yalnızca ekran açılınca yüklenir. */
+function NasilYapilirScreen(props: Record<string, unknown>) {
+  const Screen = require('./screens/routes/nasil-yapilir').default;
+  return <Screen {...props} />;
+}
+
+function IndexScreenLazy(props: Record<string, unknown>) {
+  const Screen = require('./screens/routes/index').default;
+  return <Screen {...props} />;
+}
+
+function AppWithShield({ initialRouteName }: { initialRouteName: 'index' | 'unity-smoke-test' }) {
   const { overlayVisible } = useScreenShield();
   const navigationRef = useNavigationContainerRef();
   const [navReady, setNavReady] = useState(false);
   const getNavigation = useCallback(() => navigationRef.current, [navigationRef]);
   useDeepLinkNavigation(getNavigation, navReady);
 
+  const openHowToLiveScreen = useCallback(
+    (opts?: { videoId?: string; title?: string }) => {
+      const nav = getNavigation();
+      if (!nav) return;
+      const videoId = opts?.videoId?.trim();
+      if (videoId) {
+        void saveHowToLiveSession({
+          videoId,
+          title: opts?.title?.trim(),
+          youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        });
+      }
+      nav.navigate({
+        name: 'nasil-yapilir',
+        params: {
+          tab: 'live',
+          ...(videoId ? { videoId } : {}),
+          ...(opts?.title?.trim() ? { liveTitle: opts.title.trim() } : {}),
+        },
+        merge: true,
+      } as never);
+    },
+    [getNavigation],
+  );
+
+  const handlePushNotificationData = useCallback(
+    (data: PushNotificationData) => {
+      if (shouldOpenHowToLiveTab(data)) {
+        openHowToLiveScreen({ videoId: data.video_id });
+        return;
+      }
+      const notifType = String(data.type || '').trim();
+      if (notifType === 'pro_query_complete') {
+        const normalized = normalizeNotificationDataJson(data);
+        void openPortalDetailFromProQueryData(
+          {
+            push: (path, params) => {
+              const nav = getNavigation();
+              if (!nav) {
+                notifyProQueryJobComplete(buildProQueryCompletePayload(normalized));
+                return;
+              }
+              if (typeof nav.push === 'function') {
+                nav.push(path as never, params as never);
+              } else {
+                nav.navigate(path as never, params as never);
+              }
+            },
+          },
+          normalized,
+        ).then((opened) => {
+          if (!opened) {
+            notifyProQueryJobComplete(buildProQueryCompletePayload(normalized));
+          }
+        });
+        return;
+      }
+      if (
+        handleSocialNotificationTap(
+          {
+            push: (path, params) => {
+              const nav = getNavigation();
+              if (!nav) return;
+              if (typeof nav.push === 'function') {
+                nav.push(path as never, params as never);
+              } else {
+                nav.navigate(path as never, params as never);
+              }
+            },
+          },
+          notifType,
+          data,
+        )
+      ) {
+        return;
+      }
+    },
+    [getNavigation, openHowToLiveScreen],
+  );
+
+  useEffect(() => {
+    if (!navReady) return;
+    void registerPushToken();
+    const unsubscribe = addNotificationResponseListener(handlePushNotificationData);
+    void getInitialNotificationData().then((data) => {
+      if (data) handlePushNotificationData(data);
+    });
+    const appStateSub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void registerPushToken();
+    });
+    return () => {
+      unsubscribe();
+      appStateSub.remove();
+    };
+  }, [navReady, handlePushNotificationData]);
+
   useEffect(() => {
     initDroneRunwayJobTracker();
     initDronePortraitExportJobTracker();
+    initDroneLandscapeExportJobTracker();
     void maybePreloadPhonebookOnFirstLaunch();
     return () => {
       teardownDroneRunwayJobTracker();
       teardownDronePortraitExportJobTracker();
+      teardownDroneLandscapeExportJobTracker();
     };
   }, []);
 
@@ -196,18 +329,24 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
 
   return (
     <React.Fragment>
-      <NavigationContainer ref={navigationRef} theme={DarkTheme} onReady={() => setNavReady(true)}>
+      <NavigationContainer
+        ref={navigationRef}
+        theme={DarkTheme}
+        onReady={() => {
+          if (__DEV__) console.log(`[ProParcel][${Platform.OS}] NavigationContainer ready`);
+          setNavReady(true);
+        }}
+      >
         <Stack.Navigator
           initialRouteName={initialRouteName}
           screenOptions={{
             headerShown: false,
             animation: 'slide_from_right',
-            /** Arka plandaki ekranları dondur — özellikle index (Mapbox) diğer sayfaları yavaşlatmasın */
-            freezeOnBlur: true,
+            freezeOnBlur: Platform.OS === 'ios' && __DEV__ ? false : true,
+            contentStyle: { flex: 1, backgroundColor: '#1e293b' },
           }}
         >
-          <Stack.Screen name="landing" component={LandingScreen} />
-          <Stack.Screen name="index" component={IndexScreen} />
+          <Stack.Screen name="index" component={IndexScreenLazy} />
           <Stack.Screen name="profile" component={ProfileScreen} />
           <Stack.Screen name="badges" component={BadgesScreen} />
           <Stack.Screen name="visitor-badges" component={VisitorBadgesScreen} />
@@ -219,11 +358,11 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="expert-requests" component={RequestCenterScreen} />
           <Stack.Screen name="expert-request-report" component={ExpertRequestReportScreen} />
           <Stack.Screen name="sales-report" component={SalesReportScreen} />
-          <Stack.Screen name="ai-video-studio" component={AiVideoStudioScreen} />
           <Stack.Screen name="ai-image-animation-purchase" component={AiImageAnimationPurchaseScreen} />
           <Stack.Screen name="ai-image-animation-editor" component={AiImageAnimationEditorScreen} />
           <Stack.Screen name="ai-drone-hub" component={AiDroneHubScreen} />
           <Stack.Screen name="ai-drone-simple-editor" component={AiDroneSimpleEditorScreen} />
+          <Stack.Screen name="ai-video-new-editor" component={AiVideoNewEditorScreen} />
           <Stack.Screen name="ai-drone-video-info" component={AiDroneVideoInfoScreen} />
           <Stack.Screen name="ai-drone-jobs" component={AiDroneJobsScreen} />
           <Stack.Screen name="ai-drone-job-detail" component={AiDroneJobDetailScreen} />
@@ -256,6 +395,7 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="otp-verify" component={OTPVerifyScreen} />
           <Stack.Screen name="forgot-password" component={ForgotPasswordScreen} />
           <Stack.Screen name="legal-hub" component={LegalHubScreen} />
+          <Stack.Screen name="nasil-yapilir" component={NasilYapilirScreen} />
           <Stack.Screen name="legal-webview" component={LegalWebViewScreen} />
           <Stack.Screen name="accounts-webview" component={AccountsWebViewScreen} />
           <Stack.Screen name="portal-webview" component={PortalWebViewScreen} />
@@ -264,6 +404,7 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           <Stack.Screen name="favori-ilanlarim" component={FavoriIlanlarimScreen} />
           <Stack.Screen name="sorgu-favorilerim" component={SorguFavorilerimScreen} />
           <Stack.Screen name="ilan-islemleri" component={IlanIslemleriScreen} />
+          <Stack.Screen name="listing-wizard" component={ListingWizardScreen} />
           <Stack.Screen name="aranacaklar" component={AranacaklarScreen} />
           <Stack.Screen name="aranacaklar-picker" component={AranacaklarPickerScreen} />
           <Stack.Screen name="aranacaklar-detail" component={AranacaklarDetailScreen} />
@@ -272,18 +413,31 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'landing' | 'in
           {registerUnitySmokeTestRoute(Stack)}
         </Stack.Navigator>
       </NavigationContainer>
+      <ProQueryGlobalModals navigationRef={navigationRef} navReady={navReady} />
+      <IncomingShareImageListener
+        navReady={navReady}
+        getNavigation={getNavigation}
+        onNavigatePricing={() => getNavigation()?.navigate('pricing')}
+      />
       <ScreenShieldOverlay visible={overlayVisible} />
     </React.Fragment>
   );
 }
 
 export default function App() {
-  const [navReady, setNavReady] = useState(false);
-  const [initialRoute, setInitialRoute] = useState<'landing' | 'index' | 'unity-smoke-test'>('index');
+  // Dev: guncelleme kontrolu UI'yi bloklamasin (Fast Refresh iptalinde navReady takilmasin).
+  const [navReady, setNavReady] = useState(__DEV__);
+  const [initialRoute, setInitialRoute] = useState<'index' | 'unity-smoke-test'>(
+    __DEV__ ? (UNITY_SMOKE_TEST_ENABLED ? 'unity-smoke-test' : 'index') : 'index',
+  );
   const [updateCheck, setUpdateCheck] = useState<AppUpdateCheckResult>({ kind: 'none' });
   const [optionalDismissed, setOptionalDismissed] = useState(false);
 
   useEffect(() => {
+    if (__DEV__) {
+      console.log(`[ProParcel][${Platform.OS}] App mounted navReady=${navReady}`);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -297,15 +451,8 @@ export default function App() {
         if (updateResult.kind === 'optional') {
           setUpdateCheck(updateResult);
         }
-
-        if (__DEV__) {
-          setInitialRoute(UNITY_SMOKE_TEST_ENABLED ? 'unity-smoke-test' : 'index');
-          return;
-        }
-        const skip = await storageService.getSkipLandingIntro();
-        if (!cancelled) setInitialRoute(skip ? 'index' : 'landing');
       } catch {
-        if (!cancelled) setInitialRoute('index');
+        // keep default initialRoute (index)
       } finally {
         if (!cancelled) setNavReady(true);
       }
@@ -359,13 +506,17 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <BadgeCelebrationProvider>
-          <GestureHandlerRootView style={{ flex: 1 }}>
+          <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#1e293b' }}>
             <SafeAreaProvider>
               <AppChromeScaffold>
                 <BottomSheetModalProvider>
-                  <ScreenShieldProvider>
-                    <AppWithShield initialRouteName={initialRoute} />
-                  </ScreenShieldProvider>
+                  <View style={{ flex: 1, backgroundColor: '#1e293b' }}>
+                    <ShareIntentProvider>
+                      <ScreenShieldProvider>
+                        <AppWithShield initialRouteName={initialRoute} />
+                      </ScreenShieldProvider>
+                    </ShareIntentProvider>
+                  </View>
                 </BottomSheetModalProvider>
                 <OptionalUpdateModal
                   visible={showOptionalUpdate}

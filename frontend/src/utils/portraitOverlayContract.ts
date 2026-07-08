@@ -96,18 +96,19 @@ export function portraitSubtitleExportFontSize(
   return Math.round(Math.max(12, Math.min(56, raw)));
 }
 
+export const DEFAULT_PORTRAIT_SUBTITLE_EXPORT_FONT_SIZE = 30;
+
 export function defaultPortraitSubtitleExportFontSize(): number {
-  return portraitSubtitleExportFontSize(
-    PORTRAIT_PREVIEW_SUBTITLE_FONT_PX,
-    PORTRAIT_PREVIEW_REF_HEIGHT,
-  );
+  return DEFAULT_PORTRAIT_SUBTITLE_EXPORT_FONT_SIZE;
 }
 
-/** Eski web (22) ve önceki mobil (34) kayıtlarını okunabilir boyuta yükseltir. */
+/** Eski web (22), önceki mobil (34) ve eski hesaplanmış default (51) kayıtlarını yükseltir. */
 export function normalizePortraitSubtitleExportFontSize(fontSize: unknown): number {
   const n = Number(fontSize);
   if (!Number.isFinite(n)) return defaultPortraitSubtitleExportFontSize();
   const rounded = Math.round(n);
-  if (rounded === 22 || rounded === 34) return defaultPortraitSubtitleExportFontSize();
+  if (rounded === 22 || rounded === 34 || rounded === 35 || rounded === 51) {
+    return defaultPortraitSubtitleExportFontSize();
+  }
   return Math.max(12, Math.min(56, rounded));
 }

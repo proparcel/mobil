@@ -2,12 +2,28 @@ import { authFormFetch, authJsonFetch } from "./apiClient";
 import { absoluteDroneApiUrl } from "./imageAnimationService";
 import type { MobileUploadImage } from "./imageAnimationService";
 import { appendOpenAiPreflightFormFields } from "./openAiPreflightApi";
-import { MOBILE_DRONE_RUNWAY_CLIENT_SOURCE } from "../src/constants/aiDroneProductionPipeline";
+import {
+  MOBILE_AI_VIDEO_NEW_CLIENT_SOURCE,
+  MOBILE_DRONE_RUNWAY_CLIENT_SOURCE,
+} from "../src/constants/aiDroneProductionPipeline";
+import {
+  buildCanonicalTimeline,
+  timelineCoversSegments,
+} from "./droneSceneTimeline";
+
+export {
+  buildCanonicalTimeline,
+  buildMergeTimelineFromStripOrder,
+  moveSceneTimelineByStep,
+  normalizeSceneTimeline,
+  reorderSceneTimeline,
+  timelineCoversSegments,
+} from "./droneSceneTimeline";
 
 export const DRONE_EK_SAHNE_ACTION = "drone_video_ek_sahne";
 export const DRONE_EK_SAHNE_2_ACTION = "drone_video_ek_sahne_2";
 export const DRONE_SCENE_PACKAGE_ALLOWANCE = 5;
-export const DRONE_SCENE_INITIAL_COUNT = 3;
+export const DRONE_SCENE_INITIAL_COUNT = 4;
 export const DRONE_SCENE_MAX_CAPTURE_PER_PURCHASE = 2;
 
 export type SceneGenerationRights = {
@@ -57,14 +73,19 @@ function errMessage(raw: unknown, fallback: string): string {
 
 export function defaultSceneRights(): SceneGenerationRights {
   return {
-    enabled: true,
-    included: DRONE_SCENE_PACKAGE_ALLOWANCE,
+    enabled: false,
+    included: 0,
     extra_paid: 0,
     used: 0,
-    allowance: DRONE_SCENE_PACKAGE_ALLOWANCE,
-    remaining: DRONE_SCENE_PACKAGE_ALLOWANCE,
-    can_create_n: DRONE_SCENE_PACKAGE_ALLOWANCE,
+    allowance: 0,
+    remaining: 0,
+    can_create_n: 0,
   };
+}
+
+function normalizeSceneRights(raw: SceneGenerationRights | null | undefined): SceneGenerationRights {
+  if (!raw?.enabled) return defaultSceneRights();
+  return raw;
 }
 
 export function segmentVideoAbsoluteUrl(relativeOrAbsolute: string): string {
@@ -79,6 +100,24 @@ export function segmentFileUrl(jobId: string, slot: number, cacheBust?: number):
   return absoluteDroneApiUrl(
     `/api/drone-recording-runway/segment-file/${encodeURIComponent(jobId)}/${slot}/?t=${bust}`,
   );
+}
+
+export function referenceFileUrl(jobId: string, slot: number, cacheBust?: number): string {
+  const bust = cacheBust ?? Date.now();
+  return absoluteDroneApiUrl(
+    `/api/drone-recording-runway/reference-file/${encodeURIComponent(jobId)}/${slot}/?t=${bust}`,
+  );
+}
+
+export function resolveSceneReferenceThumbUrl(
+  jobId: string,
+  slot: number,
+  segment?: Pick<RunwaySegmentItem, "ref_url" | "preflight_url"> | null,
+  cacheBust?: number,
+): string {
+  const refRelative = String(segment?.ref_url || segment?.preflight_url || "").trim();
+  if (refRelative) return segmentVideoAbsoluteUrl(refRelative);
+  return referenceFileUrl(jobId, slot, cacheBust);
 }
 
 export async function fetchRunwaySegments(jobId: string): Promise<
@@ -100,7 +139,7 @@ export async function fetchRunwaySegments(jobId: string): Promise<
       ...data,
       segments: Array.isArray(data.segments) ? data.segments : [],
       timeline: Array.isArray(data.timeline) ? data.timeline : [],
-      scene_rights: data.scene_rights?.enabled ? data.scene_rights : defaultSceneRights(),
+      scene_rights: normalizeSceneRights(data.scene_rights),
     },
   };
 }
@@ -113,7 +152,7 @@ export async function getSceneRights(jobId: string): Promise<SceneGenerationRigh
     { method: "GET" },
   );
   if (!res.ok || !res.data?.scene_rights) return defaultSceneRights();
-  return res.data.scene_rights.enabled ? res.data.scene_rights : defaultSceneRights();
+  return normalizeSceneRights(res.data.scene_rights);
 }
 
 export async function updateSegmentTimeline(
@@ -149,6 +188,60 @@ export async function finalizeSegmentTimeline(
   return { ok: true, pollMs: Number((res.data as any)?.poll_ms || 1500) };
 }
 
+/** Sahne strip — timeline entry sil; gerekirse önce meta bootstrap. */
+export async function deleteRunwaySceneEntry(
+  jobId: string,
+  entryId: string,
+  segments: RunwaySegmentItem[],
+  timeline: RunwaySegmentTimelineEntry[],
+): Promise<{ ok: true; deletedSlot: number } | { ok: false; error: string }> {
+  const canonical = buildCanonicalTimeline(segments, timeline);
+  const trimmedId = String(entryId || "").trim();
+  let target =
+    canonical.find((entry) => entry.id === trimmedId) ||
+    canonical.find((entry) => trimmedId && entry.id === `slot-${trimmedId}`) ||
+    null;
+
+  if (!target && trimmedId.startsWith("slot-")) {
+    const slotFromId = Number(trimmedId.replace(/^slot-/, ""));
+    if (slotFromId > 0) {
+      target = canonical.find((entry) => entry.slot === slotFromId) || null;
+    }
+  }
+
+  if (!target) {
+    return { ok: false, error: "Silinecek sahne bulunamadı." };
+  }
+
+  const next = canonical.filter((entry) => entry.id !== target!.id);
+  if (next.length < 1) {
+    return { ok: false, error: "En az bir sahne kalmalı." };
+  }
+
+  if (!timelineCoversSegments(segments, timeline)) {
+    const bootstrap = await updateSegmentTimeline(jobId, canonical);
+    if (!bootstrap.ok) return bootstrap;
+  }
+
+  const res = await updateSegmentTimeline(jobId, next);
+  if (!res.ok) return res;
+  return { ok: true, deletedSlot: target.slot };
+}
+
+/** @deprecated deleteRunwaySceneEntry kullanın */
+export async function deleteRunwaySceneSlot(
+  jobId: string,
+  slot: number,
+  timeline: RunwaySegmentTimelineEntry[],
+  segments: RunwaySegmentItem[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const entryId =
+    timeline.find((entry) => Number(entry.slot) === slot)?.id || `slot-${slot}`;
+  const res = await deleteRunwaySceneEntry(jobId, entryId, segments, timeline);
+  if (!res.ok) return res;
+  return { ok: true };
+}
+
 export async function deleteRunwayReferenceSlots(
   jobId: string,
   slots: number[],
@@ -170,6 +263,7 @@ export async function regenerateRunwaySegment(payload: {
   promptText?: string;
   usePreflight?: boolean;
   append?: boolean;
+  clientSource?: string;
 }): Promise<{ ok: true; pollMs: number } | { ok: false; error: string; licenseRequired?: boolean }> {
   const form = new FormData();
   form.append("job_id", payload.jobId);
@@ -186,8 +280,9 @@ export async function regenerateRunwaySegment(payload: {
       type: payload.image.type || "image/jpeg",
     } as any);
   }
-  appendOpenAiPreflightFormFields(form, Boolean(payload.usePreflight));
-  form.append("source", MOBILE_DRONE_RUNWAY_CLIENT_SOURCE);
+  const source = String(payload.clientSource || MOBILE_DRONE_RUNWAY_CLIENT_SOURCE).trim();
+  appendOpenAiPreflightFormFields(form, Boolean(payload.usePreflight), source);
+  form.append("source", source);
   const res = await authFormFetch<{ success?: boolean; poll_ms?: number; error?: string }>(
     "/api/drone-recording-runway/segments/regenerate/",
     form,
@@ -215,6 +310,7 @@ export async function preflightRunwaySegment(payload: {
   image?: MobileUploadImage | null;
   promptText?: string;
   append?: boolean;
+  clientSource?: string;
 }): Promise<{ ok: true; pollMs: number } | { ok: false; error: string }> {
   const form = new FormData();
   form.append("job_id", payload.jobId);
@@ -230,6 +326,8 @@ export async function preflightRunwaySegment(payload: {
       type: payload.image.type || "image/jpeg",
     } as any);
   }
+  const source = String(payload.clientSource || MOBILE_DRONE_RUNWAY_CLIENT_SOURCE).trim();
+  form.append("source", source);
   const res = await authFormFetch<{ success?: boolean; poll_ms?: number }>(
     "/api/drone-recording-runway/segments/preflight/",
     form,
@@ -252,8 +350,49 @@ export function buildSceneTimelineFromSlots(
   }));
 }
 
+export function freeSceneRemaining(rights: SceneGenerationRights): number {
+  const included = Math.max(0, Number(rights.included) || 0);
+  const used = Math.max(0, Number(rights.used) || 0);
+  return Math.max(0, included - used);
+}
+
 export function maxCaptureCountForRights(rights: SceneGenerationRights): number {
   const remaining = Math.max(0, Number(rights.remaining) || 0);
   if (remaining <= 0) return 0;
   return Math.min(DRONE_SCENE_MAX_CAPTURE_PER_PURCHASE, remaining);
 }
+
+/** Tek oturumda eklenebilecek sahne: hak tavanı + strip boş slot */
+export function maxAppendCountForSession(
+  rights: SceneGenerationRights,
+  existingSceneCount: number,
+): number {
+  const byRights = maxCaptureCountForRights(rights);
+  const stripSlots = Math.max(
+    0,
+    DRONE_SCENE_PACKAGE_ALLOWANCE - Math.max(0, Number(existingSceneCount) || 0),
+  );
+  return Math.min(byRights, stripSlots);
+}
+
+export function countExistingScenes(segments: RunwaySegmentItem[]): number {
+  return segments.filter((s) => s.exists && s.slot > 0).length;
+}
+
+/** Devam öncesi: ek sahne için yeterli hak var mı? */
+export function needsExtraScenePurchaseForAppend(
+  rights: SceneGenerationRights,
+  scenesToAdd: number,
+): boolean {
+  const remaining = Math.max(0, Number(rights.remaining) || 0);
+  const count = Math.max(1, Number(scenesToAdd) || 1);
+  return remaining < count;
+}
+
+export function resolveEkSahneActionForCount(
+  count: number,
+): typeof DRONE_EK_SAHNE_ACTION | typeof DRONE_EK_SAHNE_2_ACTION {
+  return count >= 2 ? DRONE_EK_SAHNE_2_ACTION : DRONE_EK_SAHNE_ACTION;
+}
+
+export { MOBILE_AI_VIDEO_NEW_CLIENT_SOURCE, MOBILE_DRONE_RUNWAY_CLIENT_SOURCE };

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -18,14 +18,16 @@ import { sheetContentSafeBottom } from '../src/utils/sheetSafeArea';
 import SidebarSavedQueriesTab from './SidebarSavedQueriesTab';
 import type { SidebarSavedQuery } from '../src/utils/sidebarSavedQueries';
 import {
-  extractSmartQueryFromImage,
   extractSmartQueryFromSpeech,
   type SmartQueryExtractResponse,
 } from '../services/smartQueryService';
 import {
-  resolveSmartQueryForForm,
   type SmartQueryParcelPayload,
 } from '../src/utils/smartQueryResolve';
+import {
+  applySmartQueryExtractToForm,
+  runShareImageSmartQuery,
+} from '../src/utils/runShareImageSmartQuery';
 import type { LocationHierarchySelection } from '../src/utils/locationHierarchyMap';
 import { useSmartQueryAudioRecorder } from '../src/hooks/useSmartQueryAudioRecorder';
 import VoiceSearchListeningAnimation from './app/VoiceSearchListeningAnimation';
@@ -52,6 +54,8 @@ type TabKey = 'parcel' | 'myqueries' | 'smart';
 
 export type ParcelSearchTabKey = TabKey;
 
+export type ParcelSearchSmartFocus = 'voice' | 'image';
+
 type ParcelSubmitPayload = SmartQueryParcelPayload;
 
 type ParcelQuerySubmitOptions = { zoomToParcel?: boolean };
@@ -67,9 +71,15 @@ interface ParcelSearchModalProps {
   onBeforeSavedQueryRun?: () => void;
   /** Modal açıldığında seçili sekme (varsayılan: parsel) */
   initialTab?: ParcelSearchTabKey;
+  /** Akıllı sorgu sekmesinde odak — ses veya görsel seçici */
+  initialSmartFocus?: ParcelSearchSmartFocus | null;
   /** Ana ekran ses orb vb. — parsel sekmesine forma aktarılacak seed */
   incomingFormSeed?: SidebarSavedQuery | null;
   onIncomingFormSeedConsumed?: () => void;
+  /** WhatsApp / paylaşım intent — otomatik görsel sorgusu */
+  incomingShareImage?: { base64: string; mimeType: string } | null;
+  onIncomingShareImageConsumed?: () => void;
+  onIncomingShareImageProcessingChange?: (processing: boolean) => void;
 }
 
 export default function ParcelSearchModal({
@@ -80,8 +90,12 @@ export default function ParcelSearchModal({
   onHierarchySelect,
   onBeforeSavedQueryRun,
   initialTab = 'parcel',
+  initialSmartFocus = null,
   incomingFormSeed = null,
   onIncomingFormSeedConsumed,
+  incomingShareImage = null,
+  onIncomingShareImageConsumed,
+  onIncomingShareImageProcessingChange,
 }: ParcelSearchModalProps) {
   const insets = useSafeAreaInsets();
   const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
@@ -98,6 +112,8 @@ export default function ParcelSearchModal({
     fileName: string;
     mimeType: string;
   } | null>(null);
+  const suppressAutoImagePickerRef = useRef(false);
+  const consumedIncomingShareKeyRef = useRef<string | null>(null);
 
   const containerStyle = useMemo(
     () => [styles.sheet, { paddingBottom: sheetContentSafeBottom(insets?.bottom || 0) }],
@@ -105,7 +121,11 @@ export default function ParcelSearchModal({
   );
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      suppressAutoImagePickerRef.current = false;
+      consumedIncomingShareKeyRef.current = null;
+      return;
+    }
     const nextTab = initialTab === 'smart' && !smartQueryEnabled ? 'parcel' : initialTab;
     setTab(nextTab);
     if (initialTab === 'smart' && smartQueryEnabled) {
@@ -163,17 +183,9 @@ export default function ParcelSearchModal({
       result: SmartQueryExtractResponse,
       channel: 'speech' | 'text' | 'image' = 'speech',
     ) => {
-      const outcome = await resolveSmartQueryForForm(result, {
-        channel,
-        source: 'modal',
-      });
+      const outcome = await applySmartQueryExtractToForm(result, channel);
 
       if (outcome.status === 'complete') {
-        await appendSmartQueryDebugLog('flow_success', 'modal', {
-          channel,
-          summary: outcome.summary,
-          mahalleTkgmValue: outcome.payload.mahalleTkgmValue,
-        });
         setTab('parcel');
         setShouldAutoSubmitSeed(false);
         setFormSeed(outcome.seed);
@@ -181,13 +193,6 @@ export default function ParcelSearchModal({
       }
 
       if (outcome.status === 'partial') {
-        await appendSmartQueryDebugLog('flow_partial_success', 'modal', {
-          channel,
-          il: outcome.seed.il,
-          ilce: outcome.seed.ilce,
-          ada: outcome.seed.ada,
-          parsel: outcome.seed.parsel,
-        });
         Alert.alert('Akıllı Sorgu', outcome.message);
         setTab('parcel');
         setShouldAutoSubmitSeed(false);
@@ -205,22 +210,36 @@ export default function ParcelSearchModal({
     async (base64: string, mimeType: string) => {
       if (!ensureSmartQueryAccess()) return;
       setIsSmartExtracting(true);
+      onIncomingShareImageProcessingChange?.(true);
 
       try {
-        const response = await extractSmartQueryFromImage(base64, mimeType);
-        if (!response.ok) {
-          Alert.alert('Akıllı Sorgu', response.error || 'Görsel işlenirken bir hata oluştu.');
+        const outcome = await runShareImageSmartQuery(base64, mimeType);
+        if (outcome.status === 'api_error') {
+          Alert.alert('Akıllı Sorgu', outcome.message);
           return;
         }
-
-        await applySmartQueryResult(response.data, 'image');
+        if (outcome.status === 'failed') {
+          showSmartQueryErrorAlert(outcome.error);
+          return;
+        }
+        if (outcome.status === 'partial') {
+          Alert.alert('Akıllı Sorgu', outcome.message);
+          setTab('parcel');
+          setShouldAutoSubmitSeed(false);
+          setFormSeed(outcome.seed);
+          return;
+        }
+        setTab('parcel');
+        setShouldAutoSubmitSeed(false);
+        setFormSeed(outcome.seed);
       } catch (error: any) {
         Alert.alert('Akıllı Sorgu', error?.message || 'Görsel sorgusu başlatılamadı.');
       } finally {
         setIsSmartExtracting(false);
+        onIncomingShareImageProcessingChange?.(false);
       }
     },
-    [applySmartQueryResult, ensureSmartQueryAccess]
+    [ensureSmartQueryAccess, onIncomingShareImageProcessingChange]
   );
 
   const applySmartImageAsset = useCallback(
@@ -273,6 +292,36 @@ export default function ParcelSearchModal({
       Alert.alert('Akıllı Sorgu', error?.message || 'Görsel seçilemedi.');
     }
   }, [processImagePickerResult]);
+
+  useEffect(() => {
+    if (
+      !visible ||
+      initialTab !== 'smart' ||
+      !smartQueryEnabled ||
+      initialSmartFocus !== 'image' ||
+      incomingShareImage ||
+      suppressAutoImagePickerRef.current
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (suppressAutoImagePickerRef.current || incomingShareImage) return;
+      void handlePickImage();
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [visible, initialTab, initialSmartFocus, smartQueryEnabled, handlePickImage, incomingShareImage]);
+
+  useEffect(() => {
+    if (!visible || !incomingShareImage?.base64) return;
+    const shareKey = `${incomingShareImage.mimeType}:${incomingShareImage.base64.length}`;
+    if (consumedIncomingShareKeyRef.current === shareKey) return;
+    consumedIncomingShareKeyRef.current = shareKey;
+    suppressAutoImagePickerRef.current = true;
+
+    const { base64, mimeType } = incomingShareImage;
+    onIncomingShareImageConsumed?.();
+    void runImageSmartQuery(base64, mimeType);
+  }, [visible, incomingShareImage, onIncomingShareImageConsumed, runImageSmartQuery]);
 
   const handleTakePhoto = useCallback(async () => {
     try {

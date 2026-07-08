@@ -5,7 +5,7 @@
 import type { MutableRefObject, RefObject } from 'react';
 import RNFS from 'react-native-fs';
 import { getCombinedImageDimensions } from './screenshotManager';
-import { waitForMapIdle, tryMapboxSnap, type MapReadyState } from './mapboxSnapshot';
+import { waitForMapIdle, tryMapboxSnap, tryMapboxSnapLiveView, type MapReadyState } from './mapboxSnapshot';
 import { uploadQueryMapImage } from '../../services/queryMapImageService';
 import {
   fetchStaticMapBase64,
@@ -28,7 +28,6 @@ export function extractDfaSnapshotId(data: any): number | null {
 export type CaptureProQueryMapParams = {
   mapRef: RefObject<any>;
   mapReadyRef: MutableRefObject<MapReadyState>;
-  combinedContainerRef: RefObject<any>;
   setCapturedMapUri: (uri: string | null) => void;
   data: any;
   normalizedGeometry: any | null;
@@ -94,28 +93,17 @@ async function tryMapboxCaptureUpload(
   }
   await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
 
-  const mapUri = await tryMapboxSnap(params.mapRef, dimensions);
+  let mapUri = await tryMapboxSnapLiveView(params.mapRef);
+  if (!mapUri) {
+    mapUri = await tryMapboxSnap(params.mapRef, dimensions);
+  }
   params.setCapturedMapUri(mapUri || null);
 
-  let uploadUri = mapUri;
-  const captureApi = params.combinedContainerRef.current;
-  if (mapUri && captureApi) {
-    try {
-      const combinedUri =
-        typeof captureApi.captureWithMapUri === 'function'
-          ? await captureApi.captureWithMapUri(mapUri)
-          : await captureApi.capture();
-      if (combinedUri) uploadUri = combinedUri;
-    } catch (e) {
-      console.warn('[proQueryMapCapture] Combined capture başarısız:', e);
-    }
-  }
-
-  if (!uploadUri) {
+  if (!mapUri) {
     return false;
   }
 
-  const imageDataUrl = await uriToDataUrl(uploadUri);
+  const imageDataUrl = await uriToDataUrl(mapUri);
   return uploadMapImageDataUrl(imageDataUrl, snapshotId, identifiers);
 }
 

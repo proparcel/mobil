@@ -8,6 +8,12 @@ import {
 } from "./resolveMahalleTkgmFromLocations";
 import { loadSavedQueries, upsertSavedQuery, type LocationHeader, type QueryMode } from "./savedQueries";
 import { buildSidebarSavedQueryFromPayload, upsertSidebarSavedQueryFromPayload } from "./sidebarSavedQueries";
+import {
+  pickTkgmMahalleId,
+  resolveAdaFromTkgmProps,
+  resolveParselFromTkgmProps,
+  resolveProparcelValueFromTkgmProps,
+} from "./tkgmParcelIdentifiers";
 
 export type QuerySubmitPayload = {
   mahalleTkgmValue: number;
@@ -21,23 +27,6 @@ export type QuerySubmitPayload = {
   townId?: number;
 };
 
-function pickTkgmMahalleValue(props: Record<string, unknown>): number {
-  const candidates = [
-    props.mahalleId,
-    props.MahalleId,
-    props.tkgm_value,
-    props.Tkgm_value,
-    props.mahalle_tkgm_value,
-    props.mahalleTkgmValue,
-    props.QuarterIdFinal,
-  ];
-  for (const c of candidates) {
-    const n = Number(c);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return NaN;
-}
-
 function resolveMahalleTkgmValue(
   p: Record<string, unknown>,
   form?: Partial<QuerySubmitPayload>
@@ -45,7 +34,7 @@ function resolveMahalleTkgmValue(
   let v = Number(form?.mahalleTkgmValue);
   if (Number.isFinite(v) && v > 0) return v;
 
-  v = pickTkgmMahalleValue(p);
+  v = pickTkgmMahalleId(p);
   if (Number.isFinite(v) && v > 0) return v;
 
   const ilAd = String(form?.city ?? p.ilAd ?? p.IlAd ?? "");
@@ -71,8 +60,8 @@ export function buildQueryPayloadFromTkgmProperties(
   form?: Partial<QuerySubmitPayload>
 ): QuerySubmitPayload | null {
   const p = props || {};
-  const ada = String(form?.ada ?? p.adaNo ?? p.ada ?? p.Ada ?? "").trim();
-  const parsel = String(form?.parsel ?? p.parselNo ?? p.parsel ?? p.Parsel ?? "").trim();
+  const ada = resolveAdaFromTkgmProps(p, form?.ada);
+  const parsel = resolveParselFromTkgmProps(p, form?.parsel);
   if (!ada || !parsel) {
     console.warn("[persistQuery] ada/parsel eksik — kayıt atlandı");
     return null;
@@ -89,9 +78,9 @@ export function buildQueryPayloadFromTkgmProperties(
     return null;
   }
 
-  const ppRaw = form?.proparcelValue ?? p.proparcel_value ?? p.Proparcel_value;
+  const ppResolved = resolveProparcelValueFromTkgmProps(p, form?.proparcelValue);
   const proparcelValue =
-    ppRaw != null && Number.isFinite(Number(ppRaw)) ? Number(ppRaw) : undefined;
+    Number.isFinite(ppResolved) && ppResolved > 0 ? ppResolved : undefined;
 
   return {
     mahalleTkgmValue,

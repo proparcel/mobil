@@ -107,6 +107,45 @@ describe('resolveLocationForSavedQueryItem', () => {
     assert.ok(loc.mahalle.length > 0);
   });
 
+  it('replaces id-like il/ilce in location_header with catalog names', () => {
+    const q = baseLocal({
+      location_header: {
+        ilAd: '4',
+        ilceAd: '95',
+        mahalleAd: 'Akören Mh.',
+      },
+    });
+    const loc = resolveLocationForSavedQueryItem(q);
+    assert.equal(loc.il, 'Adana');
+    assert.equal(loc.ilce, 'Aladağ');
+    assert.equal(loc.mahalle, 'Akören Mh.');
+  });
+
+  it('replaces id-like header via quarter_id for API items', () => {
+    const q = {
+      id: 101,
+      tkgm_value: KNOWN_TKGM,
+      ada: '1',
+      parsel: '2',
+      title: 'Akören Mh. - 1/2',
+      quarter_id: KNOWN_QUARTER_ID,
+      proparcel_value: 310,
+      created_at: '2026-01-01T00:00:00.000Z',
+      local: {
+        location_header: {
+          ilAd: '4',
+          ilceAd: '95',
+          mahalleAd: null,
+        },
+      },
+      _fromApi: true as const,
+    };
+    const loc = resolveLocationForSavedQueryItem(q);
+    assert.equal(loc.il, 'Adana');
+    assert.equal(loc.ilce, 'Aladağ');
+    assert.ok(loc.mahalle.length > 0);
+  });
+
   it('uses title for mahalle when tkgm mahalle is unavailable', () => {
     const q = {
       id: 100,

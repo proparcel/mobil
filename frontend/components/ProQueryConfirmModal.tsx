@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppBottomSheetModal from './app/AppBottomSheetModal';
 import type { TkgmViewResponse } from '../src/types/parcelResponse';
 import { sheetModalBottomInset, sheetScrollBottomPadding } from '../src/utils/sheetSafeArea';
+import { formatParcelAreaDisplay, pickParcelAreaRaw } from '../src/utils/dfaRows';
 
 type Props = {
   visible: boolean;
@@ -12,8 +13,7 @@ type Props = {
   onCancel: () => void;
 };
 
-const SHEET_EXPANDED_HEIGHT = 248;
-const SHEET_MINIMIZED_HEIGHT = 72;
+const SHEET_EXPANDED_HEIGHT = 280;
 const SHEET_LOWER_OFFSET = 40;
 
 function pickValue(source: Record<string, any> | null | undefined, keys: string[]): string {
@@ -22,24 +22,6 @@ function pickValue(source: Record<string, any> | null | undefined, keys: string[
     if (v !== null && v !== undefined && String(v).trim() !== '') return String(v).trim();
   }
   return '';
-}
-
-function formatArea(value: any): string {
-  if (value === null || value === undefined || value === '') return '';
-  let n: number;
-  if (typeof value === 'string') {
-    const cleaned = String(value)
-      .trim()
-      .replace(/\s/g, '')
-      .replace(/m²|m2/gi, '')
-      .replace(/\./g, '')
-      .replace(',', '.');
-    n = parseFloat(cleaned);
-  } else {
-    n = Number(value);
-  }
-  if (!Number.isFinite(n) || n <= 0) return '';
-  return `${Math.round(n).toLocaleString('tr-TR')} m²`;
 }
 
 export const ProQueryConfirmModal: React.FC<Props> = ({ visible, tkgmData, onConfirm, onCancel }) => {
@@ -51,10 +33,7 @@ export const ProQueryConfirmModal: React.FC<Props> = ({ visible, tkgmData, onCon
   );
 
   const snapPoints = useMemo(
-    () => [
-      SHEET_MINIMIZED_HEIGHT + sheetScrollBottomPadding(insets?.bottom || 0, 8),
-      SHEET_EXPANDED_HEIGHT + sheetScrollBottomPadding(insets?.bottom || 0, 20),
-    ],
+    () => [SHEET_EXPANDED_HEIGHT + sheetScrollBottomPadding(insets?.bottom || 0, 20)],
     [insets?.bottom],
   );
 
@@ -82,19 +61,8 @@ export const ProQueryConfirmModal: React.FC<Props> = ({ visible, tkgmData, onCon
     const ada = pickValue(props, ['adaNo', 'ada', 'Ada']);
     const parsel = pickValue(props, ['parselNo', 'parsel', 'Parsel']);
 
-    const alanRaw =
-      props?.alan ??
-      props?.yuzolcum ??
-      props?.Yuzolcum ??
-      props?.ALAN ??
-      props?.area ??
-      props?.Area ??
-      props?.area_m2 ??
-      (tkgmData as any)?.alan ??
-      (tkgmData as any)?.yuzolcum ??
-      (tkgmData as any)?.Area;
-
-    const alan = formatArea(alanRaw);
+    const alanRaw = pickParcelAreaRaw(props) ?? pickParcelAreaRaw(tkgmData as Record<string, unknown>);
+    const alan = formatParcelAreaDisplay(alanRaw);
 
     const row1 = [il, ilce, mahalle].filter(Boolean).join(' / ');
     const row2Left = ada && parsel ? `${ada}/${parsel}` : (ada || parsel || '');
@@ -110,7 +78,7 @@ export const ProQueryConfirmModal: React.FC<Props> = ({ visible, tkgmData, onCon
       visible={visible}
       onClose={() => {}}
       snapPoints={snapPoints}
-      initialIndex={1}
+      initialIndex={0}
       enablePanDownToClose={false}
       backdropOpacity={0}
       enableBackdropTouchThrough

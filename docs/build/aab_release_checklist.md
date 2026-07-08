@@ -8,14 +8,15 @@ Bu dokuman Google Play icin ProParcel Android AAB alirken kontrol edilecek kalic
 - Android paket adi: `com.proparcel.mobile`
 - Google Play ciktilari: `frontend/release_builds/`
 - Mapbox token kaynagi: `%USERPROFILE%\.proparcel\mobile.env`
-- Release keystore:
-  - `frontend/android/keystores/proparcel-release.keystore`
-  - `frontend/android/app/keystore.properties`
+- Release keystore (kalici — prebuild sonrasi kaybolmaz):
+  - `frontend/signing/proparcel-release.keystore`
+  - `frontend/signing/keystore.properties`
+- Build sirasinda kopyalanir: `android/keystores/` + `android/app/keystore.properties`
 
 ## AAB Almadan Once
 
-1. `android/app/keystore.properties` mevcut olmali.
-2. `android/app/build.gradle` release imzasi debug degil release keystore kullanmali.
+1. `signing/keystore.properties` ve `signing/proparcel-release.keystore` mevcut olmali (`npm run build:bundle:no-models` otomatik kopyalar).
+2. `expo prebuild --clean` oncesi keystore yedegini `signing/` altinda tutun; `android/` silinir.
 3. `npm run mapbox:doctor` basarili olmali.
 4. Google Play'e yuklenecek her AAB icin `versionCode` daha once kullanilmamis olmali.
 5. `versionName` kullaniciya gorunen surumdur; ayni kalabilir, ama `versionCode` mutlaka artmalidir.
@@ -66,5 +67,8 @@ Select-String -Path android\app\build.gradle -Pattern "versionCode|versionName"
 | 2026-06-03 | 1.0.21 | 23 | no-models | `ProParcel-1.0.21-com-proparcel-mobile-no-models-20260603-045608.aab` | Yeniden derleme. |
 | 2026-06-03 | 1.0.22 | 24 | no-models | `ProParcel-1.0.22-com-proparcel-mobile-no-models-20260603-054203.aab` | Yeniden derleme. |
 | 2026-06-03 | 1.0.23 | 25 | no-models | `ProParcel-1.0.23-com-proparcel-mobile-no-models-20260603-142423.aab` | Yeniden derleme. |
+| 2026-06-26 | 2.0.11 | 38 | no-models | `ProParcel-2.0.11-com-proparcel-mobile-no-models-20260626-091202.aab` | Play reddetti: versionCode 38 zaten 2.0.10 ile kullanilmis. |
+| 2026-06-26 | 2.0.11 | 39 | no-models | _(iptal — versionName 2.0.12 ile yeniden)_ | Play son surum 38/2.0.10 uzeri. |
+| 2026-06-26 | 2.0.12 | 39 | no-models | `ProParcel-2.0.12-com-proparcel-mobile-no-models-20260626-174016.aab` | versionCode 39; Play son surum 38/2.0.10 uzeri. |
 
 iOS sürüm kaydı ve EAS kuralları: `docs/build/ios_release_checklist.md` — kullanıcı sürümü Android `versionName` ile hizalı (ör. 2.0.2); son doğru iOS referansı 2.0.1, bir sonraki iOS build ≥ 2.0.2.

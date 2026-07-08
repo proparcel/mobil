@@ -14,6 +14,7 @@ import FactoryEstimateModal from '../FactoryEstimateModal';
 import BinaEstimateModal from '../BinaEstimateModal';
 import MustakilEvEstimateModal from '../MustakilEvEstimateModal';
 import KonutDaireModal from '../KonutDaireModal';
+import ProQueryApifyPendingModal from './ProQueryApifyPendingModal';
 import type { ProQueryTypeFlowController } from '../../src/hooks/useProQueryAfterTypeSelect';
 
 type Props = {
@@ -59,6 +60,13 @@ const ProQueryTypeModalHost: React.FC<Props> = ({ controller: c }) => {
         visible={c.konutVisible}
         onClose={() => c.onKonutResult(null)}
         onResult={c.onKonutResult}
+      />
+      <ProQueryApifyPendingModal
+        visible={c.apifyPendingVisible}
+        message={c.apifyPendingMessage}
+        confirming={c.apifyConfirming}
+        onConfirm={c.confirmApifyPending}
+        onCancel={c.dismissApifyPending}
       />
       <Modal visible={c.submitting} transparent animationType="fade" statusBarTranslucent>
         <View style={styles.overlay}>

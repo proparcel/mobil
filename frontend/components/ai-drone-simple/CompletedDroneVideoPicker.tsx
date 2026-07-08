@@ -23,6 +23,7 @@ import {
   listDroneMyVideos,
   type DroneMyVideoItem,
 } from "../../services/droneRunwayService";
+import { droneVideoMatchesEditorMode } from "../../src/utils/droneVideoEditorMode";
 
 function formatVideoDate(value: string | undefined): string {
   if (!value) return "";
@@ -73,6 +74,7 @@ export function CompletedDroneVideoPicker({
       setItems(
         res.videos.filter(
           (v) =>
+            droneVideoMatchesEditorMode(v, "ai_drone") &&
             !v.is_license_placeholder &&
             String(v.job_id || "").trim() &&
             isMyVideoReady(v),
@@ -148,7 +150,7 @@ export function CompletedDroneVideoPicker({
             ) : items.length === 0 ? (
               <View style={styles.sheetCentered}>
                 <Text style={styles.emptyText}>Henüz hazır video yok.</Text>
-                <Text style={styles.emptyHint}>Video Oluştur ile yeni üretim başlatabilirsiniz.</Text>
+                <Text style={styles.emptyHint}>Yeni proje ile üretim başlatabilirsiniz.</Text>
               </View>
             ) : (
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">

@@ -1,72 +1,37 @@
 # Android: yerel debug vs EAS release
 
-İki ayrı hat; birbirini silmez.
+## Giriş noktaları (`frontend/` kökü)
 
-## Yerel fiziksel cihaz (Windows)
+| Dosya | Ne yapar |
+|-------|----------|
+| `start_android.bat` | Metrosuz build (Metro açık olmalı, 8082) |
+| `start_android_metro.bat` | Metro kapalıysa aç + build |
+| `start_ios.bat` | Metrosuz — Metro açmaz, açıksa URL gösterir |
+| `start_ios_metro.bat` | Metro kapalıysa aç (8081) |
 
-Bir kez native proje:
+Portlar: iOS **8081**, Android **8082** (`scripts/metro-ports.ps1`).
+
+## Günlük kullanım
 
 ```powershell
 cd mobile\mobil_github\frontend
-npm run android:setup
+
+# Tek tık veya:
+start_android_metro.bat    # Android — her şey
+start_ios_metro.bat        # iPhone Metro
+
+# Metro zaten açıksa (ör. iOS Metro 8081 çalışırken Android build):
+start_android.bat          # Sadece build, Metro'ya dokunmaz
+start_ios.bat              # Sadece URL / odaklan
 ```
 
-`EBUSY: resource busy` (android klasoru kilitli) ise:
+npm eşdeğerleri: `start:android_metro`, `start:android`, `start:ios_metro`, `start:ios`
 
-```powershell
-npm run unlock:android
-npm run android:setup
-```
-
-Android Studio / Emulator / Explorer’da `android` klasorunu kapat.
-
-Hala `EBUSY`:
-
-1. Gorev Yoneticisi -> **Java(TM) Platform** / OpenJDK islemlerini sonlandir (Gradle kilidi).
-2. `npm run unlock:android`
-3. Olmazsa PC yeniden baslat, sonra `npm run android:setup`.
-
-`android/` yarim kalmissa (gradlew yok) mutlaka silinmeli veya `android._stale_*` olarak yeniden adlandirilmali.
-
-Günlük geliştirme:
-
-```powershell
-npm run stop:metro
-npm run start:dev
-# ikinci terminal:
-npm run android:dev
-```
-
-Yerel release APK (Play değil):
+## Release (Metro gerekmez)
 
 ```powershell
 npm run build:apk:no-models
-```
-
-`android/` gitignore'da; sadece senin makinede kalır.
-
-## EAS / Play Store release
-
-Cloud build — yerel `android/` kullanılmaz (`.easignore` içinde `android` var).
-
-```powershell
-npm run eas:sync-env
 npm run eas:release:android
 ```
 
-`clean:eas-upload` artık **android/ios silmez**. EAS yine cloud'da prebuild yapar.
-
-İsteğe bağlı agresif temizlik (yerel android'i de siler — dikkat):
-
-```powershell
-npm run clean:eas-upload:native
-```
-
-## Özet
-
-| Amaç | Komut | Yerel android/ |
-|------|--------|----------------|
-| USB debug | `android:setup` → `android:dev` | Gerekli, korunur |
-| Yerel APK | `build:apk:*` | Gerekli |
-| Play AAB | `eas:release:android` | Kullanılmaz (EAS üretir) |
-| iOS EAS | `eas:release:ios` | Etkilenmez |
+Detay: `doc/metro-ports-windows.md`

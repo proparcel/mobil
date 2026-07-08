@@ -35,14 +35,33 @@ type MusicSource = {
   headers?: Record<string, string>;
 };
 
+function clampMusicVolume(raw: number): number {
+  const vol = Number(raw);
+  if (!Number.isFinite(vol)) return 45;
+  return Math.max(0, Math.min(100, Math.round(vol)));
+}
+
+function musicVolumeToGain(volume: number): number {
+  return clampMusicVolume(volume) / 100;
+}
+
 type Props = {
   source: VideoSource;
   musicSource?: MusicSource | null;
+  musicVolume?: number;
+  autoPlay?: boolean;
   onPlaybackProgress?: (currentTime: number, duration: number) => void;
   onSourceError?: () => void;
 };
 
-export function PortraitVideoPlayer({ source, musicSource, onPlaybackProgress, onSourceError }: Props) {
+export function PortraitVideoPlayer({
+  source,
+  musicSource,
+  musicVolume = 45,
+  autoPlay = false,
+  onPlaybackProgress,
+  onSourceError,
+}: Props) {
   const videoRef = useRef<any>(null);
   const musicRef = useRef<Audio.Sound | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -70,23 +89,23 @@ export function PortraitVideoPlayer({ source, musicSource, onPlaybackProgress, o
     try {
       const { sound } = await Audio.Sound.createAsync(
         { uri: musicSource.uri, headers: musicSource.headers },
-        { shouldPlay: false, isLooping: true, volume: 0.85 },
+        { shouldPlay: false, isLooping: true, volume: musicVolumeToGain(musicVolume) },
       );
       musicRef.current = sound;
       return sound;
     } catch {
       return null;
     }
-  }, [musicSource, unloadMusic]);
+  }, [musicSource, musicVolume, unloadMusic]);
 
   useEffect(() => {
-    setPlaying(false);
+    setPlaying(Boolean(autoPlay));
     setCurrentTime(0);
     setDuration(0);
     setSeeking(false);
     setLoadError(false);
     void unloadMusic();
-  }, [source.uri, unloadMusic]);
+  }, [source.uri, autoPlay, unloadMusic]);
 
   useEffect(() => {
     void loadMusic();
@@ -94,6 +113,12 @@ export function PortraitVideoPlayer({ source, musicSource, onPlaybackProgress, o
       void unloadMusic();
     };
   }, [loadMusic, unloadMusic]);
+
+  useEffect(() => {
+    const sound = musicRef.current;
+    if (!sound) return;
+    void sound.setVolumeAsync(musicVolumeToGain(musicVolume)).catch(() => {});
+  }, [musicVolume]);
 
   const syncMusicPlayback = useCallback(async (shouldPlay: boolean, positionSec: number) => {
     const sound = musicRef.current;
@@ -117,8 +142,12 @@ export function PortraitVideoPlayer({ source, musicSource, onPlaybackProgress, o
         setDuration(d);
         onPlaybackProgress?.(0, d);
       }
+      if (autoPlay) {
+        setPlaying(true);
+        void syncMusicPlayback(true, 0);
+      }
     },
-    [onPlaybackProgress],
+    [autoPlay, onPlaybackProgress, syncMusicPlayback],
   );
 
   const onProgress = useCallback(

@@ -4,12 +4,13 @@ import RNFS from "react-native-fs";
 import { getApiAuthHeaders } from "./apiClient";
 import {
   classifyPortraitExportStatus,
-  getPortraitExportStatus,
+  fetchPortraitExportStatus,
   portraitExportDownloadUrl,
 } from "./aiDroneSimpleEditorService";
 import {
   clearActivePortraitExportJob,
   getActivePortraitExportJob,
+  patchActivePortraitExportJob,
   setActivePortraitExportJob,
   updateActivePortraitExportJobStatus,
 } from "./dronePortraitExportActiveJobStorage";
@@ -28,6 +29,7 @@ let initialized = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pollingJobId: string | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
+let terminalHandlingKey: string | null = null;
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -39,8 +41,52 @@ function stopPolling() {
   pollingJobId = null;
 }
 
-async function downloadPortraitExportToGallery(jobId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const url = portraitExportDownloadUrl(jobId);
+function terminalKey(jobId: string, exportId: string | undefined, kind: "ready" | "failed"): string {
+  return `${jobId}:${String(exportId || "").trim()}:${kind}`;
+}
+
+function tryAcquireTerminalHandling(jobId: string, exportId: string | undefined, kind: "ready" | "failed"): boolean {
+  const key = terminalKey(jobId, exportId, kind);
+  if (terminalHandlingKey && terminalHandlingKey !== key) {
+    return false;
+  }
+  if (terminalHandlingKey === key) {
+    return false;
+  }
+  terminalHandlingKey = key;
+  return true;
+}
+
+function releaseTerminalHandling(): void {
+  terminalHandlingKey = null;
+}
+
+function exportAlreadyCompleted(
+  active: { exportId?: string; phase?: string; completedExportId?: string },
+): boolean {
+  if (active.phase === "done") return true;
+  const expected = String(active.exportId || "").trim();
+  const completed = String(active.completedExportId || "").trim();
+  return Boolean(expected && completed && expected === completed);
+}
+
+function exportMatchesActive(
+  activeExportId: string | undefined,
+  snapshotExportId: string,
+  status: string,
+): boolean {
+  const expected = String(activeExportId || "").trim();
+  const current = String(snapshotExportId || "").trim();
+  if (!expected) return true;
+  if (!current) return status === "processing" || status === "queued";
+  return current === expected;
+}
+
+async function downloadPortraitExportToGallery(
+  jobId: string,
+  outputFile?: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const url = portraitExportDownloadUrl(jobId, outputFile);
   const cachePath = `${RNFS.CachesDirectoryPath}/drone_portrait_export_${jobId}_${Date.now()}.mp4`;
   const headers = await getApiAuthHeaders();
 
@@ -81,33 +127,63 @@ async function downloadPortraitExportToGallery(jobId: string): Promise<{ ok: tru
   }
 }
 
-async function handleExportReady(jobId: string): Promise<void> {
+async function handleExportReady(
+  jobId: string,
+  exportId: string | undefined,
+  outputFile?: string,
+): Promise<void> {
+  if (!tryAcquireTerminalHandling(jobId, exportId, "ready")) return;
+
   stopPolling();
-  const saved = await downloadPortraitExportToGallery(jobId);
-  await clearActivePortraitExportJob();
-  if (saved.ok) {
-    showForegroundExportAlert(
-      "Video galeriye kaydedildi",
-      "Dikey drone videonuz telefon galerinize indirildi.",
-    );
-  } else {
-    showForegroundExportAlert("Video dışa aktarılamadı", saved.error);
+  await patchActivePortraitExportJob({ phase: "downloading" });
+
+  try {
+    const saved = await downloadPortraitExportToGallery(jobId, outputFile);
+    if (saved.ok) {
+      await patchActivePortraitExportJob({
+        phase: "done",
+        completedExportId: String(exportId || "").trim() || undefined,
+      });
+      await clearActivePortraitExportJob();
+      showForegroundExportAlert(
+        "Video galeriye kaydedildi",
+        "Dikey drone videonuz telefon galerinize indirildi.",
+      );
+    } else {
+      showForegroundExportAlert("Video dışa aktarılamadı", saved.error);
+      await clearActivePortraitExportJob();
+    }
+  } finally {
+    releaseTerminalHandling();
   }
 }
 
-async function handleExportFailed(jobId: string, reason?: string): Promise<void> {
+async function handleExportFailed(
+  jobId: string,
+  exportId: string | undefined,
+  reason?: string,
+): Promise<void> {
+  if (!tryAcquireTerminalHandling(jobId, exportId, "failed")) return;
+
   stopPolling();
   await clearActivePortraitExportJob();
   showForegroundExportAlert(
     "Video dışa aktarılamadı",
     reason?.trim() || "Dışa aktarma tamamlanamadı. Editörden tekrar deneyebilirsiniz.",
   );
+  releaseTerminalHandling();
 }
 
 async function pollOnce(jobId: string): Promise<void> {
+  if (terminalHandlingKey) return;
+
   const active = await getActivePortraitExportJob();
   if (!active || active.jobId !== jobId) {
     stopPolling();
+    return;
+  }
+
+  if (exportAlreadyCompleted(active) || active.phase === "downloading") {
     return;
   }
 
@@ -116,16 +192,24 @@ async function pollOnce(jobId: string): Promise<void> {
     return;
   }
 
-  const status = await getPortraitExportStatus(jobId);
-  await updateActivePortraitExportJobStatus(status);
+  const snapshot = await fetchPortraitExportStatus(jobId);
+  if (snapshot.transient) {
+    return;
+  }
 
-  const { isReady, isFailed } = classifyPortraitExportStatus(status);
+  await updateActivePortraitExportJobStatus(snapshot.status);
+
+  if (!exportMatchesActive(active.exportId, snapshot.exportId, snapshot.status)) {
+    return;
+  }
+
+  const { isReady, isFailed } = classifyPortraitExportStatus(snapshot.status);
   if (isFailed) {
-    await handleExportFailed(jobId);
+    await handleExportFailed(jobId, active.exportId);
     return;
   }
   if (isReady) {
-    await handleExportReady(jobId);
+    await handleExportReady(jobId, active.exportId, snapshot.outputFile || undefined);
   }
 }
 
@@ -144,10 +228,16 @@ export function startDronePortraitExportBackgroundPoll(jobId: string): void {
   }, POLL_INTERVAL_MS);
 }
 
-export async function beginDronePortraitExportJob(jobId: string): Promise<void> {
+export async function beginDronePortraitExportJob(jobId: string, exportId?: string): Promise<void> {
   const id = String(jobId || "").trim();
   if (!id) return;
-  await setActivePortraitExportJob({ jobId: id, startedAt: Date.now() });
+  releaseTerminalHandling();
+  await setActivePortraitExportJob({
+    jobId: id,
+    startedAt: Date.now(),
+    exportId: String(exportId || "").trim() || undefined,
+    phase: "polling",
+  });
   startDronePortraitExportBackgroundPoll(id);
 }
 
@@ -155,14 +245,34 @@ export async function resumeActivePortraitExportTracking(): Promise<void> {
   const active = await getActivePortraitExportJob();
   if (!active?.jobId) return;
 
-  const status = await getPortraitExportStatus(active.jobId);
-  const { isReady, isFailed } = classifyPortraitExportStatus(status);
+  if (exportAlreadyCompleted(active) || active.phase === "downloading") {
+    return;
+  }
+
+  if (terminalHandlingKey) return;
+
+  const snapshot = await fetchPortraitExportStatus(active.jobId);
+  if (snapshot.transient) {
+    if (AppState.currentState === "active") {
+      startDronePortraitExportBackgroundPoll(active.jobId);
+    }
+    return;
+  }
+
+  if (!exportMatchesActive(active.exportId, snapshot.exportId, snapshot.status)) {
+    if (AppState.currentState === "active") {
+      startDronePortraitExportBackgroundPoll(active.jobId);
+    }
+    return;
+  }
+
+  const { isReady, isFailed } = classifyPortraitExportStatus(snapshot.status);
   if (isFailed) {
-    await handleExportFailed(active.jobId);
+    await handleExportFailed(active.jobId, active.exportId);
     return;
   }
   if (isReady) {
-    await handleExportReady(active.jobId);
+    await handleExportReady(active.jobId, active.exportId, snapshot.outputFile || undefined);
     return;
   }
 
@@ -188,6 +298,7 @@ export function initDronePortraitExportJobTracker(): void {
 
 export function teardownDronePortraitExportJobTracker(): void {
   stopPolling();
+  releaseTerminalHandling();
   if (appStateSubscription) {
     appStateSubscription.remove();
     appStateSubscription = null;

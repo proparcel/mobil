@@ -4,7 +4,7 @@
 
 import { authJsonFetch } from "../../services/apiClient";
 import type { AdaParselSubmitPayload } from "../../components/AdaParselForm";
-import { parseAreaM2 } from "./dfaRows";
+import { formatParcelAreaDisplay, pickParcelAreaRaw } from "./dfaRows";
 import { fetchTkgmByCoords, fetchTkgmByIds, type TkgmError, TKGM_NO_RESPONSE_MESSAGE, isTkgmNoResponseError } from "./tkgmApi";
 import type { PassiveConfirmFn } from "./tkgmPassiveParcel";
 
@@ -124,26 +124,12 @@ export function buildParcelReferenceId(
 }
 
 function pickTkgmAreaRaw(props: Record<string, unknown>, tkgm: TkgmParcelResponse): unknown {
-  return (
-    props.alan ??
-    props.Alan ??
-    props.ALAN ??
-    props.yuzolcum ??
-    props.Yuzolcum ??
-    props.area ??
-    props.Area ??
-    props.area_m2 ??
-    (tkgm as Record<string, unknown>).alan ??
-    (tkgm as Record<string, unknown>).yuzolcum ??
-    (tkgm as Record<string, unknown>).Area
-  );
+  return pickParcelAreaRaw(props) ?? pickParcelAreaRaw(tkgm as Record<string, unknown>);
 }
 
 /** TKGM alan metni (ör. "2.450,00" veya "2450 m²") → gösterim */
 export function formatTkgmArea(value: unknown): string {
-  const n = parseAreaM2(value);
-  if (!Number.isFinite(n) || n <= 0) return "";
-  return `${Math.round(n).toLocaleString("tr-TR")} m²`;
+  return formatParcelAreaDisplay(value);
 }
 
 export function formatTkgmResultSummary(

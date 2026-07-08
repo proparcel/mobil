@@ -62,6 +62,11 @@ import {
   mapPortalFiltersToMobileDraft,
   type Son30MobileDraftPatch,
 } from '../../src/utils/aranacaklarPortalFilters';
+import {
+  loadPortalRecentQueriesListSession,
+  portalRecentQueriesSessionHasListContext,
+  savePortalRecentQueriesListSession,
+} from '../../src/utils/portalRecentQueriesListSession';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../../services/authService';
 
@@ -184,6 +189,13 @@ async function getProfilePreferredCityId(): Promise<string> {
     // profil yüklenemezse popular il
   }
   return '';
+}
+
+/** Route param `mine=1` — menüden Sorgularım ile açılış */
+function parseRouteMineFlag(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
 /** Web `pickDefaultCity` ile aynı: önce tercih edilen id, yoksa `count` en yüksek il */
@@ -1641,6 +1653,10 @@ export default function Son30GunScreen() {
     city_id?: string;
     cityName?: string;
     city_name?: string;
+    mine?: string | boolean;
+    restoreListSession?: string;
+    fallbackCityId?: string;
+    fallback_city_id?: string;
   } & ProfileReturnRouteParams;
   const { isAuthenticated } = useAuth();
   const [menuVisible, setMenuVisible] = useState(false);
@@ -1667,12 +1683,13 @@ export default function Son30GunScreen() {
   // Applied filters (used for API calls)
   const [appliedFilters, setAppliedFilters] = useState<PortalQueryListParams>({});
   const [appliedListingFilters, setAppliedListingFilters] = useState<VitrinListingSearchParams>({});
-  const [mineOnly, setMineOnly] = useState(false);
+  const [mineOnly, setMineOnly] = useState(() => parseRouteMineFlag(routeParams.mine));
 
   /** Web `PortalRecentQueriesApp` — ilk açılışta il yoksa bir kez varsayılan il (stored / popular) */
   const didAutoSelectProDefaultCityRef = useRef(false);
   /** Vitrin listesi — stored son il, yoksa profil adresi il, yoksa popular */
   const didAutoSelectVitrinDefaultCityRef = useRef(false);
+  const didRestoreListSessionRef = useRef(false);
 
   const effectiveAppliedListingFilters = useMemo((): VitrinListingSearchParams => {
     const next: VitrinListingSearchParams = { ...(appliedListingFilters || {}) };
@@ -1955,6 +1972,15 @@ export default function Son30GunScreen() {
     if (id == null) return;
     void setStoredPortalRecentCityId(String(id));
   }, [listMode, appliedFilters.city_id, appliedListingFilters.city_id]);
+
+  useEffect(() => {
+    if (listMode !== 'proSorgular') return;
+    if (!appliedFilters.city_id) return;
+    if (String(routeParams.restoreListSession || '').trim() === '1' && !didRestoreListSessionRef.current) {
+      return;
+    }
+    savePortalRecentQueriesListSession({ appliedFilters, mineOnly });
+  }, [listMode, appliedFilters, mineOnly, routeParams.restoreListSession]);
 
   useEffect(() => {
     if (listMode !== 'proSorgular') return;
@@ -2505,6 +2531,11 @@ export default function Son30GunScreen() {
   }, [isVitrinListingRoute, loadListings]);
 
   useEffect(() => {
+    if (routeParams.mine == null) return;
+    setMineOnly(parseRouteMineFlag(routeParams.mine));
+  }, [routeParams.mine]);
+
+  useEffect(() => {
     if (routeName !== 'emlak-vitrini-liste') return;
     const next: VitrinListingSearchParams = {};
     const routeCategoryMain = routeParams.category_main || routeParams.categoryMain;
@@ -2589,8 +2620,12 @@ export default function Son30GunScreen() {
   ]);
 
   const handleCardPress = useCallback((item: PortalQueryListItem) => {
-    router.push('son-30-gun-detay', { snapshotId: String(item.snapshot_id) });
-  }, [router]);
+    savePortalRecentQueriesListSession({ appliedFilters, mineOnly });
+    router.push('son-30-gun-detay', {
+      snapshotId: String(item.snapshot_id),
+      fromSon30Gun: '1',
+    });
+  }, [router, appliedFilters, mineOnly]);
 
   const handleListingPress = useCallback(
     (item: VitrinListingItem) => {
@@ -2599,6 +2634,7 @@ export default function Son30GunScreen() {
         router.push('son-30-gun-detay', {
           snapshotId: String(sid),
           listingId: item.listing_id ? String(item.listing_id) : undefined,
+          fromSon30Gun: '1',
         });
         return;
       }
@@ -2657,6 +2693,49 @@ export default function Son30GunScreen() {
     if (patch.sortBy !== undefined) setDraftSortBy(patch.sortBy);
     if (patch.sortDir !== undefined) setDraftSortDir(patch.sortDir);
   }, []);
+
+  useEffect(() => {
+    if (listMode !== 'proSorgular' || didRestoreListSessionRef.current) return;
+
+    const restoreFlag = String(routeParams.restoreListSession || '').trim();
+    const fallbackCityRaw = routeParams.fallbackCityId || routeParams.fallback_city_id;
+    const fallbackCityId =
+      fallbackCityRaw != null && Number.isFinite(Number(fallbackCityRaw)) ? Number(fallbackCityRaw) : null;
+
+    if (restoreFlag !== '1' && fallbackCityId == null) return;
+    didRestoreListSessionRef.current = true;
+
+    void (async () => {
+      if (restoreFlag === '1') {
+        const session = await loadPortalRecentQueriesListSession();
+        if (portalRecentQueriesSessionHasListContext(session)) {
+          didAutoSelectProDefaultCityRef.current = true;
+          setAppliedFilters(session!.appliedFilters);
+          setMineOnly(session!.mineOnly);
+          applyMobileDraftPatch(
+            mapPortalFiltersToMobileDraft(session!.appliedFilters as Record<string, unknown>, 'proSorgular'),
+          );
+          setDraftAda(String(session!.appliedFilters.ada || '').trim());
+          setDraftParsel(String(session!.appliedFilters.parsel || '').trim());
+          if (session!.appliedFilters.expert_status === 'ANSWERED') {
+            setDraftProExpertAnswered(true);
+          }
+          return;
+        }
+      }
+      if (fallbackCityId != null) {
+        didAutoSelectProDefaultCityRef.current = true;
+        setAppliedFilters({ city_id: fallbackCityId });
+        setDraftCity(fallbackCityId);
+      }
+    })();
+  }, [
+    listMode,
+    routeParams.restoreListSession,
+    routeParams.fallbackCityId,
+    routeParams.fallback_city_id,
+    applyMobileDraftPatch,
+  ]);
 
   const aranacaklarContactPickerItems = useMemo((): FilterPickerItem[] => {
     const rows = aranacaklarContacts.map((row) => ({

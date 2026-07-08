@@ -144,6 +144,8 @@ Dokümanlar aşağıdaki klasör yapısında organize edilmiştir:
     - `listing_hero_video.md` - İlan detay hero galeri video (tap-to-play, kapak overlay, buffer)
     - `portal_list_modes.md` - Son30GunScreen: Pro sorgu / vitrin liste modu route kilidi ve test matrisi
     - `parcel_terrain_3d_viewer.md` - Pro sorgu detay Eğim sekmesi Unity 3D parsel eğim viewer (lazy `/terrain-3d/`, `modules/parcelTerrain3d/`)
+    - `nasil_yapilir_videolari.md` - Nasıl Yapılır YouTube videoları (admin, API, mobil kategori grid/list, canlı yayın sekmesi)
+    - `ai_video_editor.md` - AI Video editör (yatay 16:9, runway ai_video, menü ve pipeline)
   - **api/** - API/servis dokümanları
     - `konum_verisi_ve_endpointleri.md` - İl/ilçe/mahalle veri kaynağı ve endpoint rehberi
   - **utils/** - Utility dokümanları

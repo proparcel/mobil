@@ -184,8 +184,6 @@ const AUTH_ENDPOINTS = {
   NOTIFICATION_READ: (id: number) => `/api/notifications/${id}/read/`,
   AVATAR: "/api/profile/avatar/",
   SUBSCRIPTION: "/api/subscription/",
-  DISMISS_WELCOME: "/api/auth/dismiss-welcome/",
-  DISMISS_APP_TOUR: "/api/auth/dismiss-app-tour/",
 } as const;
 
 function normalizeRegistrationCompanies(raw: unknown): RegistrationCompanyItem[] {
@@ -1082,26 +1080,6 @@ class AuthService {
     }
 
     return response;
-  }
-
-  /**
-   * İlk üyelik hoşgeldin modalını kapat (sunucuda has_seen_welcome = true)
-   */
-  async dismissWelcome(): Promise<ApiResponse> {
-    return authFetch(AUTH_ENDPOINTS.DISMISS_WELCOME, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  }
-
-  /**
-   * İlk giriş tour overlay'ini kapat (sunucuda has_seen_app_tour = true)
-   */
-  async dismissAppTour(): Promise<ApiResponse> {
-    return authFetch(AUTH_ENDPOINTS.DISMISS_APP_TOUR, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
   }
 
   /**

@@ -213,6 +213,50 @@ function proQueryFailedFromBody(body: any, fallback: string): ProQueryFailedErro
 const PRO_QUERY_POLL_MAX_MS = 120_000;
 const SNAPSHOT_RESOLVE_BACKOFF_MS = [500, 800, 1200, 1600, 2000, 2500, 3000, 4000, 5000];
 
+export const APIFY_PENDING_USER_MESSAGE =
+  'Bu mahalle için güncel fiyat analizleri yapılması gerekmektedir. ' +
+  'Bu işlem 1 dakika kadar vakit alabilir. ' +
+  'İşlem tamamlandığında bildirim gönderilecektir.';
+
+export type QuarterPricePrecheckResult = {
+  success?: boolean;
+  needs_apify: boolean;
+  verified: boolean;
+  proparcel_value?: number;
+  user_message?: string | null;
+};
+
+export type BackgroundProQueryPending = {
+  job_id: string;
+  result_url?: string;
+  status_url?: string;
+  status?: string;
+  queued_reason?: string;
+  user_message?: string;
+  show_apify_pending_modal?: boolean;
+  show_completion_modal?: boolean;
+  retry_after_seconds?: number;
+};
+
+export function isBackgroundDeferredProQuery(data: any): boolean {
+  if (!data || typeof data !== 'object') return false;
+  const reason = String(data.queued_reason || '').toLowerCase();
+  const status = String(data.status || '').toLowerCase();
+  return (
+    Boolean(data.show_apify_pending_modal) ||
+    reason === 'quarter_price_refresh' ||
+    status === 'queued_apify'
+  );
+}
+
+export function extractSnapshotIdFromPayload(obj: any): number | null {
+  if (!obj || typeof obj !== 'object') return null;
+  const pd = obj.parameters_data || {};
+  const raw = pd.dfa_snapshot_id ?? obj.dfa_snapshot_id ?? obj.snapshot_id ?? null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -253,14 +297,6 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
     throw new ProQueryLimitError(msg, limit);
   }
   return response;
-}
-
-function extractSnapshotIdFromPayload(obj: any): number | null {
-  if (!obj || typeof obj !== 'object') return null;
-  const pd = obj.parameters_data || {};
-  const raw = pd.dfa_snapshot_id ?? obj.dfa_snapshot_id ?? obj.snapshot_id ?? null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 export function extractProQueryCityId(data: any): number | null {
@@ -397,6 +433,101 @@ async function pollDistributedProQuery(
   }
 
   throw new Error('Pro sorgu zaman aşımına uğradı. Lütfen tekrar deneyin.');
+}
+
+export async function precheckQuarterPrice(
+  requestBody: Record<string, unknown>,
+): Promise<QuarterPricePrecheckResult> {
+  const backendUrl = (API_URL || '').replace(/\/$/, '');
+  const response = await authFetch(`${backendUrl}/api/get_parcel_info/`, {
+    method: 'POST',
+    body: JSON.stringify({ ...requestBody, precheck_only: true }),
+  });
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    throwHttpError(response.status, errorBody);
+  }
+  const data = await response.json();
+  return {
+    success: data?.success === true,
+    needs_apify: Boolean(data?.needs_apify),
+    verified: Boolean(data?.verified),
+    proparcel_value: data?.proparcel_value,
+    user_message: data?.user_message,
+  };
+}
+
+export type ProQueryApifyDefer = {
+  deferred: true;
+  message: string;
+  body: Record<string, unknown>;
+};
+
+export type ProQueryApifyPrecheckResult = ProQueryApifyDefer | { deferred: false };
+
+/** Verified yoksa Apify arka plan akışına yönlendir (tüm pro sorgu tipleri). */
+export async function shouldDeferProQueryForApify(
+  requestBody: Record<string, unknown>,
+): Promise<ProQueryApifyPrecheckResult> {
+  const precheck = await precheckQuarterPrice(requestBody);
+  if (!precheck.needs_apify) {
+    return { deferred: false };
+  }
+  return {
+    deferred: true,
+    message: String(precheck.user_message || APIFY_PENDING_USER_MESSAGE),
+    body: requestBody,
+  };
+}
+
+export async function markProQueryNotifyOnComplete(jobId: string): Promise<void> {
+  const id = String(jobId || '').trim();
+  if (!id) return;
+  const backendUrl = (API_URL || '').replace(/\/$/, '');
+  try {
+    await authFetch(`${backendUrl}/api/pro-query/jobs/${encodeURIComponent(id)}/notify-on-complete/`, {
+      method: 'POST',
+      body: '{}',
+    });
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Pro sorguyu arka planda başlatır — poll yapmaz (Apify / kuyruk modu).
+ */
+export async function startProParcelQueryBackground(
+  requestBody: Record<string, unknown>,
+): Promise<BackgroundProQueryPending> {
+  const backendUrl = (API_URL || '').replace(/\/$/, '');
+  const response = await authFetch(`${backendUrl}/api/get_parcel_info/`, {
+    method: 'POST',
+    body: JSON.stringify(requestBody),
+  });
+
+  if (response.status === 202) {
+    const initial = (await response.json()) as BackgroundProQueryPending;
+    if (initial?.job_id) {
+      await markProQueryNotifyOnComplete(String(initial.job_id));
+    }
+    return initial;
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    throwHttpError(response.status, errorBody);
+  }
+
+  const data = await response.json();
+  if (data?.job_id && !data?.parameters_data) {
+    const pending = data as BackgroundProQueryPending;
+    if (pending.job_id) {
+      await markProQueryNotifyOnComplete(String(pending.job_id));
+    }
+    return pending;
+  }
+  throw new Error('Arka plan pro sorgu yanıtı beklenen formatta değil.');
 }
 
 /**

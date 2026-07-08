@@ -6,7 +6,7 @@
 import RNFS from 'react-native-fs';
 import { getParcelStaticMapFeatureProps, type StaticMapRenderPurpose } from '../constants/parcelMapStyle';
 import type { ParcelPolygonDesignConfig } from '../constants/parcelPolygonDesign';
-import { calculateBoundsAndCamera } from './parcelUtils';
+import { calculateBoundsAndCamera, PRO_QUERY_THUMBNAIL_BBOX_MARGIN, PRO_QUERY_THUMBNAIL_PADDING_PX } from './parcelUtils';
 
 let MAPBOX_TOKEN = '';
 try {
@@ -40,17 +40,26 @@ function simplifyGeometry(geom: any, tolerance: number): any {
   return geom;
 }
 
+function staticMapPaddingPx(purpose: StaticMapRenderPurpose): number {
+  return purpose === 'fullCapture' ? PRO_QUERY_THUMBNAIL_PADDING_PX : 80;
+}
+
+function staticMapBboxMargin(purpose: StaticMapRenderPurpose): number {
+  return purpose === 'fullCapture' ? PRO_QUERY_THUMBNAIL_BBOX_MARGIN : 1.2;
+}
+
 function buildStaticMapCenterZoomUrl(
   geom: any,
   size = '800x600@2x',
-  paddingPx = 80,
+  purpose: StaticMapRenderPurpose = 'thumbnail',
 ): string {
+  const paddingPx = staticMapPaddingPx(purpose);
   const cam = calculateBoundsAndCamera(geom, {
     viewport: { width: 1600, height: 1200 },
     paddingPx,
     minZoom: 2,
     maxZoom: 18,
-    bboxMargin: 1.2,
+    bboxMargin: staticMapBboxMargin(purpose),
   });
   if (!cam) return '';
   return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${cam.center[0]},${cam.center[1]},${cam.zoom},0/${size}?access_token=${MAPBOX_TOKEN}`;
@@ -63,6 +72,7 @@ function buildStaticMapFetchUrl(
   purpose: StaticMapRenderPurpose = 'thumbnail',
 ): string {
   if (!MAPBOX_TOKEN || !geom) return '';
+  const paddingPx = staticMapPaddingPx(purpose);
   if (geom.type === 'Point' && Array.isArray(geom.coordinates)) {
     const [lon, lat] = geom.coordinates;
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) return '';
@@ -78,13 +88,13 @@ function buildStaticMapFetchUrl(
         JSON.stringify({ type: 'Feature', properties: featureProps, geometry: sg }),
       );
       if (se.length <= 6000) {
-        return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${se})/auto/${size}?access_token=${MAPBOX_TOKEN}&padding=80`;
+        return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${se})/auto/${size}?access_token=${MAPBOX_TOKEN}&padding=${paddingPx}`;
       }
     }
-    const bboxUrl = buildStaticMapCenterZoomUrl(geom, size);
+    const bboxUrl = buildStaticMapCenterZoomUrl(geom, size, purpose);
     if (bboxUrl) return bboxUrl;
   }
-  return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${encoded})/auto/${size}?access_token=${MAPBOX_TOKEN}&padding=80`;
+  return `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/geojson(${encoded})/auto/${size}?access_token=${MAPBOX_TOKEN}&padding=${paddingPx}`;
 }
 
 /** Mapbox Static API URL (indirme / önizleme). */

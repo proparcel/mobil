@@ -212,7 +212,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
           serverMembershipDisplay !== currentUser.membership_display;
         const featuresChanged =
           serverFeatures != null &&
-          serverFeatures.smart_query !== currentUser.features?.smart_query;
+          (serverFeatures.smart_query !== currentUser.features?.smart_query ||
+            serverFeatures.quarter_verification !==
+              currentUser.features?.quarter_verification);
         const prof = profile as UserProfile | null;
         const cityIdChanged =
           profileCityId != null && profileCityId !== (currentUser.city_id ?? undefined);

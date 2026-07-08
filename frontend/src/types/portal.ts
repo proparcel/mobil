@@ -562,8 +562,12 @@ export interface PortalQueryDetail {
   listing_pro_sorgu_locked?: boolean | null;
   /** 3D eğim paketi mevcut mu (mesh detay GET'te yok) */
   terrain3dAvailable?: boolean;
-  /** 2D eğim özeti — Parsel Eğimi sekmesi */
+  /** 2D eğim özeti — Parsel Morfoloji sekmesi */
   slopeSummary?: PortalSlopeSummary | null;
+  /** Çevre morfoloji analizi (context bridge) */
+  context_morphology_json?: Record<string, unknown> | null;
+  morphology_type?: string | null;
+  morphology_label?: string | null;
 }
 
 // ── Ratings ──

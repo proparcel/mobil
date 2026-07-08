@@ -2,6 +2,7 @@
 # Ana projedeki android/ klasorune dokunmaz.
 $ErrorActionPreference = "Stop"
 $srcRoot = Split-Path -Parent $PSScriptRoot
+. "$PSScriptRoot/metro-ports.ps1"
 $destRoot = "C:\Temp\ProParcelAndroidDev"
 $srcAndroid = Join-Path $srcRoot "android"
 $destAndroid = Join-Path $destRoot "android"
@@ -57,8 +58,8 @@ try {
   Write-Host ""
   Write-Host "Terminal 2 (USB cihaz):"
   Write-Host "  cd $destRoot"
-  Write-Host "  adb reverse tcp:8081 tcp:8081"
-  Write-Host "  npm run android:run-only"
+  Write-Host "  adb reverse tcp:$METRO_PORT_ANDROID tcp:$METRO_PORT_ANDROID"
+  Write-Host "  npm run start:android_metro"
 } finally {
   Pop-Location
 }

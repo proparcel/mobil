@@ -29,7 +29,7 @@ import {
   type PlayProductInfo,
   type ValidateReceiptResult,
 } from "../../services/googlePlayIapService";
-import { isEkPackage, resolveIapProductId } from "../../config/iapProducts";
+import { isEkPackage, resolvePlayProductId } from "../../config/iapProducts";
 import { DJANGO_API_URL } from "../../config/api";
 
 function formatMoney(value: number) {
@@ -175,7 +175,7 @@ export default function BillingCheckoutAndroidScreen() {
         const found = pkgRes.data.packages.find((p) => p.id === packageId);
         if (found) {
           setPkg(found);
-          const sku = resolveIapProductId(found);
+          const sku = resolvePlayProductId(found);
           if (!sku) {
             setError("Bu paket uygulama üzerinden satın alınamıyor.");
           } else {

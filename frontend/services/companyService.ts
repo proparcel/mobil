@@ -74,12 +74,12 @@ export function parseCreditAllocationsEnvelope(
       message: String(root.message || root.error || "Kredi payları alınamadı."),
     };
   }
-  const layer = root.data ?? root;
+  const normalized = (root.data ?? root) as Record<string, unknown>;
   const payload =
-    isCreditAllocationsPayload(layer)
-      ? layer
-      : isCreditAllocationsPayload((layer as Record<string, unknown>)?.data)
-        ? ((layer as Record<string, unknown>).data as CompanyCreditAllocationsData)
+    isCreditAllocationsPayload(normalized)
+      ? normalized
+      : isCreditAllocationsPayload(normalized?.data)
+        ? (normalized.data as CompanyCreditAllocationsData)
         : null;
   if (!payload) {
     return {
@@ -93,6 +93,14 @@ export function parseCreditAllocationsEnvelope(
     data: {
       items: Array.isArray(payload.items) ? payload.items : [],
       company_balance: Number(payload.company_balance ?? 0),
+      seat_limit: payload.seat_limit ?? null,
+      seats_used: Number(payload.seats_used ?? 0),
+      over_limit: Boolean(payload.over_limit),
+      credit_distribution_mode: String(
+        root.credit_distribution_mode ||
+          payload.credit_distribution_mode ||
+          "monthly_allocation",
+      ),
     },
   };
 }

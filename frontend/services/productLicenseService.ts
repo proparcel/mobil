@@ -6,7 +6,7 @@ import { Platform } from "react-native";
 import { creditService, type CreditCostItem } from "./creditService";
 import { resolveLicenseProductId } from "../config/iapProducts";
 import { purchaseProduct, type ValidateReceiptResult } from "./iapService";
-import { purchasePlayProduct } from "./googlePlayIapService";
+import { initializeGooglePlayIAP, loadPlayProducts, purchasePlayProduct } from "./googlePlayIapService";
 
 export type ProductPricing = CreditCostItem;
 
@@ -34,6 +34,8 @@ export async function purchaseProductLicense(options: {
   };
 
   if (platform === "android") {
+    await initializeGooglePlayIAP();
+    await loadPlayProducts();
     return purchasePlayProduct(productId, licenseOpts);
   }
   return purchaseProduct(productId, licenseOpts);

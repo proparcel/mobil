@@ -8,6 +8,7 @@ import {
   normalizeAndConfirm,
   type PassiveConfirmFn,
 } from './tkgmPassiveParcel';
+import { logSimpleQuery } from './simpleQueryLogger';
 
 export { isPassiveParcelPayload } from './tkgmPassiveParcel';
 export type { PassiveConfirmFn } from './tkgmPassiveParcel';
@@ -190,10 +191,12 @@ async function parseTkgmResponse(
   // 200 yanıtında geometry yok ama gittigiParselListe/pp_tkgm_passive_redirect varsa pasif parsel.
   data = await applyPassiveParcelIfNeeded(data, confirm);
   if (!data?.geometry || !data?.properties) {
-    throw {
+    const err = {
       type: 'TKGM_INVALID_DATA',
       message: 'Geçersiz veri formatı',
     } as TkgmError;
+    logSimpleQuery('tkgm_invalid_data', { status: response.status, hasGeometry: !!data?.geometry, hasProperties: !!data?.properties });
+    throw err;
   }
 
   return data as TkgmData;
@@ -221,7 +224,13 @@ async function fetchTkgmDirect(
     return await parseTkgmResponse(response, confirm);
   } catch (error) {
     clearTimeout(timeoutId);
-    throw normalizeTkgmFetchError(error);
+    const normalized = normalizeTkgmFetchError(error);
+    logSimpleQuery('tkgm_fetch_error', {
+      url,
+      errorType: normalized.type,
+      errorMessage: normalized.message,
+    });
+    throw normalized;
   }
 }
 

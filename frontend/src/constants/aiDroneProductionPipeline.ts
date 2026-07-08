@@ -6,6 +6,8 @@ export type DroneProductionStepId =
   | "tkgm"
   | "context"
   | "map_capture"
+  | "upload"
+  | "script"
   | "narration"
   | "prep"
   | "ref_upload"
@@ -16,6 +18,9 @@ export type DroneProductionStepId =
 
 /** Mobil basit drone editör — backend OpenAI preflight atlar, doğrudan Runway */
 export const MOBILE_DRONE_RUNWAY_CLIENT_SOURCE = "mobile_drone_simple_editor";
+
+/** Mobil AI Video editör */
+export const MOBILE_AI_VIDEO_NEW_CLIENT_SOURCE = "mobile_ai_video_new_editor";
 
 export type DroneProductionStepDef = {
   id: DroneProductionStepId;
@@ -66,6 +71,53 @@ export const DRONE_VIDEO_PRODUCTION_STEPS: DroneProductionStepDef[] = [
     id: "production",
     title: "Video üretimi",
     api: "",
+  },
+  {
+    id: "polling",
+    title: "Video oluşturuluyor",
+    api: "",
+  },
+  {
+    id: "ready",
+    title: "Önizleme hazır",
+    api: "",
+  },
+];
+
+/** AI Video editör — yeni proje akışı (parsel/harita yok) */
+export const AI_VIDEO_NEW_PRODUCTION_STEPS: DroneProductionStepDef[] = [
+  {
+    id: "upload",
+    title: "Referans görselleri",
+    api: "",
+  },
+  {
+    id: "script",
+    title: "Video metni",
+    api: "/api/drone-editor/ai-video-script/",
+    method: "POST",
+  },
+  {
+    id: "prep",
+    title: "Video hazırlığı",
+    api: "/api/drone-recording-runway/prep/",
+    method: "POST",
+  },
+  {
+    id: "ref_upload",
+    title: "Görseller yükleniyor",
+    api: "",
+  },
+  {
+    id: "payment",
+    title: "Ödeme",
+    api: "",
+  },
+  {
+    id: "production",
+    title: "Video üretimi",
+    api: "/api/drone-recording-runway/",
+    method: "POST",
   },
   {
     id: "polling",

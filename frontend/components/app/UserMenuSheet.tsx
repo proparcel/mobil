@@ -5,7 +5,8 @@ import React, { useMemo } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import type { User, UserProfile } from "../../src/types/auth";
-import { isExpertUser, isVipCustomer } from "../../src/utils/membership";
+import { isExpertUser } from "../../src/utils/membership";
+import { MembershipTierBadge } from "./MembershipTierBadge";
 import { sheetMenuListBottomPadding } from "../../src/utils/sheetSafeArea";
 
 const TEPE_CREDIT_ICON_COLORS = {
@@ -46,7 +47,6 @@ const COLORS = {
   subRowBg: "#f8fafc",
   subSubRowBg: "#f1f5f9",
   dangerRed: "#ef4444",
-  vipBg: "#d97706",
   placeholderBg: "#e2e8f0",
   creditBg: "#f1f5f9",
   creditText: "#334155",
@@ -116,7 +116,7 @@ export function UserMenuSheetHeader({
       canShowExpert
         ? `Uzmanlık Puanı: ${Number(current || 0)}${levelLabel ? ` (${levelLabel})` : ""} • Peak: ${Number(peak || 0)}`
         : null;
-    return { fullName, canShowExpert: !!canShowExpert, meta, isVip: isVipCustomer(user) };
+    return { fullName, canShowExpert: !!canShowExpert, meta };
   }, [profile, user]);
 
   const avatarUrl = profile?.avatar_url || profile?.avatar;
@@ -141,12 +141,7 @@ export function UserMenuSheetHeader({
                   <Text style={hs.userName} numberOfLines={1}>
                     {nameAndMeta.fullName}
                   </Text>
-                  {nameAndMeta.isVip ? (
-                    <View style={hs.vipBadge}>
-                      <Ionicons name="star" size={10} color="#fff" />
-                      <Text style={hs.vipText}>VIP</Text>
-                    </View>
-                  ) : null}
+                  <MembershipTierBadge user={user} size="xs" />
                 </View>
                 {nameAndMeta.canShowExpert && nameAndMeta.meta ? (
                   <Text style={hs.userMeta} numberOfLines={1}>
@@ -165,12 +160,7 @@ export function UserMenuSheetHeader({
                   <Text style={hs.userName} numberOfLines={1}>
                     {nameAndMeta.fullName}
                   </Text>
-                  {nameAndMeta.isVip ? (
-                    <View style={hs.vipBadge}>
-                      <Ionicons name="star" size={10} color="#fff" />
-                      <Text style={hs.vipText}>VIP</Text>
-                    </View>
-                  ) : null}
+                  <MembershipTierBadge user={user} size="xs" />
                 </View>
                 {nameAndMeta.canShowExpert && nameAndMeta.meta ? (
                   <Text style={hs.userMeta} numberOfLines={1}>
@@ -224,16 +214,6 @@ const headerStyles = StyleSheet.create({
   nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   userName: { fontSize: 17, fontWeight: "600", color: COLORS.textPrimary, flexShrink: 1 },
   userMeta: { fontSize: 12, fontWeight: "600", color: COLORS.textSecondary, marginTop: 2 },
-  vipBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: COLORS.vipBg,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  vipText: { fontSize: 10, fontWeight: "800", color: "#fff", letterSpacing: 0.5 },
   creditBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -275,16 +255,6 @@ const headerStylesDark = StyleSheet.create({
   nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   userName: { fontSize: 17, fontWeight: "600", color: "#e2e8f0", flexShrink: 1 },
   userMeta: { fontSize: 12, fontWeight: "600", color: "#94a3b8", marginTop: 2 },
-  vipBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: COLORS.vipBg,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  vipText: { fontSize: 10, fontWeight: "800", color: "#fff", letterSpacing: 0.5 },
   creditBadge: {
     flexDirection: "row",
     alignItems: "center",

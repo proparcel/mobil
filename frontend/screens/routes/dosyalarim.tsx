@@ -30,15 +30,6 @@ export default function DosyalarimScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <TouchableOpacity
           style={styles.row}
-          onPress={() => router.push('index', { launch: 'my-queries' })}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="bookmark-outline" size={22} color={COLORS.accentBlue} />
-          <Text style={styles.rowText}>Kayıtlı sorgularım</Text>
-          <Ionicons name="chevron-forward" size={18} color={COLORS.borderSoft} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.row}
           onPress={() => router.push('index', { launch: 'parcel-split' })}
           activeOpacity={0.7}
         >

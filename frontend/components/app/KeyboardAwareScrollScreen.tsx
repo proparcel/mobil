@@ -4,6 +4,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  View,
   type ScrollViewProps,
   type StyleProp,
   type ViewStyle,
@@ -14,6 +15,7 @@ import {
   SCROLL_VIEW_KEYBOARD_PROPS,
   getIosKeyboardVerticalOffset,
   getKeyboardAvoidingBehavior,
+  useKeyboardHeight,
 } from '../../src/keyboard';
 
 export type KeyboardAwareScrollScreenProps = Omit<ScrollViewProps, 'ref'> & {
@@ -24,6 +26,13 @@ export type KeyboardAwareScrollScreenProps = Omit<ScrollViewProps, 'ref'> & {
   avoidingStyle?: StyleProp<ViewStyle>;
   /** iOS KAV behavior bağlamı */
   behaviorContext?: 'screen' | 'auth' | 'modal';
+  /** Üst SafeAreaView (top) zaten uygulandıysa offset yalnızca headerHeight */
+  safeAreaTopHandledExternally?: boolean;
+  /**
+   * Uzun ScrollView + scroll-into-view: KeyboardAvoidingView kapalı.
+   * Çift kaydırma / klavye üstü gri boşluk önlenir; content paddingBottom ile klavye payı verilir.
+   */
+  disableKeyboardAvoiding?: boolean;
 };
 
 /**
@@ -37,6 +46,8 @@ export const KeyboardAwareScrollScreen = forwardRef<ScrollView, KeyboardAwareScr
       backgroundColor = '#f1f5f9',
       avoidingStyle,
       behaviorContext = 'screen',
+      safeAreaTopHandledExternally = false,
+      disableKeyboardAvoiding = false,
       contentContainerStyle,
       style,
       keyboardShouldPersistTaps,
@@ -48,14 +59,49 @@ export const KeyboardAwareScrollScreen = forwardRef<ScrollView, KeyboardAwareScr
     ref,
   ) {
     const insets = useSafeAreaInsets();
-    const behavior = getKeyboardAvoidingBehavior(behaviorContext);
+    const keyboardHeight = useKeyboardHeight();
+    const behavior = disableKeyboardAvoiding ? undefined : getKeyboardAvoidingBehavior(behaviorContext);
     const keyboardVerticalOffset =
-      Platform.OS === 'ios' ? getIosKeyboardVerticalOffset(insets.top, headerHeight) : 0;
+      Platform.OS === 'ios' && !disableKeyboardAvoiding
+        ? safeAreaTopHandledExternally
+          ? headerHeight
+          : getIosKeyboardVerticalOffset(insets.top, headerHeight)
+        : 0;
+
+    const mergedContentContainerStyle = useMemo(() => {
+      if (!disableKeyboardAvoiding || keyboardHeight <= 0) return contentContainerStyle;
+      const flatten = StyleSheet.flatten(contentContainerStyle) ?? {};
+      const baseBottom = typeof flatten.paddingBottom === 'number' ? flatten.paddingBottom : 0;
+      const extra = { paddingBottom: baseBottom + keyboardHeight };
+      if (Array.isArray(contentContainerStyle)) {
+        return [...contentContainerStyle, extra];
+      }
+      return [contentContainerStyle, extra];
+    }, [contentContainerStyle, disableKeyboardAvoiding, keyboardHeight]);
 
     const fillStyle = useMemo(
       () => [styles.fill, { backgroundColor }, avoidingStyle],
       [backgroundColor, avoidingStyle],
     );
+
+    const scrollView = (
+      <ScrollView
+        ref={ref}
+        style={[styles.fill, { backgroundColor }, style]}
+        contentContainerStyle={mergedContentContainerStyle}
+        nestedScrollEnabled={nestedScrollEnabled}
+        showsVerticalScrollIndicator={showsVerticalScrollIndicator}
+        keyboardShouldPersistTaps={keyboardShouldPersistTaps ?? SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
+        keyboardDismissMode={keyboardDismissMode ?? SCROLL_VIEW_KEYBOARD_PROPS.keyboardDismissMode}
+        {...scrollProps}
+      >
+        {children}
+      </ScrollView>
+    );
+
+    if (disableKeyboardAvoiding) {
+      return <View style={fillStyle}>{scrollView}</View>;
+    }
 
     return (
       <KeyboardAvoidingView
@@ -63,18 +109,7 @@ export const KeyboardAwareScrollScreen = forwardRef<ScrollView, KeyboardAwareScr
         behavior={behavior}
         keyboardVerticalOffset={keyboardVerticalOffset}
       >
-        <ScrollView
-          ref={ref}
-          style={[styles.fill, { backgroundColor }, style]}
-          contentContainerStyle={contentContainerStyle}
-          nestedScrollEnabled={nestedScrollEnabled}
-          showsVerticalScrollIndicator={showsVerticalScrollIndicator}
-          keyboardShouldPersistTaps={keyboardShouldPersistTaps ?? SCROLL_VIEW_KEYBOARD_PROPS.keyboardShouldPersistTaps}
-          keyboardDismissMode={keyboardDismissMode ?? SCROLL_VIEW_KEYBOARD_PROPS.keyboardDismissMode}
-          {...scrollProps}
-        >
-          {children}
-        </ScrollView>
+        {scrollView}
       </KeyboardAvoidingView>
     );
   },
