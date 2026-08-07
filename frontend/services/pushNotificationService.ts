@@ -38,6 +38,7 @@ export function shouldOpenHowToLiveTab(data: PushNotificationData | null | undef
   const type = String(data.type || "").toLowerCase();
   const deepLink = String(data.deep_link || "");
   if (type === "youtube_live") return true;
+  if (deepLink.includes("proje-olustur") && deepLink.includes("tab=live")) return true;
   if (deepLink.includes("nasil-yapilir") && deepLink.includes("tab=live")) return true;
   return false;
 }

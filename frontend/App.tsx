@@ -157,7 +157,7 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'index' | 'unit
         });
       }
       nav.navigate({
-        name: 'nasil-yapilir',
+        name: 'proje-olustur',
         params: {
           tab: 'live',
           ...(videoId ? { videoId } : {}),
@@ -395,7 +395,7 @@ function AppWithShield({ initialRouteName }: { initialRouteName: 'index' | 'unit
           <Stack.Screen name="otp-verify" component={OTPVerifyScreen} />
           <Stack.Screen name="forgot-password" component={ForgotPasswordScreen} />
           <Stack.Screen name="legal-hub" component={LegalHubScreen} />
-          <Stack.Screen name="nasil-yapilir" component={NasilYapilirScreen} />
+          <Stack.Screen name="proje-olustur" component={NasilYapilirScreen} />
           <Stack.Screen name="legal-webview" component={LegalWebViewScreen} />
           <Stack.Screen name="accounts-webview" component={AccountsWebViewScreen} />
           <Stack.Screen name="portal-webview" component={PortalWebViewScreen} />

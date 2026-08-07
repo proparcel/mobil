@@ -6,7 +6,7 @@ YouTube tutorial videolarının admin panelden yönetildiği, mobil uygulamada k
 
 ```mermaid
 flowchart TD
-  menu[Kullanici menusu] --> screen[nasil-yapilir.tsx]
+  menu[Kullanici menusu] --> screen[proje-olustur route]
   screen --> tabVideos[ProjeOlustur sekmesi]
   screen --> tabLive[Canli Yayin sekmesi]
   tabVideos --> api["GET /api/how-to-videos/"]
@@ -79,7 +79,7 @@ Yanıt:
 
 | Dosya | Rol |
 |-------|-----|
-| `frontend/screens/routes/nasil-yapilir.tsx` | Sekmeler, video yükleme, grid/list seçimi |
+| `frontend/screens/routes/nasil-yapilir.tsx` | Sekmeler, video yükleme, grid/list seçimi (nav route: `proje-olustur`) |
 | `frontend/components/how-to/HowToScreenShell.tsx` | Başlık, grid/list menüsü |
 | `frontend/components/how-to/HowToVideoGrid.tsx` | 3 sütun grid + kategori başlık satırları |
 | `frontend/components/how-to/HowToVideoList.tsx` | Liste + kategori başlık satırları |

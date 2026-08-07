@@ -13,7 +13,7 @@ export type DeepLinkNavigationTarget =
       params: { snapshotId?: string; listingId?: string; commentId?: string; ratingId?: string };
     }
   | { screen: 'listing-wizard'; params: { listingId: string; mode?: 'create' | 'edit'; forceEidsFirst?: string; returnSnapshotId?: string; eids?: string; eids_error?: string } }
-  | { screen: 'nasil-yapilir'; params: { tab?: 'videos' | 'live' } | undefined };
+  | { screen: 'proje-olustur'; params: { tab?: 'videos' | 'live' } | undefined };
 
 const PROPARCEL_HOSTS = new Set(['proparcel.com', 'www.proparcel.com']);
 
@@ -99,8 +99,8 @@ export function webUrlToAppDeepLink(webUrl: string): string | null {
     return `proparcel://portal/recent-queries/${snapshotMatch[1]}${qs ? `?${qs}` : ''}`;
   }
 
-  if (path === '/nasil-yapilir') {
-    return qs ? `proparcel://nasil-yapilir?${qs}` : 'proparcel://nasil-yapilir';
+  if (path === '/proje-olustur' || path === '/nasil-yapilir') {
+    return qs ? `proparcel://proje-olustur?${qs}` : 'proparcel://proje-olustur';
   }
 
   return null;
@@ -149,12 +149,12 @@ export function parseProParcelDeepLink(rawUrl: string): DeepLinkNavigationTarget
     };
   }
 
-  if (path === '/nasil-yapilir') {
+  if (path === '/proje-olustur' || path === '/nasil-yapilir') {
     const tab = params.get('tab');
     if (tab === 'live' || tab === 'videos') {
-      return { screen: 'nasil-yapilir', params: { tab } };
+      return { screen: 'proje-olustur', params: { tab } };
     }
-    return { screen: 'nasil-yapilir', params: undefined };
+    return { screen: 'proje-olustur', params: undefined };
   }
 
   if (path === '/listing-wizard' || path.endsWith('/listing-wizard')) {

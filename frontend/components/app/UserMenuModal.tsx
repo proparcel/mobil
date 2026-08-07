@@ -191,7 +191,7 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
       const run = () => {
         switch (itemId) {
           case "landing-intro":
-            router.push("nasil-yapilir");
+            router.push("proje-olustur");
             break;
           case "emlak-vitrini":
             router.replace("emlak-vitrini-liste");
@@ -250,8 +250,9 @@ export default function UserMenuModal({ visible, onClose, currentScreen: _curren
               title: "Destek",
             });
             break;
+          case "proje-olustur":
           case "nasil-yapilir":
-            router.push("nasil-yapilir");
+            router.push("proje-olustur");
             break;
           case "ilanlarim":
             router.push("ilanlarim");
