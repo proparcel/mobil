@@ -36,7 +36,7 @@ export function HowToIntroModal({ visible, onWatch, onDismiss }: Props) {
             <Text style={styles.badge}>Kısa eğitim videoları</Text>
           </View>
 
-          <Text style={styles.title}>Nasıl Yapılır?</Text>
+          <Text style={styles.title}>ProjeOlustur</Text>
           <Text style={styles.subtitle}>
             ProParcel&apos;ı birkaç dakikada keşfedin. Adım adım videolarla harita, sorgu ve analiz
             araçlarını öğrenin.

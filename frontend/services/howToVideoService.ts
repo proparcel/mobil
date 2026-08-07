@@ -1,5 +1,5 @@
 /**
- * Nasıl Yapılır — YouTube tutorial videoları.
+ * ProjeOlustur — YouTube tutorial videoları.
  */
 
 import { DJANGO_API_URL } from "../config/api";

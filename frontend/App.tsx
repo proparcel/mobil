@@ -126,7 +126,7 @@ function TepeCoinPurchaseScreen(props: Record<string, unknown>) {
   return <Screen {...props} />;
 }
 
-/** Nasıl yapılır — youtube iframe yalnızca ekran açılınca yüklenir. */
+/** ProjeOlustur — youtube iframe yalnızca ekran açılınca yüklenir. */
 function NasilYapilirScreen(props: Record<string, unknown>) {
   const Screen = require('./screens/routes/nasil-yapilir').default;
   return <Screen {...props} />;

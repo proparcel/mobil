@@ -32,7 +32,7 @@ export function getMenuItems(
       { id: "promahalle", title: "ProMahalle", icon: "chatbubbles-outline", disabled: false },
       { id: "hukuki-metinler", title: "Hukuki metinler", icon: "document-text-outline", disabled: false },
       { id: "destek", title: "Destek", icon: "help-circle-outline", disabled: false },
-      { id: "nasil-yapilir", title: "Nasıl Yapılır", icon: "play-circle-outline", disabled: false },
+      { id: "nasil-yapilir", title: "ProjeOlustur", icon: "play-circle-outline", disabled: false },
       { id: "giris", title: "Giriş", icon: "log-in", disabled: false },
     ];
   }
@@ -76,7 +76,7 @@ export function getMenuItems(
     { id: "bildirimler", title: "Bildirimler", icon: "notifications", disabled: false },
     { id: "hukuki-metinler", title: "Hukuki Metinler", icon: "document-text-outline", disabled: false },
     { id: "destek", title: "Destek", icon: "help-circle-outline", disabled: false },
-    { id: "nasil-yapilir", title: "Nasıl Yapılır", icon: "play-circle-outline", disabled: false },
+    { id: "nasil-yapilir", title: "ProjeOlustur", icon: "play-circle-outline", disabled: false },
     { id: "cikis", title: "Çıkış", icon: "log-out", disabled: false },
   ];
 }

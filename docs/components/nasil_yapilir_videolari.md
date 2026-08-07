@@ -1,4 +1,4 @@
-# Nasıl Yapılır Videoları
+# ProjeOlustur Videoları
 
 YouTube tutorial videolarının admin panelden yönetildiği, mobil uygulamada kategori gruplu grid/list ile gösterildiği modül.
 
@@ -7,7 +7,7 @@ YouTube tutorial videolarının admin panelden yönetildiği, mobil uygulamada k
 ```mermaid
 flowchart TD
   menu[Kullanici menusu] --> screen[nasil-yapilir.tsx]
-  screen --> tabVideos[Nasil Yapilir sekmesi]
+  screen --> tabVideos[ProjeOlustur sekmesi]
   screen --> tabLive[Canli Yayin sekmesi]
   tabVideos --> api["GET /api/how-to-videos/"]
   api --> grid[HowToVideoGrid]
@@ -18,7 +18,7 @@ flowchart TD
   push[Push bildirimi] --> live
 ```
 
-- **Nasıl Yapılır sekmesi:** Aktif videolar API'den yüklenir; grid (3 sütun) veya list görünümü arasında geçiş `HowToScreenShell` menüsünden yapılır.
+- **ProjeOlustur sekmesi:** Aktif videolar API'den yüklenir; grid (3 sütun) veya list görünümü arasında geçiş `HowToScreenShell` menüsünden yapılır.
 - **Canlı Yayın sekmesi:** Push veya deep link ile gelen oturum bilgisi `HowToLiveTab` içinde oynatılır; video listesi API'sinden bağımsızdır.
 
 ## Admin panel (pp33)
