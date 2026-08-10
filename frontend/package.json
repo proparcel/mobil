@@ -100,7 +100,7 @@
     "eas:ios-dev-kur": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/ios-dev-telefona-kur.ps1",
     "eas:inspect": "npm run eas:inspect:ios",
     "lint": "eslint .",
-    "test": "tsx --test src/utils/portalDetailCardContract.test.ts src/utils/portalPriceStatus.test.ts src/utils/savedQueryDisplay.test.ts src/constants/aiDroneProductionPipeline.test.ts services/openAiPreflightApi.test.ts services/runwayPortraitClient.test.ts services/runwaySlotProgress.test.ts services/droneRunwayService.test.ts services/droneScenePreview.test.ts services/droneSceneTimeline.test.ts modules/parcelTerrain3d/utils/validateTerrainPayload.test.ts",
+    "test": "tsx --test src/utils/portalDetailCardContract.test.ts src/utils/portalPriceStatus.test.ts src/utils/savedQueryDisplay.test.ts src/utils/droneProjectContract.test.ts src/constants/aiDroneProductionPipeline.test.ts services/openAiPreflightApi.test.ts services/runwayPortraitClient.test.ts services/runwaySlotProgress.test.ts services/droneRunwayService.test.ts services/droneScenePreview.test.ts services/droneSceneTimeline.test.ts modules/parcelTerrain3d/utils/validateTerrainPayload.test.ts",
     "copy:icon-fonts": "node ./scripts/copy-icon-fonts-to-android.js",
     "postinstall": "patch-package && npm run copy:icon-fonts",
     "pod-install": "node ./scripts/pod-install-or-skip.mjs"

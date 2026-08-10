@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -19,6 +18,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MobileAiScreenShell } from "../../components/app/MobileAiScreenHeader";
 import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScrollScreen";
 import { AiImageAnimationPurchaseModal } from "../../components/ai-image-animation/AiImageAnimationPurchaseModal";
+import ParcelSearchModal from "../../components/ParcelSearchModal";
+import type { AdaParselSubmitPayload } from "../../components/AdaParselForm";
 import { useRouter } from "../../src/hooks/useNavigation";
 import { creditService } from "../../services/creditService";
 import {
@@ -26,9 +27,18 @@ import {
   IMAGE_ANIMATION_PACKAGE_UNITS,
   createImageAnimationLicenseRef,
   getImageAnimationPackageStatus,
+  imageAnimationLocationFromLicenseRow,
   listImageAnimationPackages,
   type ImageAnimationPackageRow,
 } from "../../services/imageAnimationService";
+import {
+  buildDroneProjectDisplayName,
+  droneProjectLocationRouteParams,
+  locationFromParcelFields,
+  validateDroneProjectLocation,
+  type DroneProjectLocation,
+} from "../../src/utils/droneProjectContract";
+import { fetchTkgmParcelByAdaParsel } from "../../src/utils/tkgmParcelQuery";
 
 const DE = {
   shell: "#0b1220",
@@ -42,19 +52,26 @@ const DE = {
   coin: "#fbbf24",
 } as const;
 
+function formatParcelLocationSummary(payload: AdaParselSubmitPayload): string {
+  return [payload.city, payload.town, payload.mahalle, `${payload.ada}/${payload.parsel}`]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export default function AiImageAnimationPurchaseScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(true);
   const [packages, setPackages] = useState<ImageAnimationPackageRow[]>([]);
-  const [packageName, setPackageName] = useState("");
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
   const [packageCoinCost, setPackageCoinCost] = useState<number | null>(null);
   const [packageUnitsPerCredit, setPackageUnitsPerCredit] = useState(IMAGE_ANIMATION_PACKAGE_UNITS);
   const [purchaseModalVisible, setPurchaseModalVisible] = useState(false);
+  const [queryVisible, setQueryVisible] = useState(false);
   const [pendingLicenseRef, setPendingLicenseRef] = useState("");
-  const [pendingTitle, setPendingTitle] = useState("");
+  const [pendingLocation, setPendingLocation] = useState<DroneProjectLocation | null>(null);
+  const [pendingDisplayName, setPendingDisplayName] = useState("");
 
   const loadPackages = useCallback(async () => {
     setLoading(true);
@@ -87,10 +104,10 @@ export default function AiImageAnimationPurchaseScreen() {
   }, [loadPackages]);
 
   const openEditor = useCallback(
-    (licenseRef: string, imageAnimationTitle: string) => {
+    (licenseRef: string, location: DroneProjectLocation) => {
       router.push("ai-image-animation-editor", {
         license_ref: licenseRef,
-        image_animation_title: imageAnimationTitle,
+        ...droneProjectLocationRouteParams(location),
       });
     },
     [router],
@@ -102,27 +119,47 @@ export default function AiImageAnimationPurchaseScreen() {
       Alert.alert("Seçim", "Devam etmek için listeden bir paket seçin.");
       return;
     }
-    openEditor(
-      selected.reference_id,
-      String(selected.image_animation_title || selected.label || "AI Resim Canlandırma").trim(),
-    );
-  }, [openEditor, packages, selectedRef]);
-
-  const onOpenPurchaseModal = useCallback(() => {
-    const title = packageName.trim();
-    if (title.length < 2) {
-      Alert.alert("Paket adı", "Canlandırma paketinize en az 2 karakterlik bir ad verin.");
+    const location = imageAnimationLocationFromLicenseRow(selected);
+    if (!location) {
+      Alert.alert(
+        "Konum gerekli",
+        "Seçili pakette parsel konumu eksik. Yeni paket tanımlayarak ada/parsel bilgisi girin.",
+      );
       return;
     }
-    setPendingTitle(title);
+    openEditor(selected.reference_id, location);
+  }, [openEditor, packages, selectedRef]);
+
+  const onOpenPurchaseFlow = useCallback(() => {
     setPendingLicenseRef(createImageAnimationLicenseRef());
+    setPendingLocation(null);
+    setPendingDisplayName("");
+    setQueryVisible(true);
+  }, []);
+
+  const handleParcelQuery = useCallback(async (payload: AdaParselSubmitPayload) => {
+    setQueryVisible(false);
+    const locResult = validateDroneProjectLocation(locationFromParcelFields(payload));
+    if (!locResult.ok) {
+      Alert.alert("Konum gerekli", locResult.error);
+      return;
+    }
+    const res = await fetchTkgmParcelByAdaParsel(payload);
+    if (!res.ok) {
+      Alert.alert("Parsel sorgusu", res.error);
+      return;
+    }
+    setPendingLocation(locResult.location);
+    setPendingDisplayName(
+      buildDroneProjectDisplayName(locResult.location) || formatParcelLocationSummary(payload),
+    );
     setPurchaseModalVisible(true);
-  }, [packageName]);
+  }, []);
 
   const onPurchaseSuccess = useCallback(() => {
-    if (!pendingLicenseRef.trim() || !pendingTitle.trim()) return;
-    openEditor(pendingLicenseRef, pendingTitle);
-  }, [openEditor, pendingLicenseRef, pendingTitle]);
+    if (!pendingLicenseRef.trim() || !pendingLocation) return;
+    openEditor(pendingLicenseRef, pendingLocation);
+  }, [openEditor, pendingLicenseRef, pendingLocation]);
 
   return (
     <MobileAiScreenShell
@@ -141,7 +178,7 @@ export default function AiImageAnimationPurchaseScreen() {
           <Ionicons name="information-circle-outline" size={18} color={DE.primary} />
           <Text style={styles.infoText}>
             {packageCoinCost ?? "—"} Tepe Kredi karşılığında {packageUnitsPerCredit} resim canlandırma hakkı
-            tanımlanır. Pakete verdiğiniz ad ile kalan haklarınıza sonra tekrar girebilirsiniz.
+            tanımlanır. Her paket bir ada/parsel konumuna bağlanır; kalan haklarınıza aynı konumdan devam edebilirsiniz.
           </Text>
         </View>
 
@@ -166,7 +203,7 @@ export default function AiImageAnimationPurchaseScreen() {
                 <ScrollView style={styles.packageList} nestedScrollEnabled>
                   {packages.map((row) => {
                     const active = selectedRef === row.reference_id;
-                    const label = String(row.label || row.image_animation_title || "AI Resim Canlandırma").trim();
+                    const label = String(row.label || row.display_name || "").trim() || "Konum bilgisi eksik";
                     return (
                       <TouchableOpacity
                         key={row.reference_id}
@@ -212,29 +249,18 @@ export default function AiImageAnimationPurchaseScreen() {
                 <View style={styles.cardHeadText}>
                   <Text style={styles.cardTitle}>Yeni paket</Text>
                   <Text style={styles.cardSub}>
-                    Canlandırma işinize bir ad verin; satın alma onayında kredi düşülür ve hak tanımlanır.
+                    Canlandırma paketi için ada/parsel sorgusu yapın; satın alma onayında kredi düşülür ve hak tanımlanır.
                   </Text>
                 </View>
               </View>
 
-              <Text style={styles.fieldLabel}>Paket adı</Text>
-              <TextInput
-                value={packageName}
-                onChangeText={setPackageName}
-                style={styles.input}
-                placeholder="Örn. Villa salon görselleri"
-                placeholderTextColor={DE.muted}
-                maxLength={120}
-                autoCapitalize="sentences"
-              />
-
               <TouchableOpacity
                 style={styles.primaryBtn}
-                onPress={() => void onOpenPurchaseModal()}
+                onPress={() => void onOpenPurchaseFlow()}
                 activeOpacity={0.85}
               >
                 <Ionicons name="cart" size={18} color="#0f172a" />
-                <Text style={styles.primaryBtnText}>Paketi satın al</Text>
+                <Text style={styles.primaryBtnText}>Parsel seç ve paketi satın al</Text>
                 <Text style={styles.primaryCoin}>
                   +{packageCoinCost != null ? packageCoinCost : "—"} kredi
                 </Text>
@@ -244,11 +270,17 @@ export default function AiImageAnimationPurchaseScreen() {
         )}
       </KeyboardAwareScrollScreen>
 
+      <ParcelSearchModal
+        visible={queryVisible}
+        onClose={() => setQueryVisible(false)}
+        onSubmit={(payload) => void handleParcelQuery(payload)}
+      />
+
       <AiImageAnimationPurchaseModal
         visible={purchaseModalVisible}
         onClose={() => setPurchaseModalVisible(false)}
         referenceId={pendingLicenseRef}
-        packageTitle={pendingTitle}
+        displayName={pendingDisplayName}
         onPurchaseSuccess={onPurchaseSuccess}
       />
     </MobileAiScreenShell>
@@ -302,17 +334,6 @@ const styles = StyleSheet.create({
   packageName: { color: DE.text, fontSize: 14, fontWeight: "600" },
   packageMeta: { color: DE.badge, fontSize: 12, fontWeight: "600" },
   emptyText: { color: DE.muted, fontSize: 13, paddingVertical: 6 },
-  fieldLabel: { color: DE.muted, fontSize: 12, fontWeight: "600" },
-  input: {
-    borderWidth: 1,
-    borderColor: DE.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    color: DE.text,
-    fontSize: 15,
-    backgroundColor: "rgba(2, 6, 23, 0.45)",
-  },
   primaryBtn: {
     flexDirection: "row",
     alignItems: "center",

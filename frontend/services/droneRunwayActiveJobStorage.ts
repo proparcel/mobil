@@ -4,6 +4,7 @@ const STORAGE_KEY = "proparcel_active_drone_job";
 
 export type ActiveDroneJobRecord = {
   jobId: string;
+  projectId?: string;
   referenceId?: string;
   startedAt: number;
   lastProgressLabel?: string;

@@ -24,7 +24,6 @@ import { KeyboardAwareScrollScreen } from "../../components/app/KeyboardAwareScr
 import { storageService } from "../../services/storageService";
 import {
   IMAGE_ANIMATION_PACKAGE_UNITS,
-  DEFAULT_IMAGE_ANIMATION_TITLE,
   downloadImageAnimationResults,
   getImageAnimationCreditCosts,
   getImageAnimationPackageStatus,
@@ -37,6 +36,12 @@ import {
 } from "../../services/imageAnimationService";
 import { AiImageAnimationExtraPurchaseModal } from "../../components/ai-image-animation/AiImageAnimationExtraPurchaseModal";
 import { saveImageUrisToPhotoLibrary } from "../../src/utils/saveToDeviceGallery";
+import {
+  buildDroneProjectDisplayName,
+  DRONE_PROJECT_LOCATION_MISSING_LABEL,
+  parseDroneProjectLocationParams,
+  validateDroneProjectLocation,
+} from "../../src/utils/droneProjectContract";
 
 const DE = {
   shell: "#0b1220",
@@ -73,13 +78,25 @@ export default function AiImageAnimationEditorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
-    image_animation_title?: string;
     license_ref?: string;
+    display_name?: string;
+    city?: string;
+    district?: string;
+    mahalle?: string;
+    ada?: string;
+    parsel?: string;
   }>();
 
-  const animationTitle =
-    String(params.image_animation_title || DEFAULT_IMAGE_ANIMATION_TITLE).trim() ||
-    DEFAULT_IMAGE_ANIMATION_TITLE;
+  const projectLocation = useMemo(
+    () => parseDroneProjectLocationParams(params),
+    [params],
+  );
+  const displayName = useMemo(() => {
+    const fromRoute = String(params.display_name || "").trim();
+    if (fromRoute) return fromRoute;
+    if (projectLocation) return buildDroneProjectDisplayName(projectLocation);
+    return DRONE_PROJECT_LOCATION_MISSING_LABEL;
+  }, [params.display_name, projectLocation]);
   const [licenseRef, setLicenseRef] = useState(String(params.license_ref || "").trim());
 
   const [prompt, setPrompt] = useState("");
@@ -97,11 +114,11 @@ export default function AiImageAnimationEditorScreen() {
 
   useEffect(() => {
     const ref = String(params.license_ref || "").trim();
-    const title = String(params.image_animation_title || "").trim();
-    if (!ref || !title) {
+    const locCheck = validateDroneProjectLocation(projectLocation);
+    if (!ref || !locCheck.ok) {
       router.replace("ai-image-animation-purchase");
     }
-  }, [params.image_animation_title, params.license_ref, router]);
+  }, [params.license_ref, projectLocation, router]);
 
   const refreshPackageStatus = useCallback(async (activeRef?: string) => {
     const res = await getImageAnimationPackageStatus(activeRef || licenseRef || undefined);
@@ -257,6 +274,12 @@ export default function AiImageAnimationEditorScreen() {
       return;
     }
 
+    const locCheck = validateDroneProjectLocation(projectLocation);
+    if (!locCheck.ok) {
+      Alert.alert("Konum gerekli", locCheck.error);
+      return;
+    }
+
     setBusy(true);
     setMessage("Görseller hazırlanıyor...");
     try {
@@ -265,7 +288,7 @@ export default function AiImageAnimationEditorScreen() {
 
       const prep = await runwayPrepStart({
         refFrameCount: selected.length,
-        title: animationTitle,
+        location: locCheck.location,
         licenseRef: resolvedLicenseRef,
         promptText,
       });
@@ -371,7 +394,7 @@ export default function AiImageAnimationEditorScreen() {
     } finally {
       setBusy(false);
     }
-  }, [animationTitle, licenseRef, prompt, refreshPackageStatus, selectedForAnimate]);
+  }, [licenseRef, projectLocation, prompt, refreshPackageStatus, selectedForAnimate]);
 
   const onAnimate = useCallback(() => {
     const promptText = prompt.trim();
@@ -419,7 +442,7 @@ export default function AiImageAnimationEditorScreen() {
 
   return (
     <MobileAiScreenShell
-      title={animationTitle}
+      title={displayName}
       subtitle="AI Resim Canlandırma"
       onBack={() => router.back()}
       pageBackgroundColor={DE.shell}
@@ -570,7 +593,7 @@ export default function AiImageAnimationEditorScreen() {
 
           <Text style={styles.note}>
             {hasPackageRights
-              ? `“${animationTitle}” paketinde ${packageRemaining}/${packageUnitsTotal} canlandırma hakkı kaldı.`
+              ? `${displayName} — ${packageRemaining}/${packageUnitsTotal} canlandırma hakkı kaldı.`
               : packageDepleted
                 ? `Paket hakkınız bitti. Yeniden canlandırma +${extraCoinCost} kredi / kare. Canlandır ile onay modalı açılır.`
                 : "Canlandırma hakkınız yok. Paket tanımlama sayfasına dönün."}
@@ -581,7 +604,7 @@ export default function AiImageAnimationEditorScreen() {
       <AiImageAnimationExtraPurchaseModal
         visible={extraPurchaseVisible}
         onClose={() => setExtraPurchaseVisible(false)}
-        animationTitle={animationTitle}
+        displayName={displayName}
         licenseRef={licenseRef}
         selectedCount={pendingAnimateCount}
         onPurchaseSuccess={() => executeAnimate()}

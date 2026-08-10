@@ -7,6 +7,7 @@ import { Alert } from "react-native";
 import { AiCreditPurchaseModalLayout } from "../ai-shared/AiCreditPurchaseModalLayout";
 import { creditService } from "../../services/creditService";
 import { getProductPricing, purchaseProductLicense } from "../../services/productLicenseService";
+import { DRONE_PROJECT_LOCATION_MISSING_LABEL } from "../../src/utils/droneProjectContract";
 
 const AI_VIDEO_ACTION = "ai_video";
 
@@ -19,7 +20,7 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onDismiss?: () => void;
-  projectTitle?: string;
+  displayName?: string;
   jobId?: string | null;
   licenseRef?: string;
   onPurchaseSuccess?: () => void | Promise<void | boolean>;
@@ -29,7 +30,7 @@ export function AiVideoNewPurchaseModal({
   visible,
   onClose,
   onDismiss,
-  projectTitle = "AI Video",
+  displayName = "",
   jobId,
   licenseRef,
   onPurchaseSuccess,
@@ -43,9 +44,11 @@ export function AiVideoNewPurchaseModal({
   const [success, setSuccess] = useState(false);
   const purchaseCompletedRef = useRef(false);
 
+  const resolvedDisplayName = String(displayName || "").trim() || DRONE_PROJECT_LOCATION_MISSING_LABEL;
+
   const productDescription = [
     jobId ? `İş: ${jobId}` : null,
-    projectTitle.trim() || "AI Video",
+    resolvedDisplayName,
     "Tek proje için AI Video üretim hakkı.",
   ]
     .filter(Boolean)
@@ -112,7 +115,7 @@ export function AiVideoNewPurchaseModal({
           description: JSON.stringify({
             product: "AI Video",
             job_id: jobId,
-            title: projectTitle,
+            display_name: resolvedDisplayName,
           }),
         });
         if (!iapResult.success) {

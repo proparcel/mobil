@@ -150,6 +150,16 @@ import {
 import { normalizeLandscapeSubtitleExportFontSize } from "../../src/utils/landscapeOverlayContract";
 import { syncedSubtitleForTime } from "../../src/utils/droneSubtitlePreview";
 import { droneVideoMatchesEditorMode } from "../../src/utils/droneVideoEditorMode";
+import ParcelSearchModal from "../../components/ParcelSearchModal";
+import type { AdaParselSubmitPayload } from "../../components/AdaParselForm";
+import {
+  buildDroneProjectDisplayName,
+  extractDroneProjectLocationFromVideoItem,
+  locationFromParcelFields,
+  validateDroneProjectLocation,
+  type DroneProjectLocation,
+} from "../../src/utils/droneProjectContract";
+import { fetchTkgmParcelByAdaParsel } from "../../src/utils/tkgmParcelQuery";
 
 type TabKey = "video" | "narration" | "music";
 type PreviewMode = "none" | "scene" | "full";
@@ -169,11 +179,19 @@ function stripVideoCacheBust(url: string): string {
     .replace(/[?&]$/, "");
 }
 
+function formatParcelLocationSummary(payload: AdaParselSubmitPayload): string {
+  return [payload.city, payload.town, payload.mahalle, `${payload.ada}/${payload.parsel}`]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 type PendingProduction = {
   preparedJobId: string;
+  projectId: string;
   refFrameCount: number;
   narrationText: string;
-  projectTitle: string;
+  location: DroneProjectLocation;
+  displayName: string;
   licenseRef: string;
   scenePrompts?: string[];
   scriptPreview?: AiVideoScript | null;
@@ -188,8 +206,10 @@ export default function AiVideoNewEditorScreen() {
   const [activeTab, setActiveTab] = useState<TabKey>("video");
   const [uploadVisible, setUploadVisible] = useState(false);
   const [uploadMode, setUploadMode] = useState<UploadMode>("initial");
+  const [queryVisible, setQueryVisible] = useState(false);
 
-  const [projectTitle, setProjectTitle] = useState("");
+  const [projectLocation, setProjectLocation] = useState<DroneProjectLocation | null>(null);
+  const [projectDisplayName, setProjectDisplayName] = useState("");
   const [licenseRef, setLicenseRef] = useState("");
   const [narrationInputs, setNarrationInputs] = useState<null>(null);
 
@@ -385,8 +405,13 @@ export default function AiVideoNewEditorScreen() {
   const musicListPreview = useMusicListPreview();
 
   const applyHydratedContext = useCallback(
-    (ctx: Awaited<ReturnType<typeof loadAiVideoJobEditorContext>>) => {
-      setProjectTitle(ctx.projectTitle);
+    (ctx: Awaited<ReturnType<typeof loadAiVideoJobEditorContext>>, archiveItem?: DroneMyVideoItem | null) => {
+      setProjectDisplayName(ctx.projectTitle);
+      const fromItem = extractDroneProjectLocationFromVideoItem(archiveItem);
+      if (fromItem) {
+        const validated = validateDroneProjectLocation(fromItem);
+        if (validated.ok) setProjectLocation(validated.location);
+      }
       setLicenseRef(ctx.licenseRef);
       setNarrationText(clampDroneSimpleNarrationText(ctx.narrationText));
       setSavedMusic(ctx.savedMusic);
@@ -443,7 +468,7 @@ export default function AiVideoNewEditorScreen() {
       markEditorVideoReady();
       try {
         const ctx = await loadAiVideoJobEditorContext(trimmed, archiveItem);
-        applyHydratedContext(ctx);
+        applyHydratedContext(ctx, archiveItem);
       } catch {
         /* önizleme bağlam yüklemesinden bağımsız */
       }
@@ -529,7 +554,8 @@ export default function AiVideoNewEditorScreen() {
     setPreviewMode("none");
     setPreviewPlaybackTime(0);
     setPreviewDuration(0);
-    setProjectTitle("");
+    setProjectLocation(null);
+    setProjectDisplayName("");
     setLicenseRef("");
     setNarrationText("");
     setNarrationInputs(null);
@@ -551,10 +577,28 @@ export default function AiVideoNewEditorScreen() {
       return;
     }
     resetEditorForNewProject();
-    setUploadMode("initial");
+    setQueryVisible(true);
+  }, [isAuthenticated, resetEditorForNewProject, router]);
+
+  const handleParcelQuery = useCallback(async (payload: AdaParselSubmitPayload) => {
+    setQueryVisible(false);
+    const locResult = validateDroneProjectLocation(locationFromParcelFields(payload));
+    if (!locResult.ok) {
+      Alert.alert("Konum gerekli", locResult.error);
+      return;
+    }
+    const res = await fetchTkgmParcelByAdaParsel(payload);
+    if (!res.ok) {
+      Alert.alert("Parsel sorgusu", res.error);
+      return;
+    }
+    setProjectLocation(locResult.location);
+    setProjectDisplayName(
+      buildDroneProjectDisplayName(locResult.location) || formatParcelLocationSummary(payload),
+    );
     setUploadMode("initial");
     setUploadVisible(true);
-  }, [isAuthenticated, resetEditorForNewProject, router]);
+  }, []);
 
   const cancelPipeline = useCallback(() => {
     setUploadVisible(false);
@@ -655,9 +699,10 @@ export default function AiVideoNewEditorScreen() {
         goPipelineStep("production", "AI video üretimi başlatılıyor…");
         const started = await startAiVideoRunwayProduction({
           preparedJobId: pending.preparedJobId,
+          projectId: pending.projectId,
           refFrameCount: pending.refFrameCount,
           narrationText: pending.narrationText,
-          aiVideoTitle: pending.projectTitle,
+          location: pending.location,
           licenseRef: pending.licenseRef,
           scenePrompts: pending.scenePrompts,
           scriptPreview: pending.scriptPreview,
@@ -686,6 +731,7 @@ export default function AiVideoNewEditorScreen() {
 
         await setActiveAiVideoJob({
           jobId: started.jobId,
+          projectId: started.projectId,
           referenceId,
           startedAt: Date.now(),
           refFrameCount: frameCount,
@@ -750,7 +796,7 @@ export default function AiVideoNewEditorScreen() {
         completePipelineStep("polling");
 
         setJobId(started.jobId);
-        setProjectTitle(pending.projectTitle);
+        setProjectDisplayName(pending.displayName);
         setPreviewMode("none");
         setActiveSceneSlot(null);
         setVideoUri("");
@@ -818,8 +864,19 @@ export default function AiVideoNewEditorScreen() {
     async (payload: AiVideoImageUploadContinuePayload) => {
       const images = payload.images || [];
       if (images.length < 1) return;
-      const title = String(payload.projectTitle || projectTitle || "AI Video").trim() || "AI Video";
-      setProjectTitle(title);
+      const locResult = validateDroneProjectLocation(projectLocation);
+      if (!locResult.ok) {
+        Alert.alert("Konum gerekli", locResult.error);
+        return;
+      }
+      const displayName =
+        buildDroneProjectDisplayName(locResult.location) || projectDisplayName.trim();
+      if (!displayName) {
+        Alert.alert("Konum gerekli", locResult.error);
+        return;
+      }
+      setProjectLocation(locResult.location);
+      setProjectDisplayName(displayName);
       const usePreflight = Boolean(payload.useOpenAiPreflight);
       setRefFrameCount(Math.max(2, Math.min(8, images.length)));
       setPipelineBusy(true);
@@ -835,7 +892,7 @@ export default function AiVideoNewEditorScreen() {
           .map((item) => String(item || "").trim())
           .filter(Boolean);
         const gen = await generateAiVideoScript({
-          title,
+          displayName,
           imageCount: images.length,
           highlightTexts: keywords,
           bodyText: payload.promptText?.trim() || keywords.join(", ") || narr,
@@ -855,7 +912,7 @@ export default function AiVideoNewEditorScreen() {
         goPipelineStep("prep", "Video hazırlanıyor…");
         const prep = await runwayPrepStartAiVideo({
           refFrameCount: images.length,
-          aiVideoTitle: title,
+          location: locResult.location,
           licenseRef: licenseRef || undefined,
           promptText: payload.promptText?.trim() || narr,
           useOpenAiPreflight: usePreflight,
@@ -873,10 +930,12 @@ export default function AiVideoNewEditorScreen() {
 
         const productionPending: PendingProduction = {
           preparedJobId: prep.jobId,
+          projectId: prep.projectId,
           refFrameCount: images.length,
           narrationText: narr,
-          projectTitle: title,
-          licenseRef: licenseRef || `ai_video:${prep.jobId}`,
+          location: locResult.location,
+          displayName: prep.displayName || displayName,
+          licenseRef: licenseRef || `ai_video:${prep.projectId}`,
           scenePrompts,
           scriptPreview,
           useOpenAiPreflight: usePreflight,
@@ -892,7 +951,8 @@ export default function AiVideoNewEditorScreen() {
       }
     },
     [
-      projectTitle,
+      projectLocation,
+      projectDisplayName,
       licenseRef,
       narrationText,
       goPipelineStep,
@@ -1370,11 +1430,16 @@ export default function AiVideoNewEditorScreen() {
   }, []);
 
   const onGenerateNarration = useCallback(async () => {
-    const title = String(projectTitle || "AI Video").trim() || "AI Video";
+    const displayName =
+      buildDroneProjectDisplayName(projectLocation || undefined) || projectDisplayName.trim();
+    if (!displayName) {
+      Alert.alert("Konum gerekli", "Önce parsel konumu seçin veya hazır bir proje açın.");
+      return;
+    }
     setNarrationBusy(true);
     try {
       const gen = await generateAiVideoScript({
-        title,
+        displayName,
         imageCount: Math.max(2, refFrameCount || DRONE_SCENE_INITIAL_COUNT),
         bodyText: narrationText,
       });
@@ -1391,7 +1456,7 @@ export default function AiVideoNewEditorScreen() {
     } finally {
       setNarrationBusy(false);
     }
-  }, [projectTitle, refFrameCount, narrationText, jobId]);
+  }, [projectLocation, projectDisplayName, refFrameCount, narrationText, jobId]);
 
   const onSaveNarration = useCallback(async () => {
     if (!jobId) {
@@ -2079,7 +2144,7 @@ export default function AiVideoNewEditorScreen() {
       <AiVideoImageUploadModal
         visible={uploadVisible}
         mode={uploadMode}
-        defaultProjectTitle={projectTitle}
+        location={projectLocation}
         sessionMaxFrames={uploadSessionMax}
         onNeedPurchase={() => setExtraScenePurchaseVisible(true)}
         onClose={() => {
@@ -2089,11 +2154,17 @@ export default function AiVideoNewEditorScreen() {
         onContinue={handleUploadContinue}
       />
 
+      <ParcelSearchModal
+        visible={queryVisible}
+        onClose={() => setQueryVisible(false)}
+        onSubmit={handleParcelQuery}
+      />
+
       <AiVideoNewPurchaseModal
         visible={purchaseModalVisible}
         onClose={() => setPurchaseModalVisible(false)}
         onDismiss={handleAiVideoPurchaseDismiss}
-        projectTitle={pendingProduction?.projectTitle || projectTitle}
+        displayName={pendingProduction?.displayName || projectDisplayName}
         jobId={pendingProduction?.preparedJobId || jobId || null}
         licenseRef={pendingProduction?.licenseRef || licenseRef}
         onPurchaseSuccess={handleAiVideoLicensePurchaseSuccess}
@@ -2120,7 +2191,10 @@ export default function AiVideoNewEditorScreen() {
         headerTitle="ProParcel Etiketini Kaldır"
         productName="ProParcel etiket kaldırma"
         referenceId={jobId}
-        description={projectTitle || "Video önizlemesi ve dışa aktarımdan ProParcel etiketi kaldırılır."}
+        description={
+          projectDisplayName ||
+          "Video önizlemesi ve dışa aktarımdan ProParcel etiketi kaldırılır."
+        }
         serverSidePurchase
         onPurchaseSuccess={() => onProparcelLabelPurchaseSuccess()}
       />

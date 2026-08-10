@@ -1,4 +1,9 @@
 import { userFacingPipelineDetail } from "../src/constants/aiDroneProductionPipeline";
+import {
+  formatDroneProjectListLabel,
+  resolveDroneProjectDisplayName,
+  resolveProjectId,
+} from "../src/utils/droneProjectContract";
 import { authJsonFetch } from "./apiClient";
 import {
   classifyRunwayStatus,
@@ -31,6 +36,12 @@ export {
   isMyVideoReady,
   runwayProgressLabel,
 } from "./droneRunwayStatusParser";
+
+export {
+  formatDroneProjectListLabel,
+  resolveDroneProjectDisplayName,
+  resolveProjectId,
+} from "../src/utils/droneProjectContract";
 
 export type RunwaySlotProgressMap = Record<string, RunwayProgressPayload>;
 

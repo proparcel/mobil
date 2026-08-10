@@ -6,6 +6,7 @@ import {
   musicVolumeFromJobMeta,
   type MusicTrack,
 } from "./aiVideoNewEditorService";
+import { resolveDroneProjectDisplayName } from "../src/utils/droneProjectContract";
 
 function pickNarrationText(data: {
   narration_editor_text?: string;
@@ -41,9 +42,7 @@ export async function loadAiVideoJobEditorContext(
   const annRes = await listDroneEditorAnnotations(jobId);
   const annData = annRes.ok ? annRes.data : { annotations: [] };
 
-  const projectTitle = String(
-    meta.ai_video_title || archiveItem?.label || "AI Video",
-  ).trim();
+  const projectTitle = resolveDroneProjectDisplayName(archiveItem);
   const licenseRef = String(meta.license_ref || "").trim();
   const narrationText = pickNarrationText(annData);
   const savedMusic = musicFromJobMeta(meta);

@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -25,12 +24,16 @@ import { AI_DRONE_EDITOR_THEME } from "../../src/constants/aiDroneEditorTheme";
 import { useScrollInputIntoView } from "../../src/keyboard";
 import { DRONE_SCENE_INITIAL_COUNT, DRONE_SCENE_MAX_CAPTURE_PER_PURCHASE } from "../../services/droneSceneService";
 import type { MobileUploadImage } from "../../services/imageAnimationService";
+import {
+  buildDroneProjectDisplayName,
+  validateDroneProjectLocation,
+  type DroneProjectLocation,
+} from "../../src/utils/droneProjectContract";
 
 export type AiVideoUploadMode = "initial" | "new_scene";
 
 export type AiVideoImageUploadContinuePayload = {
   images: MobileUploadImage[];
-  projectTitle?: string;
   promptText?: string;
   highlightTexts?: string[];
   useOpenAiPreflight?: boolean;
@@ -41,7 +44,7 @@ type Props = {
   mode: AiVideoUploadMode;
   onClose: () => void;
   onContinue: (payload: AiVideoImageUploadContinuePayload) => void;
-  defaultProjectTitle?: string;
+  location?: DroneProjectLocation | null;
   /** new_scene: min(hak, strip boş slot, 2) */
   sessionMaxFrames?: number;
   onNeedPurchase?: () => void;
@@ -77,7 +80,7 @@ export function AiVideoImageUploadModal({
   mode,
   onClose,
   onContinue,
-  defaultProjectTitle = "",
+  location = null,
   sessionMaxFrames,
   onNeedPurchase,
 }: Props) {
@@ -89,46 +92,53 @@ export function AiVideoImageUploadModal({
       : Math.max(1, sessionMaxFrames ?? DRONE_SCENE_MAX_CAPTURE_PER_PURCHASE);
 
   const [step, setStep] = useState<UploadStep>("images");
-  const [projectTitle, setProjectTitle] = useState(defaultProjectTitle);
   const [images, setImages] = useState<SlotImage[]>([]);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
-  const titleInputWrapRef = useRef<View>(null);
   const keywordsInputWrapRef = useRef<View>(null);
 
-  const { handleFocus: scrollTitleIntoView, handleBlur: scrollTitleBlur } = useScrollInputIntoView({
-    scrollRef,
-    inputWrapRef: titleInputWrapRef,
-  });
   const { handleFocus: scrollKeywordsIntoView, handleBlur: scrollKeywordsBlur } = useScrollInputIntoView({
     scrollRef,
     inputWrapRef: keywordsInputWrapRef,
     keyboardOverlapMargin: 48,
   });
 
+  const locationLabel = useMemo(() => {
+    if (!location) return "";
+    const built = buildDroneProjectDisplayName(location);
+    if (built) return built;
+    return [location.city, location.district, location.mahalle, `${location.ada}/${location.parsel}`]
+      .filter(Boolean)
+      .join(" · ");
+  }, [location]);
+
+  const locationValid = useMemo(() => {
+    if (mode !== "initial") return true;
+    return validateDroneProjectLocation(location).ok;
+  }, [mode, location]);
+
   const titleLabel =
     mode === "initial" && step === "keywords"
       ? "Referans kelimeler"
       : mode === "initial"
-        ? "AI Video projesi"
+        ? "Referans görselleri"
         : "Yeni sahne görseli";
 
   const canContinueImages = useMemo(() => {
-    if (mode === "initial" && !String(projectTitle || "").trim()) return false;
+    if (mode === "initial" && !locationValid) return false;
     return images.length >= requiredCount;
-  }, [mode, projectTitle, images.length, requiredCount]);
+  }, [mode, locationValid, images.length, requiredCount]);
 
   const canContinueKeywords = keywords.length >= 1;
 
   const reset = useCallback(() => {
     setStep("images");
-    setProjectTitle(defaultProjectTitle);
     setImages([]);
     setKeywords([]);
     setBusy(false);
-  }, [defaultProjectTitle]);
+  }, []);
 
   const handleClose = useCallback(() => {
     reset();
@@ -142,6 +152,14 @@ export function AiVideoImageUploadModal({
     }
     handleClose();
   }, [mode, step, handleClose]);
+
+  const ensureLocationOrAlert = useCallback((): boolean => {
+    if (mode !== "initial") return true;
+    const check = validateDroneProjectLocation(location);
+    if (check.ok) return true;
+    Alert.alert("Konum gerekli", check.error);
+    return false;
+  }, [mode, location]);
 
   const pickImages = useCallback(async () => {
     const remaining = maxCount - images.length;
@@ -180,21 +198,16 @@ export function AiVideoImageUploadModal({
   }, []);
 
   const finishContinue = useCallback(() => {
-    const title = String(projectTitle || "").trim();
+    if (!ensureLocationOrAlert()) return;
     onContinue({
       images: images.map(({ uri, name, type }) => ({ uri, name, type })),
-      projectTitle: mode === "initial" ? title : undefined,
       highlightTexts: mode === "initial" ? keywords : undefined,
     });
     reset();
-  }, [mode, projectTitle, images, keywords, onContinue, reset]);
+  }, [mode, images, keywords, onContinue, reset, ensureLocationOrAlert]);
 
   const handleContinue = useCallback(() => {
-    const title = String(projectTitle || "").trim();
-    if (mode === "initial" && !title) {
-      Alert.alert("Proje", "Proje adı girin.");
-      return;
-    }
+    if (!ensureLocationOrAlert()) return;
     if (images.length < requiredCount) {
       Alert.alert(
         "Görsel",
@@ -209,7 +222,7 @@ export function AiVideoImageUploadModal({
       return;
     }
     finishContinue();
-  }, [mode, projectTitle, images, requiredCount, finishContinue]);
+  }, [mode, images, requiredCount, finishContinue, ensureLocationOrAlert]);
 
   const handleKeywordsContinue = useCallback(() => {
     if (keywords.length < 1) {
@@ -252,18 +265,13 @@ export function AiVideoImageUploadModal({
           {step === "images" ? (
             <>
               {mode === "initial" ? (
-                <View style={styles.fieldBlock} ref={titleInputWrapRef} collapsable={false}>
-                  <Text style={styles.fieldLabel}>Proje adı</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={projectTitle}
-                    onChangeText={setProjectTitle}
-                    placeholder="Örn. Villa tanıtım videosu"
-                    placeholderTextColor={AI_DRONE_EDITOR_THEME.mutedOnDark}
-                    maxLength={120}
-                    onFocus={scrollTitleIntoView}
-                    onBlur={scrollTitleBlur}
-                  />
+                <View style={styles.fieldBlock}>
+                  <Text style={styles.fieldLabel}>Proje konumu</Text>
+                  <Text style={[styles.locationText, !locationValid && styles.locationTextMissing]} numberOfLines={3}>
+                    {locationValid
+                      ? locationLabel
+                      : "Parsel konumu eksik. Yeni proje için önce ada/parsel sorgusu yapın."}
+                  </Text>
                 </View>
               ) : null}
 
@@ -375,7 +383,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
-  input: {
+  locationText: {
     borderWidth: 1,
     borderColor: "rgba(148, 163, 184, 0.35)",
     borderRadius: 12,
@@ -383,7 +391,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     color: AI_DRONE_EDITOR_THEME.textOnDark,
     backgroundColor: "rgba(15, 23, 42, 0.55)",
-    fontSize: 15,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  locationTextMissing: {
+    color: "#fca5a5",
+    borderColor: "rgba(248, 113, 113, 0.45)",
   },
   hint: {
     color: AI_DRONE_EDITOR_THEME.mutedOnDark,

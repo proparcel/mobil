@@ -2,6 +2,15 @@ import { API_URL } from "../config/api";
 import { authFormFetch, authJsonFetch } from "./apiClient";
 import { authService } from "./authService";
 import { storageService } from "./storageService";
+import {
+  appendRunwayPrepLocationFields,
+  appendRunwayPrepReuseFields,
+  parseRunwayPrepResponse,
+  resolveDroneProjectDisplayName,
+  runwayPrepFailureMessage,
+  validateDroneProjectLocation,
+  type DroneProjectLocation,
+} from "../src/utils/droneProjectContract";
 import RNFS from "react-native-fs";
 
 export type MobileUploadImage = {
@@ -13,7 +22,14 @@ export type MobileUploadImage = {
 export type ImageAnimationLicenseRow = {
   reference_id: string;
   label: string;
-  image_animation_title?: string;
+  project_id?: string;
+  job_id?: string;
+  display_name?: string;
+  city?: string;
+  district?: string;
+  mahalle?: string;
+  ada?: string;
+  parsel?: string;
   created_at?: string | null;
 };
 
@@ -44,7 +60,10 @@ export const IMAGE_ANIMATION_PACKAGE_ACTION = "ai_img";
 /** Tekrar canlandırma / frame preflight — purchasing_kredits ia_drone_realimg */
 export const IMAGE_ANIMATION_EXTRA_ACTION = "ia_drone_realimg";
 
+/** IAP ürün adı — proje listesi etiketi değil */
 export const DEFAULT_IMAGE_ANIMATION_TITLE = "AI Resim Canlandırma";
+
+export type { DroneProjectLocation } from "../src/utils/droneProjectContract";
 
 export function createImageAnimationLicenseRef(): string {
   return `ai_img:${Date.now()}`;
@@ -52,15 +71,28 @@ export function createImageAnimationLicenseRef(): string {
 
 export type DroneMyVideoRow = {
   job_id: string;
+  project_id?: string;
   reference_id?: string;
   status?: string;
   label?: string;
+  display_name?: string;
+  city?: string;
+  district?: string;
+  mahalle?: string;
+  ada?: string;
+  parsel?: string;
   is_license_placeholder?: boolean;
   meta?: {
     editor_mode?: string;
-    image_animation_title?: string;
     reference_id?: string;
     action_type?: string;
+    city?: string;
+    district?: string;
+    quarter?: string;
+    runway_quarter?: string;
+    mahalle?: string;
+    ada?: string;
+    parsel?: string;
   };
 };
 
@@ -177,6 +209,23 @@ export async function getImageAnimationPackageStatus(
   };
 }
 
+export function imageAnimationLocationFromLicenseRow(
+  row: Pick<
+    ImageAnimationLicenseRow,
+    "city" | "district" | "mahalle" | "ada" | "parsel" | "reference_id"
+  >,
+): DroneProjectLocation | null {
+  const validated = validateDroneProjectLocation({
+    city: String(row.city || "").trim(),
+    district: String(row.district || "").trim(),
+    mahalle: String(row.mahalle || "").trim(),
+    ada: String(row.ada || "").trim() || "0",
+    parsel: String(row.parsel || "").trim(),
+    referenceId: String(row.reference_id || "").trim() || undefined,
+  });
+  return validated.ok ? validated.location : null;
+}
+
 export async function listImageAnimationLicenses(): Promise<
   { ok: true; items: ImageAnimationLicenseRow[] } | { ok: false; error: string }
 > {
@@ -194,8 +243,15 @@ export async function listImageAnimationLicenses(): Promise<
     )
     .map((row: DroneMyVideoRow) => ({
       reference_id: String(row.reference_id || row.meta?.reference_id || "").trim(),
-      label: String(row.label || row.meta?.image_animation_title || "AI Resim Canlandırma").trim(),
-      image_animation_title: row.meta?.image_animation_title,
+      label: resolveDroneProjectDisplayName(row),
+      project_id: String(row.project_id || row.job_id || "").trim() || undefined,
+      job_id: String(row.job_id || "").trim() || undefined,
+      display_name: String(row.display_name || row.label || "").trim() || undefined,
+      city: String(row.city || row.meta?.city || "").trim() || undefined,
+      district: String(row.district || row.meta?.district || "").trim() || undefined,
+      mahalle: String(row.mahalle || row.meta?.quarter || row.meta?.runway_quarter || row.meta?.mahalle || "").trim() || undefined,
+      ada: String(row.ada || row.meta?.ada || "").trim() || undefined,
+      parsel: String(row.parsel || row.meta?.parsel || "").trim() || undefined,
       created_at: (row as any).created_at ?? null,
     }))
     .filter((row) => row.reference_id);
@@ -231,26 +287,47 @@ export async function listImageAnimationPackages(): Promise<
 
 export async function runwayPrepStart(payload: {
   refFrameCount: number;
-  title: string;
+  location: DroneProjectLocation;
   licenseRef?: string;
   promptText?: string;
-}): Promise<{ ok: true; jobId: string } | { ok: false; error: string }> {
-  const res = await authJsonFetch<{ job_id?: string; success?: boolean }>("/api/drone-recording-runway/prep/", {
-    method: "POST",
-    json: {
-      ref_frame_count: Math.max(1, Math.min(32, payload.refFrameCount || 1)),
-      editor_mode: "image_animation",
-      ai_video_title: payload.title.slice(0, 120),
-      license_ref: payload.licenseRef || "",
-      prompt_text: payload.promptText || "",
+  reuseJobId?: string;
+}): Promise<
+  | { ok: true; jobId: string; projectId: string; displayName: string }
+  | { ok: false; error: string }
+> {
+  const locResult = validateDroneProjectLocation(payload.location);
+  if (!locResult.ok) return locResult;
+
+  const json: Record<string, unknown> = {
+    ref_frame_count: Math.max(1, Math.min(32, payload.refFrameCount || 1)),
+    editor_mode: "image_animation",
+    license_ref: payload.licenseRef || "",
+    prompt_text: payload.promptText || "",
+  };
+  appendRunwayPrepLocationFields(json, locResult.location);
+  if (payload.reuseJobId) appendRunwayPrepReuseFields(json, payload.reuseJobId);
+
+  const res = await authJsonFetch<{ job_id?: string; project_id?: string; display_name?: string; success?: boolean }>(
+    "/api/drone-recording-runway/prep/",
+    {
+      method: "POST",
+      json,
     },
-  });
-  if (!res.ok) return { ok: false, error: errMessage(res.error, "Hazırlık başlatılamadı.") };
-  const jobId = String((res.data as any)?.job_id || "").trim();
-  if (!jobId || (res.data as any)?.success === false) {
-    return { ok: false, error: errMessage((res.data as any)?.error, "Job oluşturulamadı.") };
+  );
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: runwayPrepFailureMessage(res.error, "Hazırlık başlatılamadı.", res.status, res.payload),
+    };
   }
-  return { ok: true, jobId };
+  const parsed = parseRunwayPrepResponse((res.data || {}) as Record<string, unknown>);
+  if (!parsed || (res.data as any)?.success === false) {
+    return {
+      ok: false,
+      error: runwayPrepFailureMessage((res.data as any)?.error, "Job oluşturulamadı.", res.status, res.data as Record<string, unknown>),
+    };
+  }
+  return { ok: true, ...parsed };
 }
 
 export async function runwayPrepPushRef(

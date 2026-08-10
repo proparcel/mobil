@@ -11,7 +11,7 @@ import { IMAGE_ANIMATION_EXTRA_ACTION } from "../../services/imageAnimationServi
 type Props = {
   visible: boolean;
   onClose: () => void;
-  animationTitle: string;
+  displayName: string;
   licenseRef: string;
   selectedCount: number;
   onPurchaseSuccess?: () => void | Promise<void>;
@@ -20,7 +20,7 @@ type Props = {
 export function AiImageAnimationExtraPurchaseModal({
   visible,
   onClose,
-  animationTitle,
+  displayName,
   licenseRef,
   selectedCount,
   onPurchaseSuccess,
@@ -36,10 +36,10 @@ export function AiImageAnimationExtraPurchaseModal({
   const requiredCredits = unitCost != null ? unitCost * safeCount : null;
 
   const productDescription = useMemo(() => {
-    const title = animationTitle.trim() || "AI Resim Canlandırma";
-    if (unitCost == null) return `${title}\n\n${safeCount} kare canlandırılacak.`;
-    return `${title}\n\n${safeCount} kare × ${unitCost} Tepe Kredi = ${unitCost * safeCount} Tepe Kredi`;
-  }, [animationTitle, safeCount, unitCost]);
+    const label = displayName.trim() || "AI Resim Canlandırma";
+    if (unitCost == null) return `${label}\n\n${safeCount} kare canlandırılacak.`;
+    return `${label}\n\n${safeCount} kare × ${unitCost} Tepe Kredi = ${unitCost * safeCount} Tepe Kredi`;
+  }, [displayName, safeCount, unitCost]);
 
   useEffect(() => {
     if (!visible) return;
@@ -101,7 +101,7 @@ export function AiImageAnimationExtraPurchaseModal({
           IMAGE_ANIMATION_EXTRA_ACTION,
           JSON.stringify({
             product: "AI Resim Canlandırma",
-            title: animationTitle.trim() || "AI Resim Canlandırma",
+            display_name: displayName.trim() || "AI Resim Canlandırma",
             source: "mobile_image_animation_editor",
             batch: batchRef,
             slot_index: i + 1,

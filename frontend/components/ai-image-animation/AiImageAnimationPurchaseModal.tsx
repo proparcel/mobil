@@ -16,8 +16,6 @@ import { creditService } from "../../services/creditService";
 
 import { DEFAULT_IMAGE_ANIMATION_TITLE, IMAGE_ANIMATION_PACKAGE_UNITS } from "../../services/imageAnimationService";
 
-
-
 const AI_IMG_ACTION = "ai_img";
 
 const FALLBACK_CREDITS = 1;
@@ -28,7 +26,7 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   referenceId: string;
-  packageTitle: string;
+  displayName: string;
   onPurchaseSuccess?: () => void;
 };
 
@@ -36,7 +34,7 @@ export function AiImageAnimationPurchaseModal({
   visible,
   onClose,
   referenceId,
-  packageTitle,
+  displayName,
   onPurchaseSuccess,
 }: Props) {
 
@@ -164,7 +162,7 @@ export function AiImageAnimationPurchaseModal({
         AI_IMG_ACTION,
         JSON.stringify({
           product: "AI Resim Canlandırma",
-          title: packageTitle.trim() || DEFAULT_IMAGE_ANIMATION_TITLE,
+          display_name: displayName.trim() || DEFAULT_IMAGE_ANIMATION_TITLE,
           source: "mobile_image_animation_purchase",
         }),
         referenceId,
@@ -218,7 +216,7 @@ export function AiImageAnimationPurchaseModal({
 
       productName={`${IMAGE_ANIMATION_PACKAGE_UNITS} resim canlandırma hakkı`}
 
-      productDescription={packageTitle.trim() || DEFAULT_IMAGE_ANIMATION_TITLE}
+      productDescription={displayName.trim() || DEFAULT_IMAGE_ANIMATION_TITLE}
 
       requiredCredits={requiredCredits}
 

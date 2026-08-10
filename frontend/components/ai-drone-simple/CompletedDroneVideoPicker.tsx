@@ -19,6 +19,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { AI_DRONE_EDITOR_THEME } from "../../src/constants/aiDroneEditorTheme";
 import { StatusErrorPanel } from "./settings/StatusErrorPanel";
 import {
+  formatDroneProjectListLabel,
   isMyVideoReady,
   listDroneMyVideos,
   type DroneMyVideoItem,
@@ -40,9 +41,8 @@ function formatVideoDate(value: string | undefined): string {
 }
 
 export function formatCompletedDroneVideoLabel(item: DroneMyVideoItem): string {
-  const title = String(item.label || item.reference_id || item.job_id || "Video").trim();
   const date = formatVideoDate(item.updated_at || item.created_at);
-  return date ? `${title} · ${date}` : title;
+  return formatDroneProjectListLabel(item, date || undefined);
 }
 
 type Props = {
@@ -166,9 +166,9 @@ export function CompletedDroneVideoPicker({
                       <Text style={[styles.optionTitle, active && styles.optionTitleActive]} numberOfLines={2}>
                         {formatCompletedDroneVideoLabel(item)}
                       </Text>
-                      {item.reference_id ? (
+                      {item.ada && item.parsel ? (
                         <Text style={styles.optionMeta} numberOfLines={1}>
-                          Parsel: {item.reference_id}
+                          ada {item.ada} / parsel {item.parsel}
                         </Text>
                       ) : null}
                       {active ? (

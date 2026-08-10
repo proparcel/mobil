@@ -6,6 +6,7 @@ import {
   fetchRunwayJobStatus,
   isMyVideoReady,
   listDroneMyVideos,
+  resolveDroneProjectDisplayName,
   runwayProgressLabel,
 } from "./droneRunwayService";
 import {
@@ -96,7 +97,7 @@ async function tryResolveFromMyVideos(jobId: string): Promise<boolean> {
   const row = list.videos.find((v) => String(v.job_id) === jobId);
   if (!row) return false;
   if (isMyVideoReady(row)) {
-    await handleJobReady(jobId, row.label);
+    await handleJobReady(jobId, resolveDroneProjectDisplayName(row));
     return true;
   }
   if (isMyVideoFailed(row)) {

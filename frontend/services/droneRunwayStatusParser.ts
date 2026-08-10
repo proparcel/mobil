@@ -66,9 +66,16 @@ export type DroneMyVideoMeta = {
 
 export type DroneMyVideoItem = {
   job_id: string;
+  project_id?: string;
   status: string;
   label?: string;
+  display_name?: string;
   reference_id?: string;
+  city?: string;
+  district?: string;
+  mahalle?: string;
+  ada?: string;
+  parsel?: string;
   created_at?: string;
   updated_at?: string;
   meta?: DroneMyVideoMeta;

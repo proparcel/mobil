@@ -23,6 +23,16 @@ import {
   DRONE_SIMPLE_NARRATION_TEXT_MAX,
 } from "../src/constants/aiDroneEditorTheme";
 import {
+  appendRunwayLocationFormFields,
+  appendRunwayPrepLocationFields,
+  appendRunwayPrepReuseFields,
+  locationFromDroneParcelQuery,
+  parseRunwayPrepResponse,
+  runwayPrepFailureMessage,
+  validateDroneProjectLocation,
+  type DroneProjectLocation,
+} from "../src/utils/droneProjectContract";
+import {
   DEFAULT_USER_CARD_SCALE,
   userCardExportPointToUiCenter,
   userCardUiCenterToExportPoint,
@@ -332,7 +342,19 @@ export async function runwayPrepStartSimple(payload: {
   promptText?: string;
   useOpenAiPreflight?: boolean;
   parcel?: DroneParcelQuery;
-}): Promise<{ ok: true; jobId: string } | { ok: false; error: string }> {
+  location?: DroneProjectLocation;
+  reuseJobId?: string;
+}): Promise<
+  | { ok: true; jobId: string; projectId: string; displayName: string }
+  | { ok: false; error: string }
+> {
+  const locResult = payload.location
+    ? validateDroneProjectLocation(payload.location)
+    : payload.parcel
+      ? validateDroneProjectLocation(locationFromDroneParcelQuery(payload.parcel))
+      : { ok: false as const, error: "Konum bilgisi zorunludur. İl, ilçe, mahalle adı, ada ve parsel girin." };
+  if (!locResult.ok) return locResult;
+
   const json: Record<string, unknown> = {
     ref_frame_count: Math.max(2, Math.min(8, payload.refFrameCount || DRONE_SCENE_INITIAL_COUNT)),
     editor_mode: "ai_drone",
@@ -340,21 +362,27 @@ export async function runwayPrepStartSimple(payload: {
     ...runwayPortraitClientJsonFields(),
     ...openAiPreflightPrepJsonFields(Boolean(payload.useOpenAiPreflight)),
   };
-  if (payload.parcel) {
-    json.mahalle = String(payload.parcel.mahalleTkgmValue || payload.parcel.mahalle || "");
-    json.ada = String(payload.parcel.ada || "0").trim();
-    json.parsel = String(payload.parcel.parsel || "").trim();
+  appendRunwayPrepLocationFields(json, locResult.location);
+  if (payload.reuseJobId) appendRunwayPrepReuseFields(json, payload.reuseJobId);
+
+  const res = await authJsonFetch<{ job_id?: string; project_id?: string; display_name?: string; success?: boolean }>(
+    "/api/drone-recording-runway/prep/",
+    {
+      method: "POST",
+      json,
+    },
+  );
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: runwayPrepFailureMessage(res.error, "Hazırlık başlatılamadı.", res.status, res.payload),
+    };
   }
-  const res = await authJsonFetch<{ job_id?: string; success?: boolean }>("/api/drone-recording-runway/prep/", {
-    method: "POST",
-    json,
-  });
-  if (!res.ok) return { ok: false, error: errMessage(res.error, "Hazırlık başlatılamadı.") };
-  const jobId = String((res.data as any)?.job_id || "").trim();
-  if (!jobId || (res.data as any)?.success === false) {
-    return { ok: false, error: errMessage((res.data as any)?.error, "Job oluşturulamadı.") };
+  const parsed = parseRunwayPrepResponse((res.data || {}) as Record<string, unknown>);
+  if (!parsed || (res.data as any)?.success === false) {
+    return { ok: false, error: runwayPrepFailureMessage((res.data as any)?.error, "Job oluşturulamadı.", res.status, res.data as Record<string, unknown>) };
   }
-  return { ok: true, jobId };
+  return { ok: true, ...parsed };
 }
 
 export async function runwayPrepPushRef(
@@ -381,6 +409,7 @@ export async function runwayPrepPushRef(
 export async function startDroneRunwayProduction(payload: {
   parcel: DroneParcelQuery;
   preparedJobId: string;
+  projectId?: string;
   refFrameCount: number;
   narrationText: string;
   parcelAreaLabelTr?: string;
@@ -391,14 +420,18 @@ export async function startDroneRunwayProduction(payload: {
   useOpenAiPreflight?: boolean;
   narrCtx?: DroneNarrationInputs | null;
 }): Promise<
-  | { ok: true; jobId: string; pollMs: number }
+  | { ok: true; jobId: string; projectId: string; pollMs: number }
   | { ok: false; error: string; licenseRequired?: boolean }
 > {
+  const locResult = validateDroneProjectLocation(locationFromDroneParcelQuery(payload.parcel));
+  if (!locResult.ok) return { ok: false, error: locResult.error };
+
   const form = new FormData();
   form.append("mahalle", String(payload.parcel.mahalleTkgmValue || payload.parcel.mahalle || ""));
   form.append("ada", payload.parcel.ada || "0");
   form.append("parsel", payload.parcel.parsel || "");
   form.append("prepared_job_id", payload.preparedJobId);
+  appendRunwayLocationFormFields(form, locResult.location);
   form.append("ref_frame_count", String(payload.refFrameCount));
   appendRunwayPortraitClientFormFields(form);
   if (payload.narrationText.trim()) {
@@ -433,6 +466,7 @@ export async function startDroneRunwayProduction(payload: {
   return {
     ok: true,
     jobId,
+    projectId: String(payload.projectId || (res.data as any)?.project_id || jobId).trim(),
     pollMs: Number((res.data as any)?.poll_ms || 1500),
   };
 }

@@ -176,6 +176,8 @@ Detay: [`customer_type_feature_gates_mobile.md`](customer_type_feature_gates_mob
 - `il`, `ilce`, `mahalle`, `ada`, `parsel`
 - `il_id`, `ilce_id`, `mahalle_id`, `mahalle_tkgm_value`, `mahalle_proparcel_value`
 
+**Ada boş:** Parsel varken `ada_no` boşsa resolve `"0"` kabul eder (TKGM köy/ada-yok). Boş ada yüzünden `resolve_failed` yazılmaz.
+
 Bu seed `AdaParselForm` veya `SidebarSavedQuery` formatına aktarılır.
 
 ## Debug günlüğü

@@ -49,6 +49,13 @@ export class ProQueryHttpError extends Error {
 
 const DEFAULT_AUTH_REQUIRED_MESSAGE = 'Bu işlem için giriş yapmanız gerekmektedir.';
 
+const GATEWAY_TIMEOUT_MESSAGE =
+  'Sunucu zaman aşımına uğradı. Lütfen birkaç dakika sonra tekrar deneyin.';
+const GATEWAY_UNAVAILABLE_MESSAGE =
+  'Sunucu geçici olarak yanıt vermiyor. Lütfen tekrar deneyin.';
+const UNEXPECTED_SERVER_RESPONSE_MESSAGE =
+  'Beklenmeyen sunucu yanıtı. Lütfen tekrar deneyin.';
+
 function tryParseJsonObject(text: string): Record<string, unknown> | null {
   const trimmed = String(text || '').trim();
   if (!trimmed) return null;
@@ -67,6 +74,26 @@ function tryParseJsonObject(text: string): Record<string, unknown> | null {
   }
 }
 
+/** Nginx/proxy HTML veya ham gateway metnini kullanıcıya gösterme. */
+function looksLikeHtmlOrGatewayError(text: string): boolean {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return false;
+  return (
+    /<!DOCTYPE\s*html|<html[\s>]|<\/html>|<head>|<body>/i.test(trimmed) ||
+    /504\s*Gateway\s*Time-?out|502\s*Bad\s*Gateway|503\s*Service\s*Unavailable|nginx\//i.test(
+      trimmed,
+    )
+  );
+}
+
+function friendlyHttpStatusMessage(status: number): string {
+  if (status === 401) return DEFAULT_AUTH_REQUIRED_MESSAGE;
+  if (status === 504 || status === 408) return GATEWAY_TIMEOUT_MESSAGE;
+  if (status === 502 || status === 503) return GATEWAY_UNAVAILABLE_MESSAGE;
+  if (status >= 500) return GATEWAY_UNAVAILABLE_MESSAGE;
+  return UNEXPECTED_SERVER_RESPONSE_MESSAGE;
+}
+
 function extractApiErrorMessage(
   status: number,
   text: string,
@@ -75,13 +102,21 @@ function extractApiErrorMessage(
   if (parsed) {
     const authRequired = parsed.auth_required === true || status === 401;
     const message = String(parsed.error || parsed.detail || parsed.message || '').trim();
-    if (message) {
+    if (message && !looksLikeHtmlOrGatewayError(message)) {
       return { message, authRequired };
     }
   }
 
   const trimmed = String(text || '').trim();
-  if (trimmed) {
+  if (trimmed && looksLikeHtmlOrGatewayError(trimmed)) {
+    return {
+      message: friendlyHttpStatusMessage(status),
+      authRequired: status === 401,
+    };
+  }
+
+  if (trimmed && !looksLikeHtmlOrGatewayError(trimmed)) {
+    // Ham JSON dışı düz metin (kısa) kullanılabilir; HTML asla.
     return {
       message: trimmed.length > 280 ? `${trimmed.slice(0, 280)}…` : trimmed,
       authRequired: status === 401,
@@ -89,7 +124,7 @@ function extractApiErrorMessage(
   }
 
   return {
-    message: status === 401 ? DEFAULT_AUTH_REQUIRED_MESSAGE : `HTTP ${status}`,
+    message: friendlyHttpStatusMessage(status),
     authRequired: status === 401,
   };
 }
@@ -120,11 +155,19 @@ export function formatProQueryError(raw: string): string {
   const text = String(raw || '').trim();
   if (!text) return 'Pro sorgu tamamlanamadı. Lütfen tekrar deneyin.';
 
+  if (looksLikeHtmlOrGatewayError(text)) {
+    if (/504|Gateway\s*Time-?out/i.test(text)) return GATEWAY_TIMEOUT_MESSAGE;
+    if (/502|503|Bad\s*Gateway|Service\s*Unavailable/i.test(text)) {
+      return GATEWAY_UNAVAILABLE_MESSAGE;
+    }
+    return UNEXPECTED_SERVER_RESPONSE_MESSAGE;
+  }
+
   const httpJsonMatch = text.match(/^HTTP (\d+):\s*(\{[\s\S]+\})\s*$/);
   if (httpJsonMatch) {
     const parsed = tryParseJsonObject(httpJsonMatch[2]);
     const parsedMessage = String(parsed?.error || parsed?.detail || parsed?.message || '').trim();
-    if (parsedMessage) return parsedMessage;
+    if (parsedMessage && !looksLikeHtmlOrGatewayError(parsedMessage)) return parsedMessage;
   }
 
   const upstream = text.match(/upstream task failure detected\s*\(([^:]+):FAILURE\)/i);
@@ -167,7 +210,20 @@ export function getProQueryErrorAlert(
     };
   }
   if (error instanceof ProQueryFailedError) {
-    return { title: 'Sorgu Hatası', message: error.message };
+    return { title: 'Sorgu Hatası', message: formatProQueryError(error.message) };
+  }
+  if (error instanceof ProQueryHttpError) {
+    if (error.status === 401) {
+      return {
+        title: 'Giriş Gerekli',
+        message: error.message || DEFAULT_AUTH_REQUIRED_MESSAGE,
+        authRequired: true,
+      };
+    }
+    return {
+      title: 'Sorgu Hatası',
+      message: formatProQueryError(error.message) || friendlyHttpStatusMessage(error.status),
+    };
   }
   const msg = error instanceof Error ? error.message : String(error || '');
   if (/auth_required|giri[sş]\s*yapman/i.test(msg)) {
@@ -366,13 +422,12 @@ async function pollDistributedProQuery(
     }
 
     if (resp.status === 504 || resp.status === 410) {
-      let failBody: any = null;
-      try {
-        failBody = await resp.json();
-      } catch {
-        // ignore
-      }
-      throw proQueryFailedFromBody(failBody, 'Pro sorgu tamamlanamadı.');
+      const t = await resp.text().catch(() => '');
+      const failBody = tryParseJsonObject(t);
+      throw proQueryFailedFromBody(
+        failBody,
+        resp.status === 504 ? GATEWAY_TIMEOUT_MESSAGE : 'Pro sorgu tamamlanamadı.',
+      );
     }
 
     if (resp.status === 202) {

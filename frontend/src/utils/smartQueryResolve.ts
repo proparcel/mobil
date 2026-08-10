@@ -57,12 +57,8 @@ export const buildSmartQuerySummary = (
     quarter?.Proparcel_text || quarter?.Tkgm_text || result.mahalle || '',
   ].filter(Boolean);
 
-  const adaParsel = [
-    normalizeParcelDigits(String(result.ada_no || '')),
-    normalizeParcelDigits(String(result.parsel_no || '')),
-  ]
-    .filter(Boolean)
-    .join('/');
+  const { ada, parsel } = normalizeAdaParsel(result);
+  const adaParsel = [ada, parsel].filter(Boolean).join('/');
 
   return [parts.join(' / '), adaParsel].filter(Boolean).join(' - ');
 };
@@ -74,6 +70,17 @@ const normalizeParcelDigits = (value: string): string =>
     .replace(/,/g, '');
 
 export { normalizeParcelDigits };
+
+/** Ada yoksa TKGM geleneği: "0" (köy parselleri). Parsel zorunlu. */
+function normalizeAdaParsel(result: Pick<SmartQueryExtractResult, 'ada_no' | 'parsel_no'>): {
+  ada: string;
+  parsel: string;
+} {
+  const parsel = normalizeParcelDigits(String(result.parsel_no || ''));
+  const adaRaw = normalizeParcelDigits(String(result.ada_no || ''));
+  const ada = adaRaw || (parsel ? '0' : '');
+  return { ada, parsel };
+}
 
 function smartQueryResultToLocationInput(
   result: SmartQueryExtractResult,
@@ -166,8 +173,7 @@ function isBackendMahalleOnlyFailure(result: SmartQueryExtractResult): boolean {
   if (result.ok !== false) return false;
   const err = String(result.error || '');
   if (!/mahalle/i.test(err)) return false;
-  const ada = normalizeParcelDigits(String(result.ada_no || ''));
-  const parsel = normalizeParcelDigits(String(result.parsel_no || ''));
+  const { ada, parsel } = normalizeAdaParsel(result);
   return Boolean(ada && parsel && result.il && result.ilce);
 }
 
@@ -197,9 +203,8 @@ export function buildPartialSmartQueryFormSeed(
 function tryBuildPartialSmartQuerySeed(
   result: SmartQueryExtractResult,
 ): SidebarSavedQuery | null {
-  const ada = normalizeParcelDigits(String(result.ada_no || ''));
-  const parsel = normalizeParcelDigits(String(result.parsel_no || ''));
-  if (!ada || !parsel) return null;
+  const { ada, parsel } = normalizeAdaParsel(result);
+  if (!parsel) return null;
 
   const cityTown = resolveVoiceCityTownFromExtract(smartQueryResultToLocationInput(result));
   if (!cityTown) return null;
@@ -288,11 +293,10 @@ export async function resolveSmartQueryPayload(
   const channel = options.channel ?? 'speech';
   const source = options.source ?? 'resolve';
 
-  const ada = normalizeParcelDigits(String(result.ada_no || ''));
-  const parsel = normalizeParcelDigits(String(result.parsel_no || ''));
+  const { ada, parsel } = normalizeAdaParsel(result);
 
-  if (!ada || !parsel) {
-    const error = 'Metinden ada ve parsel bilgisi çıkarılamadı.';
+  if (!parsel) {
+    const error = 'Metinden parsel bilgisi çıkarılamadı.';
     await logSmartQueryResolveFailed(source, channel, { error, result });
     return { ok: false, error };
   }

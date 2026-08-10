@@ -23,11 +23,20 @@ import {
 import { MOBILE_AI_VIDEO_NEW_CLIENT_SOURCE } from "../src/constants/aiDroneProductionPipeline";
 import { DRONE_SCENE_INITIAL_COUNT } from "./droneSceneService";
 import {
+  appendRunwayLocationFormFields,
+  appendRunwayPrepLocationFields,
+  appendRunwayPrepReuseFields,
+  parseRunwayPrepResponse,
+  runwayPrepFailureMessage,
+  validateDroneProjectLocation,
+  type DroneProjectLocation,
+} from "../src/utils/droneProjectContract";
+import {
   defaultLandscapeSubtitleExportFontSize,
   normalizeLandscapeSubtitleExportFontSize,
 } from "../src/utils/landscapeOverlayContract";
 
-export { MOBILE_AI_VIDEO_NEW_CLIENT_SOURCE };
+export type { DroneProjectLocation } from "../src/utils/droneProjectContract";
 
 export type {
   MusicTrack,
@@ -161,7 +170,7 @@ export async function resolveAiVideoRunwayPreviewVideoUrl(jobId: string): Promis
 }
 
 export async function generateAiVideoScript(payload: {
-  title: string;
+  displayName: string;
   imageCount: number;
   bodyText?: string;
   highlightTexts?: string[];
@@ -175,7 +184,7 @@ export async function generateAiVideoScript(payload: {
     {
       method: "POST",
       json: {
-        title: payload.title.slice(0, 120),
+        title: payload.displayName.slice(0, 120),
         image_count: Math.max(2, Math.min(32, payload.imageCount || DRONE_SCENE_INITIAL_COUNT)),
         body_text: (payload.bodyText || keywords.join(", ")).slice(0, 600),
         highlight_texts: keywords,
@@ -193,33 +202,52 @@ export async function generateAiVideoScript(payload: {
 
 export async function runwayPrepStartAiVideo(payload: {
   refFrameCount: number;
-  aiVideoTitle: string;
+  location: DroneProjectLocation;
   licenseRef?: string;
   promptText?: string;
   useOpenAiPreflight?: boolean;
-}): Promise<{ ok: true; jobId: string } | { ok: false; error: string }> {
+  reuseJobId?: string;
+}): Promise<
+  | { ok: true; jobId: string; projectId: string; displayName: string }
+  | { ok: false; error: string }
+> {
+  const locResult = validateDroneProjectLocation(payload.location);
+  if (!locResult.ok) return locResult;
+
   const json: Record<string, unknown> = {
     ref_frame_count: Math.max(2, Math.min(8, payload.refFrameCount || DRONE_SCENE_INITIAL_COUNT)),
     editor_mode: "ai_video",
     prompt_profile: "ai_video",
-    ai_video_title: payload.aiVideoTitle.slice(0, 120),
     prompt_text: (payload.promptText || "").slice(0, 2000),
     ...runwayLandscapeClientJsonFields(),
     ...openAiPreflightPrepJsonFields(Boolean(payload.useOpenAiPreflight)),
   };
+  appendRunwayPrepLocationFields(json, locResult.location);
+  if (payload.reuseJobId) appendRunwayPrepReuseFields(json, payload.reuseJobId);
   const licenseRef = String(payload.licenseRef || "").trim();
   if (licenseRef) json.license_ref = licenseRef.slice(0, 160);
 
-  const res = await authJsonFetch<{ job_id?: string; success?: boolean }>("/api/drone-recording-runway/prep/", {
-    method: "POST",
-    json,
-  });
-  if (!res.ok) return { ok: false, error: errMessage(res.error, "Hazırlık başlatılamadı.") };
-  const jobId = String((res.data as any)?.job_id || "").trim();
-  if (!jobId || (res.data as any)?.success === false) {
-    return { ok: false, error: errMessage((res.data as any)?.error, "Job oluşturulamadı.") };
+  const res = await authJsonFetch<{ job_id?: string; project_id?: string; display_name?: string; success?: boolean }>(
+    "/api/drone-recording-runway/prep/",
+    {
+      method: "POST",
+      json,
+    },
+  );
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: runwayPrepFailureMessage(res.error, "Hazırlık başlatılamadı.", res.status, res.payload),
+    };
   }
-  return { ok: true, jobId };
+  const parsed = parseRunwayPrepResponse((res.data || {}) as Record<string, unknown>);
+  if (!parsed || (res.data as any)?.success === false) {
+    return {
+      ok: false,
+      error: runwayPrepFailureMessage((res.data as any)?.error, "Job oluşturulamadı.", res.status, res.data as Record<string, unknown>),
+    };
+  }
+  return { ok: true, ...parsed };
 }
 
 export async function runwayPrepPushRef(
@@ -245,16 +273,17 @@ export async function runwayPrepPushRef(
 
 export async function startAiVideoRunwayProduction(payload: {
   preparedJobId: string;
+  projectId?: string;
   refFrameCount: number;
   narrationText: string;
-  aiVideoTitle: string;
+  location?: DroneProjectLocation;
   licenseRef?: string;
   scenePrompts?: string[];
   scriptPreview?: AiVideoScript | null;
   fullSubtitleOnly?: boolean;
   useOpenAiPreflight?: boolean;
 }): Promise<
-  | { ok: true; jobId: string; pollMs: number }
+  | { ok: true; jobId: string; projectId: string; pollMs: number }
   | { ok: false; error: string; licenseRequired?: boolean }
 > {
   const form = new FormData();
@@ -262,7 +291,11 @@ export async function startAiVideoRunwayProduction(payload: {
   form.append("ref_frame_count", String(payload.refFrameCount));
   form.append("editor_mode", "ai_video");
   form.append("prompt_profile", "ai_video");
-  form.append("ai_video_title", payload.aiVideoTitle.slice(0, 120));
+  if (payload.location) {
+    const locResult = validateDroneProjectLocation(payload.location);
+    if (!locResult.ok) return { ok: false, error: locResult.error };
+    appendRunwayLocationFormFields(form, locResult.location);
+  }
   appendRunwayLandscapeClientFormFields(form);
   if (payload.narrationText.trim()) {
     form.append("narration_text", payload.narrationText.trim().slice(0, 8000));
@@ -300,6 +333,7 @@ export async function startAiVideoRunwayProduction(payload: {
   return {
     ok: true,
     jobId,
+    projectId: String(payload.projectId || (res.data as any)?.project_id || jobId).trim(),
     pollMs: Number((res.data as any)?.poll_ms || 1500),
   };
 }
@@ -483,6 +517,7 @@ export async function listDroneEditorAnnotations(jobId: string) {
 
 export async function setActiveAiVideoJob(payload: {
   jobId: string;
+  projectId?: string;
   referenceId: string;
   startedAt: number;
   refFrameCount: number;
@@ -490,7 +525,11 @@ export async function setActiveAiVideoJob(payload: {
 }): Promise<void> {
   const { setActiveDroneJob } = await import("./droneRunwayActiveJobStorage");
   await setActiveDroneJob({
-    ...payload,
+    jobId: payload.jobId,
+    projectId: payload.projectId || payload.jobId,
+    referenceId: payload.referenceId,
+    startedAt: payload.startedAt,
+    refFrameCount: payload.refFrameCount,
     source: payload.source || MOBILE_AI_VIDEO_NEW_CLIENT_SOURCE,
   });
 }
